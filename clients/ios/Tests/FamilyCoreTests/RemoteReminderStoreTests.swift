@@ -9,7 +9,7 @@ final class RemoteReminderStoreTests: XCTestCase {
             title: "Bring the permission slip",
             assigneeIDs: [KidID(rawValue: "kid-1")],
             dueAt: Date(timeIntervalSince1970: 1_800_000_000),
-            alertLeadTime: .oneHour
+            alertLeadTime: .atDueTime
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -40,6 +40,9 @@ final class RemoteReminderStoreTests: XCTestCase {
             "/v1/reminders/ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC101/reopen",
             "/v1/reminders/ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC101",
         ])
+        let savedBody = try XCTUnwrap(requests.first?.body)
+        let savedJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: savedBody) as? [String: Any])
+        XCTAssertEqual(savedJSON["alertLeadTimeMinutes"] as? Int, 0)
     }
 }
 
