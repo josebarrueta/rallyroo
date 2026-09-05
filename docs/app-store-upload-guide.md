@@ -32,10 +32,10 @@ There is no approval gate for this internal-testing path, as requested. Protect
 main with required PR reviews and required iOS CI checks: merged code can execute
 with signing secrets. This workflow does not itself enforce branch protection.
 
-Fastlane uploads and waits for processing, then assigns the build to **Rallyroo
-Internal**. It never requests external beta review or App Store Review. Internal
-testers may receive the build automatically; this supersedes the earlier manual
-internal-distribution policy.
+Fastlane uploads and waits for processing with `skip_submission: true`. It passes
+no group or distribution arguments, so it cannot request external beta review or
+App Store Review. App Store Connect's **internal** automatic-distribution setting
+is solely responsible for making processed builds available to Rallyroo Internal.
 
 ## Required one-time setup
 
