@@ -44,7 +44,12 @@ struct RemindersView: View {
             .toolbar {
                 if session.role == .parent {
                     Button {
-                        editingReminder = FamilyReminder(title: "", assigneeIDs: [], dueAt: .now.addingTimeInterval(60 * 60))
+                        editingReminder = FamilyReminder(
+                            title: "",
+                            assigneeIDs: [],
+                            dueAt: .now.addingTimeInterval(60 * 60),
+                            alertLeadTime: .atDueTime
+                        )
                     } label: {
                         Label("Add Reminder", systemImage: "plus")
                     }

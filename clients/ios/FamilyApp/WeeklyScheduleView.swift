@@ -5,14 +5,10 @@ struct WeeklyScheduleView: View {
     @StateObject private var viewModel: WeeklyScheduleViewModel
     private let allowsEditing: Bool
     private let locationSearch: any LocationSearch
-    @State private var weekStart = Calendar.autoupdatingCurrent.dateInterval(
-        of: .weekOfYear,
-        for: .now
-    )!.start
+    @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
     @State private var editingEvent: FamilyEvent?
     @State private var selectedParticipantID: KidID?
-    @State private var hasScrolledToToday = false
 
     init(
         eventStore: any EventStore,
@@ -37,20 +33,15 @@ struct WeeklyScheduleView: View {
                 )
                 .padding(.bottom, 4)
 
-                ScrollViewReader { proxy in
-                    daySections(proxy: proxy)
-                         .scrollContentBackground(.hidden)
-                         .background(AppTheme.background)
-                         .onAppear {
-                            Task { await viewModel.loadEvents() }
-                         }
-                         .onChange(of: viewModel.events) { _ in
-                            if !hasScrolledToToday { scrollToToday(proxy: proxy) }
-                         }
-                         .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
-                            Task { await viewModel.loadEvents() }
-                         }
-                }
+                daySections
+                    .scrollContentBackground(.hidden)
+                    .background(AppTheme.background)
+                    .onAppear {
+                        Task { await viewModel.loadEvents() }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
+                        Task { await viewModel.loadEvents() }
+                    }
             }
             .navigationTitle("Rallyroo")
             .toolbar { toolbarContent }
@@ -73,7 +64,7 @@ struct WeeklyScheduleView: View {
     // MARK: - Day sections
 
     @ViewBuilder
-    private func daySections(proxy: ScrollViewProxy) -> some View {
+    private var daySections: some View {
         if let errorMessage = viewModel.errorMessage {
             List {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -103,7 +94,6 @@ struct WeeklyScheduleView: View {
                             }
                         }
                     }
-                    .id(day)
                 }
             }
         }
@@ -115,8 +105,7 @@ struct WeeklyScheduleView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button("Today") {
-                weekStart = startOfCurrentWeek
-                hasScrolledToToday = false
+                weekStart = startOfToday
             }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
@@ -136,21 +125,10 @@ struct WeeklyScheduleView: View {
         }
     }
 
-    // MARK: - Scroll to today on first appearance
-
-    private func scrollToToday(proxy: ScrollViewProxy) {
-        let today = Calendar.autoupdatingCurrent.startOfDay(for: .now)
-        let target = daysInWeek.contains(today) ? today : weekStart
-        withAnimation(.easeInOut(duration: 0.3)) {
-            proxy.scrollTo(target, anchor: .top)
-        }
-        hasScrolledToToday = true
-    }
-
     // MARK: - Computed helpers
 
-    private var startOfCurrentWeek: Date {
-        Calendar.autoupdatingCurrent.dateInterval(of: .weekOfYear, for: .now)!.start
+    private var startOfToday: Date {
+        Calendar.autoupdatingCurrent.startOfDay(for: .now)
     }
 
     private var daysInWeek: [Date] {
