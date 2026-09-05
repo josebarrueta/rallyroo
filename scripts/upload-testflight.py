@@ -165,8 +165,8 @@ def main():
   UI.user_error!("Build number is not newer than App Store Connect") unless
     Gem::Version.new(ENV.fetch("UPLOAD_BUILD")) > Gem::Version.new(latest.to_s)
   upload_to_testflight(api_key: key, ipa: ENV.fetch("UPLOAD_IPA"),
-    app_identifier: "dev.rallyroo.app", groups: ["Rallyroo Internal"],
-    distribute_external: false, skip_waiting_for_build_processing: false)
+    app_identifier: "dev.rallyroo.app", skip_submission: true,
+    skip_waiting_for_build_processing: false)
 end
 ''')
             gem_dir = run(["ruby", "-e", "print Gem.user_dir"]).decode()
@@ -177,7 +177,7 @@ end
             }
             run_fastlane([str(Path(gem_dir) / "bin/fastlane"), "upload"], root,
                          fastlane_environment)
-            print(f"Uploaded {version} ({build}); internal distribution completed", flush=True)
+            print(f"Uploaded and processed {version} ({build}); App Store Connect controls internal availability", flush=True)
         finally:
             subprocess.run(["security", "list-keychains", "-d", "user", "-s", *original_keychains],
                            capture_output=True)
