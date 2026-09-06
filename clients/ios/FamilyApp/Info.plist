@@ -35,6 +35,10 @@
             </array>
         </dict>
     </array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Rallyroo uses the microphone to turn your spoken schedule into drafts you review.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Rallyroo uses speech recognition to create event and reminder drafts from your voice.</string>
     <key>UILaunchScreen</key>
     <dict/>
 </dict>

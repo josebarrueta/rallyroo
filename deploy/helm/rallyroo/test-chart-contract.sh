@@ -18,6 +18,8 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set runtimeConfig.stytch.environment=live \
   --set runtimeConfig.stytch.customBaseURL=https://login.rallyroo.dev \
   --set 'runtimeConfig.invitationEmail.from=Rallyroo <invites@rallyroo.dev>' \
+  --set runtimeConfig.ollama.baseURL=http://host.docker.internal:11435 \
+  --set runtimeConfig.ollama.model=qwen3.8:27b-mlx \
   --set runtimeConfig.apns.teamID=5LS29Z8553 \
   --set runtimeConfig.apns.bundleID=dev.rallyroo.app \
   --set runtimeConfig.apns.environment=production \
@@ -53,6 +55,8 @@ grep -q 'STYTCH_OAUTH_CALLBACK_URL: "rallyroo://oauth-callback"' "$rendered"
 grep -q 'STYTCH_ENV: "live"' "$rendered"
 grep -q 'STYTCH_CUSTOM_BASE_URL: "https://login.rallyroo.dev"' "$rendered"
 grep -q 'INVITATION_EMAIL_FROM: "Rallyroo <invites@rallyroo.dev>"' "$rendered"
+grep -q 'OLLAMA_BASE_URL: "http://host.docker.internal:11435"' "$rendered"
+grep -q 'OLLAMA_MODEL: "qwen3.8:27b-mlx"' "$rendered"
 grep -q 'APNS_TEAM_ID: "5LS29Z8553"' "$rendered"
 grep -q 'APNS_BUNDLE_ID: "dev.rallyroo.app"' "$rendered"
 grep -q 'APNS_ENV: "production"' "$rendered"

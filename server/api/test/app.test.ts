@@ -5,6 +5,7 @@ import type { IdentityProvider } from "../src/identity-provider.js";
 import type { InvitationEmailSender } from "../src/invitation-email-sender.js";
 import type { LocationSearchProvider } from "../src/location-search-provider.js";
 import type { PushNotificationProvider } from "../src/push-notification-provider.js";
+import type { ScheduleDraftExtractor } from "../src/schedule-draft-extractor.js";
 import { CalendarSourceModule } from "../src/calendar-source-module.js";
 import { InMemoryCalendarSourceRepository } from "../src/in-memory-calendar-source-repository.js";
 
@@ -691,6 +692,98 @@ describe("Rallyroo API", () => {
     expect(newCodeSession.statusCode).toBe(200);
     expect(newCodeSession.json().role).toBe("kid");
     await app.close();
+  });
+
+  it("lets a parent extract review-only schedule drafts with family context", async () => {
+    let suppliedMembers: Array<{ id: string; name: string }> = [];
+    const scheduleDraftExtractor: ScheduleDraftExtractor = {
+      async extract(request) {
+        suppliedMembers = request.members;
+        return { drafts: [{
+          kind: "reminder",
+          title: "Bring cleats",
+          memberIDs: ["kid-1"],
+          startTime: null,
+          endTime: null,
+          dueAt: new Date(new Date(request.referenceDate).getTime() + 24 * 60 * 60 * 1_000).toISOString(),
+          location: null,
+          alertLeadTimeMinutes: 0,
+          clarification: null,
+          confidence: 0.95,
+        }] };
+      },
+    };
+    const app = buildApp({
+      identityProvider,
+      repository: repository(),
+      scheduleDraftExtractor,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/schedule-drafts",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        inputType: "voice",
+        text: "Remind Emma to bring cleats tomorrow at four",
+        timeZone: "America/Los_Angeles",
+      },
+    });
+    const kidResponse = await app.inject({
+      method: "POST",
+      url: "/v1/schedule-drafts",
+      headers: { authorization: "Bearer kid-token" },
+      payload: { inputType: "text", text: "Add practice tomorrow", timeZone: "UTC" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().drafts[0]).toMatchObject({ kind: "reminder", memberIDs: ["kid-1"] });
+    expect(suppliedMembers).toEqual([
+      { id: "parent-1", name: "Alex" },
+      { id: "kid-1", name: "Emma" },
+      { id: "kid-2", name: "Noah" },
+      { id: "parent-3", name: "Jamie" },
+    ]);
+    expect(kidResponse.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it("rejects provider drafts outside the family and bounded schedule window", async () => {
+    for (const invalidDraft of [
+      { memberIDs: ["another-family-member"], dueAt: new Date().toISOString() },
+      { memberIDs: ["kid-1"], dueAt: "2040-01-01T00:00:00.000Z" },
+    ]) {
+      const scheduleDraftExtractor: ScheduleDraftExtractor = {
+        async extract() {
+          return { drafts: [{
+            kind: "reminder",
+            title: "Unsafe draft",
+            ...invalidDraft,
+            startTime: null,
+            endTime: null,
+            location: null,
+            alertLeadTimeMinutes: 0,
+            clarification: null,
+            confidence: 1,
+          }] };
+        },
+      };
+      const app = buildApp({
+        identityProvider,
+        repository: repository(),
+        scheduleDraftExtractor,
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/schedule-drafts",
+        headers: { authorization: "Bearer parent-token" },
+        payload: { inputType: "text", text: "Add it", timeZone: "UTC" },
+      });
+
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toEqual({ error: "invalid_schedule_draft_response" });
+      await app.close();
+    }
   });
 
   it("advances the family change cursor after a mutation", async () => {

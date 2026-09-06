@@ -1,6 +1,7 @@
 import { buildApp } from "../../src/app.js";
 import { InMemoryRallyrooRepository } from "../../src/in-memory-repository.js";
 import type { IdentityProvider } from "../../src/identity-provider.js";
+import { OllamaScheduleDraftExtractor } from "../../src/ollama-schedule-draft-extractor.js";
 
 const identityProvider: IdentityProvider = {
   googleAuthorizationURL: () => "https://identity.example/google",
@@ -32,7 +33,17 @@ const repository = new InMemoryRallyrooRepository({
   ],
 });
 
-const app = buildApp({ identityProvider, repository });
+const scheduleDraftExtractor = process.env.OLLAMA_BASE_URL
+  ? new OllamaScheduleDraftExtractor({
+    baseURL: new URL(process.env.OLLAMA_BASE_URL),
+    model: process.env.OLLAMA_MODEL ?? "qwen3.8:27b-mlx",
+  })
+  : undefined;
+const app = buildApp({
+  identityProvider,
+  repository,
+  ...(scheduleDraftExtractor ? { scheduleDraftExtractor } : {}),
+});
 const port = Number(process.env.CONTRACT_PORT ?? "3100");
 await app.listen({ port, host: "127.0.0.1" });
 
