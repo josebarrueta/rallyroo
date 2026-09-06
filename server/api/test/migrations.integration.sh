@@ -54,14 +54,15 @@ run_structured_migrations pre >/dev/null
 
 ledger=$(psql "$DATABASE_URL" -Atc \
   "SELECT version || '|' || name || '|' || app_version || '|' || length(checksum) FROM schema_migrations ORDER BY version")
-[[ $(wc -l <<<"$ledger" | tr -d ' ') == "11" ]]
+[[ $(wc -l <<<"$ledger" | tr -d ' ') == "12" ]]
 grep -q '^1|001_initial.sql|test-release|64$' <<<"$ledger"
 grep -q '^9|009_child_invitation_consent.sql|test-release|64$' <<<"$ledger"
 grep -q '^10|010_calendar_source_visibility.sql|test-release|64$' <<<"$ledger"
 grep -q '^11|011_family_reminders.sql|test-release|64$' <<<"$ledger"
+grep -q '^12|012_event_alerts.sql|test-release|64$' <<<"$ledger"
 
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "11" ]]
+[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "12" ]]
 
 # Upgrade the filename-only ledger created by releases before this runner.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -70,7 +71,7 @@ ALTER TABLE schema_migrations DROP COLUMN checksum;
 ALTER TABLE schema_migrations DROP COLUMN app_version;
 SQL
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "11" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "12" ]]
 
 cp -R "$ROOT/migrations" "$tmp/checksum-migrations"
 printf '\n-- changed after deployment\n' >>"$tmp/checksum-migrations/pre/001_initial.sql"
@@ -81,10 +82,10 @@ fi
 grep -q 'Checksum mismatch for 001_initial.sql' "$tmp/checksum.out"
 
 mkdir -p "$tmp/failing-migrations/pre" "$tmp/failing-migrations/post"
-cat >"$tmp/failing-migrations/pre/012_atomic_marker.sql" <<'SQL'
+cat >"$tmp/failing-migrations/pre/013_atomic_marker.sql" <<'SQL'
 CREATE TABLE migration_atomic_marker (id integer PRIMARY KEY);
 SQL
-cat >"$tmp/failing-migrations/pre/013_intentional_failure.sql" <<'SQL'
+cat >"$tmp/failing-migrations/pre/014_intentional_failure.sql" <<'SQL'
 THIS IS NOT VALID SQL;
 SQL
 if MIGRATIONS_ROOT="$tmp/failing-migrations" run_migrations pre >"$tmp/failure.out" 2>&1; then
@@ -92,24 +93,24 @@ if MIGRATIONS_ROOT="$tmp/failing-migrations" run_migrations pre >"$tmp/failure.o
   exit 1
 fi
 [[ $(psql "$DATABASE_URL" -Atc "SELECT to_regclass('migration_atomic_marker') IS NULL") == "t" ]]
-[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IN (12, 13)") == "0" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IN (13, 14)") == "0" ]]
 
-cat >"$tmp/failing-migrations/post/012_post_release_marker.sql" <<'SQL'
+cat >"$tmp/failing-migrations/post/013_post_release_marker.sql" <<'SQL'
 CREATE TABLE post_release_marker (id integer PRIMARY KEY);
 SQL
-rm "$tmp/failing-migrations/pre/012_atomic_marker.sql" "$tmp/failing-migrations/pre/013_intentional_failure.sql"
+rm "$tmp/failing-migrations/pre/013_atomic_marker.sql" "$tmp/failing-migrations/pre/014_intentional_failure.sql"
 MIGRATIONS_ROOT="$tmp/failing-migrations" APPLICATION_VERSION="test-post-release" \
   run_migrations post >/dev/null
 [[ $(psql "$DATABASE_URL" -Atc "SELECT to_regclass('post_release_marker') IS NOT NULL") == "t" ]]
-[[ $(psql "$DATABASE_URL" -Atc "SELECT app_version FROM schema_migrations WHERE version = 12") == "test-post-release" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT app_version FROM schema_migrations WHERE version = 13") == "test-post-release" ]]
 
-cat >"$tmp/failing-migrations/pre/012_duplicate_version.sql" <<'SQL'
+cat >"$tmp/failing-migrations/pre/013_duplicate_version.sql" <<'SQL'
 SELECT 1;
 SQL
 if MIGRATIONS_ROOT="$tmp/failing-migrations" run_migrations pre >"$tmp/duplicate.out" 2>&1; then
   echo "duplicate migration version unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q 'Duplicate migration version 12' "$tmp/duplicate.out"
+grep -q 'Duplicate migration version 13' "$tmp/duplicate.out"
 
 echo "Migration deployment contract passed"

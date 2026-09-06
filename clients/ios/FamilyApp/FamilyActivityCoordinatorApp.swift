@@ -12,6 +12,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let notificationStore: any ConflictNotificationStore
     private let reminderStore: any ReminderStore
     private let reminderAlertScheduler: (any ReminderAlertScheduler)?
+    private let eventAlertScheduler: (any EventAlertScheduler)?
     private let authentication: any Authentication
     private let locationSearch: any LocationSearch
     private let invitationStore: (any FamilyInvitationStore)?
@@ -35,7 +36,9 @@ struct FamilyActivityCoordinatorApp: App {
             authentication = LocalAuthentication()
             eventStore = LocalEventStore(storageURL: AppStorage.eventsURL)
             reminderStore = LocalReminderStore(storageURL: AppStorage.remindersURL)
-            reminderAlertScheduler = LocalReminderAlertScheduler()
+            let localAlertScheduler = LocalReminderAlertScheduler()
+            reminderAlertScheduler = localAlertScheduler
+            eventAlertScheduler = localAlertScheduler
             memberStore = LocalFamilyMemberStore(storageURL: AppStorage.membersURL)
             locationSearch = EmptyLocationSearch()
             invitationStore = nil
@@ -53,11 +56,17 @@ struct FamilyActivityCoordinatorApp: App {
                 authentication: remoteAuthentication
             )
             authentication = remoteAuthentication
-            eventStore = RemoteEventStore(baseURL: baseURL, transport: authenticatedTransport)
+            eventStore = RemoteEventStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport,
+                cacheURL: AppStorage.remoteEventsCacheURL,
+                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+            )
             reminderStore = RemoteReminderStore(baseURL: baseURL, transport: authenticatedTransport)
-            // Hosted reminders notify assignees through APNs. Scheduling a second
-            // local alert here would duplicate pushes and survive remote edits.
+            // Hosted alerts notify participants and assignees through APNs. Scheduling
+            // a second local alert would duplicate pushes and survive remote edits.
             reminderAlertScheduler = nil
+            eventAlertScheduler = nil
             memberStore = RemoteFamilyMemberStore(baseURL: baseURL, transport: authenticatedTransport)
             locationSearch = RemoteLocationSearch(baseURL: baseURL, transport: authenticatedTransport)
             invitationStore = RemoteFamilyInvitationStore(
@@ -82,14 +91,18 @@ struct FamilyActivityCoordinatorApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SessionGateView(authentication: authentication) { session, signOut, deleteAccount in
+            SessionGateView(
+                authentication: authentication,
+                onSessionEnded: { try? await eventStore.clearCache() }
+            ) { session, signOut, deleteAccount in
                 TabView {
                     WeeklyScheduleView(
                         eventStore: eventStore,
                         memberStore: memberStore,
                         notificationStore: notificationStore,
                         allowsEditing: session.role == .parent,
-                        locationSearch: locationSearch
+                        locationSearch: locationSearch,
+                        alertScheduler: eventAlertScheduler
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     RemindersView(
@@ -200,6 +213,10 @@ enum AppStorage {
         storageDirectory
             .appendingPathComponent("events")
             .appendingPathExtension("json")
+    }
+
+    static var remoteEventsCacheURL: URL {
+        storageDirectory.appendingPathComponent("remote-events-cache").appendingPathExtension("json")
     }
 
     static var notificationsURL: URL {

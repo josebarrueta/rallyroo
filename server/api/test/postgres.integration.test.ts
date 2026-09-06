@@ -221,6 +221,48 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       .toEqual([reminderID]);
   });
 
+  it("claims a due recurring event occurrence once across concurrent workers", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("event-notification-parent", "Notifier");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc303";
+    await data.saveEvent({
+      id: eventID,
+      familyID: account.familyID,
+      title: "Daily practice",
+      kidID: null,
+      participantIDs: [account.memberID],
+      startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+      alertLeadTimeMinutes: 60,
+      recurrence: {
+        frequency: "daily",
+        interval: 1,
+        endDate: "2026-09-12T15:00:00Z",
+      },
+    });
+    const now = new Date("2026-09-11T14:00:00Z");
+
+    const claims = await Promise.all([
+      data.claimDueEventNotifications(now, 100),
+      data.claimDueEventNotifications(now, 100),
+    ]);
+
+    const claimed = claims.flat();
+    expect(claimed.map((notification) => notification.occurrenceStart))
+      .toEqual(["2026-09-11T15:00:00.000Z"]);
+    await data.releaseEventNotificationClaim(
+      account.familyID,
+      eventID,
+      claimed[0]!.occurrenceStart,
+      now,
+    );
+    expect((await data.claimDueEventNotifications(now, 100))).toHaveLength(1);
+  });
+
   it("persists synchronized calendar sources and imported events across API instances", async () => {
     const writerRepository = repositoryForTest();
     const feedBody = [

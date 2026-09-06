@@ -1,4 +1,5 @@
 import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
+import type { DueEventNotification } from "./event-notification-dispatcher.js";
 
 export interface RallyrooRepository {
   accountForIdentity(subject: string): Promise<Account | null>;
@@ -23,6 +24,19 @@ export interface RallyrooRepository {
   eventsForFamily(familyID: string): Promise<FamilyEvent[]>;
   saveEvent(event: FamilyEvent): Promise<void>;
   deleteEvent(familyID: string, eventID: string): Promise<void>;
+  claimDueEventNotifications(now: Date, limit: number): Promise<DueEventNotification[]>;
+  markEventNotificationSent(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<void>;
+  releaseEventNotificationClaim(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<void>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   saveReminder(reminder: FamilyReminder): Promise<void>;
   deleteReminder(familyID: string, reminderID: string): Promise<void>;

@@ -51,6 +51,7 @@ export interface FamilyEvent {
   driver: string | null;
   source: "manual" | "email_suggested" | "voice" | "calendar";
   status: "confirmed" | "pending_review";
+  alertLeadTimeMinutes?: 0 | 5 | 15 | 60 | 1440 | null;
   recurrence?: EventRecurrence | null;
   readOnly?: boolean;
   provenance?: Array<{

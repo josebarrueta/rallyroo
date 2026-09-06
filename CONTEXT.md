@@ -33,7 +33,7 @@ The shared state transition that marks a reminder complete for every assignee an
 _Avoid_: Per-assignee completion
 
 **Alert lead time**:
-The optional supported interval before a reminder's due instant when its assignees should be notified.
+The optional supported interval before a reminder's due instant or an event occurrence's start when the responsible members should be notified. Reminder alerts go to assignees; event alerts go to participants.
 _Avoid_: Event duration, snooze
 
 **Personal calendar**:

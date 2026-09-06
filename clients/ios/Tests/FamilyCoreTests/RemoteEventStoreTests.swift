@@ -55,6 +55,82 @@ final class RemoteEventStoreTests: XCTestCase {
         XCTAssertEqual(event.source, .calendar)
         XCTAssertTrue(event.isReadOnly)
         XCTAssertEqual(event.provenance.first?.sourceName, "TeamSnap")
+        XCTAssertNil(event.alertLeadTime)
+    }
+
+    func testReturnsTheLastSuccessfulAccountScopedScheduleWhenOffline() async throws {
+        let cacheURL = temporaryCacheURL()
+        let event = sampleEvent()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let online = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: RecordingHTTPTransport(
+                responses: [HTTPResponse(statusCode: 200, body: try encoder.encode([event]))]
+            ),
+            cacheURL: cacheURL,
+            accountID: { "account-1" }
+        )
+        let onlineSnapshot = try await online.loadEvents()
+        XCTAssertEqual(onlineSnapshot.freshness, .fresh)
+        let offline = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: FailingHTTPTransport(),
+            cacheURL: cacheURL,
+            accountID: { "account-1" }
+        )
+
+        let snapshot = try await offline.loadEvents()
+
+        XCTAssertEqual(snapshot.events, [event])
+        XCTAssertEqual(snapshot.freshness, .cached)
+    }
+
+    func testClearsTheCachedScheduleAtSessionEnd() async throws {
+        let cacheURL = temporaryCacheURL()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let online = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: RecordingHTTPTransport(
+                responses: [HTTPResponse(statusCode: 200, body: try encoder.encode([sampleEvent()]))]
+            ),
+            cacheURL: cacheURL,
+            accountID: { "account-1" }
+        )
+        _ = try await online.loadEvents()
+
+        try await online.clearCache()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cacheURL.path))
+    }
+
+    func testDoesNotExposeAnotherAccountsCachedSchedule() async throws {
+        let cacheURL = temporaryCacheURL()
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let online = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: RecordingHTTPTransport(
+                responses: [HTTPResponse(statusCode: 200, body: try encoder.encode([sampleEvent()]))]
+            ),
+            cacheURL: cacheURL,
+            accountID: { "account-1" }
+        )
+        _ = try await online.loadEvents()
+        let otherAccount = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: FailingHTTPTransport(),
+            cacheURL: cacheURL,
+            accountID: { "account-2" }
+        )
+
+        do {
+            _ = try await otherAccount.loadEvents()
+            XCTFail("Expected the offline load to reject another account's cache")
+        } catch {
+            XCTAssertTrue(error is TestTransportError)
+        }
     }
 
     func testSavesAnEventThroughTheRemoteAPI() async throws {
@@ -75,6 +151,13 @@ final class RemoteEventStoreTests: XCTestCase {
         let body = try XCTUnwrap(requests.first?.body)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(json["participantIDs"] as? [String], ["parent-1"])
+        XCTAssertEqual(json["alertLeadTimeMinutes"] as? Int, 0)
+    }
+
+    private func temporaryCacheURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appending(path: UUID().uuidString)
+            .appending(path: "events-cache.json")
     }
 
     private func sampleEvent() -> FamilyEvent {
@@ -88,6 +171,14 @@ final class RemoteEventStoreTests: XCTestCase {
             source: .manual,
             status: .confirmed
         )
+    }
+}
+
+private struct TestTransportError: Error {}
+
+private actor FailingHTTPTransport: HTTPTransport {
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        throw TestTransportError()
     }
 }
 

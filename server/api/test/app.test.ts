@@ -737,9 +737,10 @@ describe("Rallyroo API", () => {
         pushes.push({ tokens, title: notification.title });
       },
     };
+    const data = repository();
     const app = buildApp({
       identityProvider,
-      repository: repository(),
+      repository: data,
       pushNotificationProvider,
     });
     const registration = await app.inject({
@@ -765,8 +766,17 @@ describe("Rallyroo API", () => {
       },
     });
 
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+
     expect(registration.statusCode).toBe(204);
     expect(write.statusCode).toBe(200);
+    expect(listed.json().find(
+      (event: { id: string }) => event.id === "00000000-0000-4000-8000-000000000006",
+    )?.alertLeadTimeMinutes).toBe(0);
     expect(pushes).toEqual([{ tokens: ["device-token-1"], title: "Band practice" }]);
     await app.close();
   });

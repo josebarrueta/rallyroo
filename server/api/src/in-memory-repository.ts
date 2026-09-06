@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
+import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type { RallyrooRepository } from "./repository.js";
 
 interface SeedData {
@@ -19,6 +20,8 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   private readonly devices = new Map<string, { familyID: string; memberID: string }>();
   private readonly claimedReminderNotifications = new Set<string>();
   private readonly sentReminderNotifications = new Set<string>();
+  private readonly claimedEventNotifications = new Map<string, Date>();
+  private readonly sentEventNotifications = new Set<string>();
 
   constructor(seed: SeedData = {}) {
     this.accounts = [...(seed.accounts ?? [])];
@@ -208,6 +211,62 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   async deleteEvent(familyID: string, eventID: string): Promise<void> {
     const index = this.events.findIndex((event) => event.familyID === familyID && event.id === eventID);
     if (index >= 0) this.events.splice(index, 1);
+    const prefix = `${familyID}:${eventID.toLowerCase()}:`;
+    for (const key of this.claimedEventNotifications.keys()) {
+      if (key.startsWith(prefix)) this.claimedEventNotifications.delete(key);
+    }
+    for (const key of this.sentEventNotifications) {
+      if (key.startsWith(prefix)) this.sentEventNotifications.delete(key);
+    }
+  }
+
+  async claimDueEventNotifications(now: Date, limit: number): Promise<DueEventNotification[]> {
+    const oldestOccurrence = now.getTime() - 5 * 60 * 1_000;
+    const staleClaim = now.getTime() - 5 * 60 * 1_000;
+    const candidates: DueEventNotification[] = [];
+    for (const event of this.events) {
+      if (event.alertLeadTimeMinutes === null || event.alertLeadTimeMinutes === undefined) continue;
+      const through = new Date(now.getTime() + event.alertLeadTimeMinutes * 60 * 1_000);
+      for (const occurrenceStart of eventOccurrenceStarts(event, through)) {
+        const occurrenceTime = occurrenceStart.getTime();
+        const notifyAt = occurrenceTime - event.alertLeadTimeMinutes * 60 * 1_000;
+        if (notifyAt > now.getTime() || occurrenceTime < oldestOccurrence) continue;
+        const occurrenceISO = occurrenceStart.toISOString();
+        const key = eventNotificationKey(event.familyID, event.id, occurrenceISO);
+        const claimedAt = this.claimedEventNotifications.get(key);
+        if (this.sentEventNotifications.has(key) || (claimedAt && claimedAt.getTime() >= staleClaim)) continue;
+        candidates.push({ event, occurrenceStart: occurrenceISO });
+      }
+    }
+    candidates.sort((left, right) => left.occurrenceStart.localeCompare(right.occurrenceStart));
+    const due = candidates.slice(0, limit);
+    for (const notification of due) {
+      this.claimedEventNotifications.set(
+        eventNotificationKey(notification.event.familyID, notification.event.id, notification.occurrenceStart),
+        now,
+      );
+    }
+    return due;
+  }
+
+  async markEventNotificationSent(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    _claimedAt: Date,
+  ): Promise<void> {
+    const key = eventNotificationKey(familyID, eventID, occurrenceStart);
+    this.claimedEventNotifications.delete(key);
+    this.sentEventNotifications.add(key);
+  }
+
+  async releaseEventNotificationClaim(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    _claimedAt: Date,
+  ): Promise<void> {
+    this.claimedEventNotifications.delete(eventNotificationKey(familyID, eventID, occurrenceStart));
   }
 
   async remindersForFamily(familyID: string): Promise<FamilyReminder[]> {
@@ -273,6 +332,30 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     const index = this.members.findIndex((member) => member.familyID === familyID && member.id === memberID);
     if (index >= 0) this.members.splice(index, 1);
   }
+}
+
+function eventOccurrenceStarts(event: FamilyEvent, through: Date): Date[] {
+  const first = new Date(event.startTime);
+  if (!event.recurrence) return [first];
+  const end = new Date(event.recurrence.endDate);
+  const starts: Date[] = [];
+  let current = first;
+  while (current <= end && current <= through) {
+    starts.push(current);
+    const next = new Date(current);
+    switch (event.recurrence.frequency) {
+      case "daily": next.setUTCDate(next.getUTCDate() + event.recurrence.interval); break;
+      case "weekly": next.setUTCDate(next.getUTCDate() + 7 * event.recurrence.interval); break;
+      case "monthly": next.setUTCMonth(next.getUTCMonth() + event.recurrence.interval); break;
+    }
+    if (next <= current) break;
+    current = next;
+  }
+  return starts;
+}
+
+function eventNotificationKey(familyID: string, eventID: string, occurrenceStart: string): string {
+  return `${familyID}:${eventID.toLowerCase()}:${occurrenceStart}`;
 }
 
 function removeWhere<T>(values: T[], predicate: (value: T) => boolean): void {
