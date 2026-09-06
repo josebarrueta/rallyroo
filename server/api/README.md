@@ -66,6 +66,17 @@ Enable **Places API (New)** in Google Cloud and restrict the key to that API. If
 key is omitted, manual location entry still works and autocomplete returns no
 suggestions.
 
+## AI-assisted schedule drafts
+
+Set `OLLAMA_BASE_URL` to enable parent-only schedule-draft extraction and optionally
+set `OLLAMA_MODEL` (default `qwen3.8:27b-mlx`). For an API process running directly
+on the Mac, use `http://127.0.0.1:11435`; containers can use the appropriate host
+gateway address. Rallyroo sends bounded transcript, OCR, or typed text plus family
+member context. The adapter uses deterministic generation and strict validation;
+unsupported structured-output runtimes fall back to JSON-only generation before the
+same validation. Draft extraction never writes events or reminders and request bodies
+are not logged.
+
 ## Calendar subscriptions
 
 Set `CALENDAR_SOURCE_ENCRYPTION_KEY` to a base64-encoded 32-byte random key to

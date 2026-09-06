@@ -50,6 +50,9 @@ spec:
         customBaseURL: https://login.rallyroo.dev
       invitationEmail:
         from: "Rallyroo <invites@rallyroo.dev>"
+      ollama:
+        baseURL: http://host.docker.internal:11435
+        model: qwen3.8:27b-mlx
       apns:
         teamID: 5LS29Z8553
         bundleID: dev.rallyroo.app

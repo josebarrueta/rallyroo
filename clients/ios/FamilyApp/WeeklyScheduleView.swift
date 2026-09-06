@@ -5,10 +5,13 @@ struct WeeklyScheduleView: View {
     @StateObject private var viewModel: WeeklyScheduleViewModel
     private let allowsEditing: Bool
     private let locationSearch: any LocationSearch
+    private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
+    private let reminderStore: (any ReminderStore)?
     @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
     @State private var editingEvent: FamilyEvent?
     @State private var selectedParticipantID: KidID?
+    @State private var isCapturingSchedule = false
 
     init(
         eventStore: any EventStore,
@@ -16,10 +19,14 @@ struct WeeklyScheduleView: View {
         notificationStore: any ConflictNotificationStore,
         allowsEditing: Bool = true,
         locationSearch: any LocationSearch = EmptyLocationSearch(),
-        alertScheduler: (any EventAlertScheduler)? = nil
+        alertScheduler: (any EventAlertScheduler)? = nil,
+        scheduleDraftExtractor: (any ScheduleDraftExtractor)? = nil,
+        reminderStore: (any ReminderStore)? = nil
      ) {
         self.allowsEditing = allowsEditing
         self.locationSearch = locationSearch
+        self.scheduleDraftExtractor = scheduleDraftExtractor
+        self.reminderStore = reminderStore
         _viewModel = StateObject(
             wrappedValue: WeeklyScheduleViewModel(
                 eventStore: eventStore,
@@ -63,6 +70,16 @@ struct WeeklyScheduleView: View {
             .sheet(isPresented: $isAddingEvent) {
                 AddEventSheet(members: viewModel.members, locationSearch: locationSearch) {
                     try await viewModel.addEvent($0)
+                }
+            }
+            .sheet(isPresented: $isCapturingSchedule) {
+                if allowsEditing, let scheduleDraftExtractor, let reminderStore {
+                    ScheduleCaptureSheet(
+                        extractor: scheduleDraftExtractor,
+                        members: viewModel.members,
+                        onSaveEvent: { _ = try await viewModel.addEvent($0) },
+                        onSaveReminder: { try await reminderStore.save($0) }
+                    )
                 }
             }
             .sheet(item: $editingEvent) { event in
@@ -136,6 +153,11 @@ struct WeeklyScheduleView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
             }
             if allowsEditing && !viewModel.isShowingCachedEvents {
+                if scheduleDraftExtractor != nil, reminderStore != nil {
+                    Button("Create with AI", systemImage: "sparkles") {
+                        isCapturingSchedule = true
+                    }
+                }
                 Button { isAddingEvent = true } label: { Image(systemName: "plus") }
             }
         }

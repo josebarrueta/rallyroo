@@ -78,6 +78,16 @@ It has no duration and never participates in event overlap conflict detection.
 Members with open assigned reminders cannot be deleted until those reminders are
 completed or reassigned.
 
+## AI-assisted schedule drafts
+
+`POST /v1/schedule-drafts` accepts authenticated parent requests containing `text`,
+`inputType` (`text`, `voice`, or `image`), and an IANA `timeZone`. It returns strictly
+validated event/reminder drafts or clarification questions and never mutates schedule data.
+Only transcript or OCR text reaches this endpoint; raw audio and images stay on the device.
+Requests are rate-limited and draft member identifiers are restricted to the caller's family.
+The endpoint returns `503` when no extraction adapter is configured and `502` when the
+configured adapter fails or produces invalid output.
+
 ## Calendar subscriptions
 
 Authenticated parents can manage read-only iCalendar subscriptions:

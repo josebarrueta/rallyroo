@@ -19,6 +19,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let changeMonitor: (any FamilyChangeMonitor)?
     private let deviceRegistrationStore: (any DeviceRegistrationStore)?
+    private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let dataIsSynced: Bool
 
     init() {
@@ -45,6 +46,7 @@ struct FamilyActivityCoordinatorApp: App {
             calendarSourceStore = nil
             changeMonitor = nil
             deviceRegistrationStore = nil
+            scheduleDraftExtractor = nil
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -85,6 +87,10 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            scheduleDraftExtractor = RemoteScheduleDraftExtractor(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
     }
@@ -102,7 +108,9 @@ struct FamilyActivityCoordinatorApp: App {
                         notificationStore: notificationStore,
                         allowsEditing: session.role == .parent,
                         locationSearch: locationSearch,
-                        alertScheduler: eventAlertScheduler
+                        alertScheduler: eventAlertScheduler,
+                        scheduleDraftExtractor: scheduleDraftExtractor,
+                        reminderStore: reminderStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     RemindersView(

@@ -17,6 +17,7 @@ import {
   type LocationSearchProvider,
 } from "./location-search-provider.js";
 import { RallyrooMetrics } from "./metrics.js";
+import { OllamaScheduleDraftExtractor } from "./ollama-schedule-draft-extractor.js";
 import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
 import { EventNotificationDispatcher } from "./event-notification-dispatcher.js";
@@ -64,6 +65,12 @@ const calendarSources = calendarEncryptionKey
   })
   : undefined;
 const resendAPIKey = configuredSecret("RESEND_API_KEY");
+const scheduleDraftExtractor = process.env.OLLAMA_BASE_URL
+  ? new OllamaScheduleDraftExtractor({
+    baseURL: new URL(process.env.OLLAMA_BASE_URL),
+    model: process.env.OLLAMA_MODEL ?? "qwen3.8:27b-mlx",
+  })
+  : undefined;
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM
   ? new ResendInvitationEmailSender({
     apiKey: resendAPIKey,
@@ -75,6 +82,7 @@ const app = buildApp({
   repository,
   invitationEmailSender,
   ...(calendarSources ? { calendarSources } : {}),
+  ...(scheduleDraftExtractor ? { scheduleDraftExtractor } : {}),
   locationSearchProvider: new CachedLocationSearchProvider(
     locationProvider,
     cache,

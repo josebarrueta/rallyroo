@@ -35,6 +35,9 @@ runtimeConfig:
     customBaseURL: ""
   invitationEmail:
     from: ""
+  ollama:
+    baseURL: ""
+    model: qwen3.8:27b-mlx
   apns:
     teamID: ""
     bundleID: dev.rallyroo.app

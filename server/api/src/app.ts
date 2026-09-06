@@ -23,6 +23,12 @@ import {
   type PushNotificationProvider,
 } from "./push-notification-provider.js";
 import type { RallyrooRepository } from "./repository.js";
+import {
+  ScheduleDraftProviderError,
+  UnavailableScheduleDraftExtractor,
+  scheduleDraftResultSchema,
+  type ScheduleDraftExtractor,
+} from "./schedule-draft-extractor.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -64,6 +70,18 @@ const reminderSchema = z.object({
 });
 
 const locationSearchSchema = z.object({ q: z.string().trim().min(2).max(200) });
+const scheduleDraftRequestSchema = z.object({
+  inputType: z.enum(["text", "voice", "image"]),
+  text: z.string().trim().min(1).max(20_000),
+  timeZone: z.string().min(1).max(100).refine((timeZone) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone });
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+});
 const oauthAuthorizationSchema = z.object({ codeChallenge: z.string().min(43).max(128) });
 const oauthSessionSchema = z.object({
   oauthToken: z.string().min(1),
@@ -109,8 +127,9 @@ interface Dependencies {
   pushNotificationProvider?: PushNotificationProvider;
   invitationEmailSender?: InvitationEmailSender;
   calendarSources?: CalendarSourceModule;
+  scheduleDraftExtractor?: ScheduleDraftExtractor;
   readinessCheck?: () => Promise<void>;
-  rateLimits?: Partial<Record<"sessions" | "invitations" | "locations", RouteRateLimit>>;
+  rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts", RouteRateLimit>>;
   metrics?: RallyrooMetrics;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
@@ -123,6 +142,7 @@ export function buildApp({
   pushNotificationProvider = new NoopPushNotificationProvider(),
   invitationEmailSender = new NoopInvitationEmailSender(),
   calendarSources,
+  scheduleDraftExtractor = new UnavailableScheduleDraftExtractor(),
   readinessCheck = async () => {},
   rateLimits = {},
   metrics = new RallyrooMetrics(),
@@ -133,6 +153,7 @@ export function buildApp({
     sessions: { max: 10, timeWindow: 60_000 },
     invitations: { max: 20, timeWindow: 60 * 60_000 },
     locations: { max: 60, timeWindow: 60_000 },
+    scheduleDrafts: { max: 10, timeWindow: 60_000 },
     ...rateLimits,
   };
   const app = Fastify({ logger });
@@ -574,6 +595,45 @@ export function buildApp({
     await repository.deleteReminder(account.familyID, reminderID);
     await repository.markFamilyChanged(account.familyID);
     return reply.code(204).send();
+  });
+
+  app.post("/v1/schedule-drafts", {
+    config: { rateLimit: limits.scheduleDrafts },
+  }, async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    const parsed = scheduleDraftRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_schedule_draft_request" });
+    const members = await repository.membersForFamily(account.familyID);
+    const referenceDate = new Date();
+    try {
+      const result = scheduleDraftResultSchema.parse(await scheduleDraftExtractor.extract({
+        ...parsed.data,
+        referenceDate: referenceDate.toISOString(),
+        members: members.map(({ id, name }) => ({ id, name })),
+      }));
+      const memberIDs = new Set(members.map(({ id }) => id));
+      const earliest = referenceDate.getTime() - 366 * 24 * 60 * 60 * 1_000;
+      const latest = referenceDate.getTime() + 2 * 366 * 24 * 60 * 60 * 1_000;
+      for (const draft of result.drafts) {
+        if (draft.memberIDs.some((id) => !memberIDs.has(id))) {
+          throw new ScheduleDraftProviderError("invalid_response");
+        }
+        for (const value of [draft.startTime, draft.endTime, draft.dueAt]) {
+          if (value && (new Date(value).getTime() < earliest || new Date(value).getTime() > latest)) {
+            throw new ScheduleDraftProviderError("invalid_response");
+          }
+        }
+      }
+      return result;
+    } catch (error) {
+      const reason = error instanceof ScheduleDraftProviderError ? error.reason : "invalid_response";
+      return reply.code(reason === "unavailable" ? 503 : 502).send({
+        error: reason === "unavailable"
+          ? "schedule_draft_extraction_unavailable"
+          : "invalid_schedule_draft_response",
+      });
+    }
   });
 
   app.get("/v1/locations/search", {
