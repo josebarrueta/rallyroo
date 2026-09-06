@@ -7,7 +7,7 @@ ENABLE_SCRIPT="$ROOT/deploy/local/enable-flux.sh"
 
 grep -q 'notification-controller' "$ENABLE_SCRIPT"
 grep -q 'wait "onepassworditem/$item"' "$ENABLE_SCRIPT"
-grep -q 'semver: ">=0.6.0 <0.7.0"' "$FLUX_DIR/source.yaml"
+grep -q 'semver: ">=0.7.0 <0.8.0"' "$FLUX_DIR/source.yaml"
 if grep -q 'create secret generic rallyroo-deployment-alert-webhook' "$ENABLE_SCRIPT"; then
   echo "Flux bootstrap must not overwrite the Operator-managed alert Secret" >&2
   exit 1
