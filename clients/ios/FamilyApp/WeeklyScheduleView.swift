@@ -15,12 +15,18 @@ struct WeeklyScheduleView: View {
         memberStore: any FamilyMemberStore,
         notificationStore: any ConflictNotificationStore,
         allowsEditing: Bool = true,
-        locationSearch: any LocationSearch = EmptyLocationSearch()
+        locationSearch: any LocationSearch = EmptyLocationSearch(),
+        alertScheduler: (any EventAlertScheduler)? = nil
      ) {
         self.allowsEditing = allowsEditing
         self.locationSearch = locationSearch
         _viewModel = StateObject(
-            wrappedValue: WeeklyScheduleViewModel(eventStore: eventStore, memberStore: memberStore, notificationStore: notificationStore)
+            wrappedValue: WeeklyScheduleViewModel(
+                eventStore: eventStore,
+                memberStore: memberStore,
+                notificationStore: notificationStore,
+                alertScheduler: alertScheduler
+            )
          )
      }
 
@@ -32,6 +38,15 @@ struct WeeklyScheduleView: View {
                     subtitle: "One colorful week for the whole crew."
                 )
                 .padding(.bottom, 4)
+
+                if viewModel.isShowingCachedEvents {
+                    Label("Offline — showing saved schedule", systemImage: "wifi.slash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(AppTheme.purple.opacity(0.08))
+                }
 
                 daySections
                     .scrollContentBackground(.hidden)
@@ -87,7 +102,8 @@ struct WeeklyScheduleView: View {
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if allowsEditing && !occurrence.sourceEvent.isReadOnly {
+                                    if allowsEditing && !viewModel.isShowingCachedEvents
+                                        && !occurrence.sourceEvent.isReadOnly {
                                         editingEvent = occurrence.sourceEvent
                                     }
                                 }
@@ -119,7 +135,7 @@ struct WeeklyScheduleView: View {
             } label: {
                 Image(systemName: "line.3.horizontal.decrease.circle")
             }
-            if allowsEditing {
+            if allowsEditing && !viewModel.isShowingCachedEvents {
                 Button { isAddingEvent = true } label: { Image(systemName: "plus") }
             }
         }

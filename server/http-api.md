@@ -10,9 +10,11 @@ JSON requests use `Content-Type: application/json`. Dates are ISO 8601 strings.
 - `DELETE /v1/devices/{apnsToken}` removes that member's device.
 
 Event creates and updates send family-scoped APNs alerts. Conflict writes use a
-conflict-specific message. Due reminder alerts are sent only to devices registered
-by the reminder's assignees. Device registration is optional, and APNs failures never
-roll back PostgreSQL source-of-truth data.
+conflict-specific message. Scheduled native-event alerts are sent only to devices
+registered by the event's participants, including each occurrence of a recurring event.
+Due reminder alerts are sent only to devices registered by the reminder's assignees.
+Device registration is optional, and APNs failures never roll back PostgreSQL
+source-of-truth data.
 
 ## Synchronization
 
@@ -30,7 +32,9 @@ it changes. The app also refreshes whenever it becomes active.
 
 Event bodies use the Swift `FamilyEvent` fields, including `id`, `title`,
 `participantIDs`, `startTime`, `endTime`, `location`, `driver`, `source`, and
-`status`, and optional `recurrence`. `kidID` is temporarily included for
+`status`. Native events also support optional `alertLeadTimeMinutes` (`0`, `5`,
+`15`, `60`, `1440`, or null) and `recurrence`. An omitted alert on a write defaults
+to `0` (at start). `kidID` is temporarily included for
 compatibility and may be null. A recurrence contains `frequency` (`daily`,
 `weekly`, or `monthly`), a positive `interval`, and an ISO 8601 `endDate`.
 

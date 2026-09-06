@@ -8,13 +8,17 @@ struct SessionGateView<Content: View>: View {
 
     init(
         authentication: any Authentication,
+        onSessionEnded: @escaping @Sendable () async -> Void = {},
         @ViewBuilder content: @escaping (
             AuthSession,
             SignOutAction,
             DeleteAccountAction
         ) -> Content
     ) {
-        _viewModel = StateObject(wrappedValue: SessionGateViewModel(authentication: authentication))
+        _viewModel = StateObject(wrappedValue: SessionGateViewModel(
+            authentication: authentication,
+            onSessionEnded: onSessionEnded
+        ))
         self.content = content
     }
 
@@ -49,9 +53,14 @@ final class SessionGateViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published var invitationCode = ""
     private let authentication: any Authentication
+    private let onSessionEnded: @Sendable () async -> Void
 
-    init(authentication: any Authentication) {
+    init(
+        authentication: any Authentication,
+        onSessionEnded: @escaping @Sendable () async -> Void = {}
+    ) {
         self.authentication = authentication
+        self.onSessionEnded = onSessionEnded
     }
 
     func restoreSession() async {
@@ -62,6 +71,7 @@ final class SessionGateViewModel: ObservableObject {
     func signOut() async {
         do {
             try await authentication.signOut()
+            await onSessionEnded()
             session = nil
         } catch {
             errorMessage = "We couldn't sign you out. Please try again."
@@ -70,6 +80,7 @@ final class SessionGateViewModel: ObservableObject {
 
     func deleteAccount() async throws {
         try await authentication.deleteAccount()
+        await onSessionEnded()
         session = nil
         errorMessage = nil
     }

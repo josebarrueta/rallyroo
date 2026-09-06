@@ -52,14 +52,26 @@ public actor RemoteAuthentication: Authentication {
         guard let stored = try await sessionStore.load(), let token = stored.accessToken else {
             return nil
         }
-        let response = try await transport.send(HTTPRequest(
-            method: .get,
-            url: sessionsURL,
-            headers: ["Authorization": "Bearer \(token)"]
-        ))
+        let response: HTTPResponse
+        do {
+            response = try await transport.send(HTTPRequest(
+                method: .get,
+                url: sessionsURL,
+                headers: ["Authorization": "Bearer \(token)"]
+            ))
+        } catch {
+            // A previously validated, device-bound session can unlock that account's
+            // protected last-good cache while the network is unavailable.
+            session = stored
+            return stored
+        }
         if response.statusCode == 401 || response.statusCode == 403 {
             try await sessionStore.delete()
             return nil
+        }
+        if response.statusCode >= 500 {
+            session = stored
+            return stored
         }
         try response.requireSuccess()
         let validated = try JSONDecoder().decode(AuthSession.self, from: response.body)

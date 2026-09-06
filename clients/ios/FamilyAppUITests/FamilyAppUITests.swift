@@ -36,6 +36,18 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 5))
     }
 
+    func testNewEventDefaultsToAnAtStartAlert() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["Add"].tap()
+
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["At start"].exists)
+    }
+
     func testManualLocationRemainsSavableWhenSuggestionsAreUnavailable() {
         let app = XCUIApplication()
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"

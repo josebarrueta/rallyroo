@@ -13,6 +13,7 @@ struct AddEventSheet: View {
     @State private var selectedParticipantIDs: Set<KidID>
     @State private var startTime: Date
     @State private var endTime: Date
+    @State private var alertChoice: EventAlertChoice
     @State private var location: String
     @State private var driver: String
     @State private var repeatOption: RepeatOption
@@ -44,6 +45,9 @@ struct AddEventSheet: View {
         ))
         _startTime = State(initialValue: event?.startTime ?? .now)
         _endTime = State(initialValue: event?.endTime ?? .now.addingTimeInterval(60 * 60))
+        _alertChoice = State(initialValue: event.map {
+            EventAlertChoice(leadTime: $0.alertLeadTime)
+        } ?? .atStart)
         _location = State(initialValue: event?.location ?? "")
         _driver = State(initialValue: event?.driver ?? "")
         _repeatOption = State(initialValue: RepeatOption(recurrence: event?.recurrence))
@@ -67,6 +71,11 @@ struct AddEventSheet: View {
                 Section("Time") {
                     DatePicker("Starts", selection: $startTime)
                     DatePicker("Ends", selection: $endTime)
+                    Picker("Alert", selection: $alertChoice) {
+                        ForEach(EventAlertChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
                     Picker("Repeat", selection: $repeatOption) {
                         ForEach(RepeatOption.allCases) { option in
                             Text(option.title).tag(option)
@@ -225,6 +234,7 @@ struct AddEventSheet: View {
             driver: optionalText(driver),
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
+            alertLeadTime: alertChoice.leadTime,
             recurrence: repeatOption.recurrence(ending: recurrenceEndDate)
         )
     }
@@ -245,6 +255,35 @@ struct AddEventSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+}
+
+private enum EventAlertChoice: Int, CaseIterable, Identifiable {
+    case none = -1
+    case atStart = 0
+    case fiveMinutes = 5
+    case fifteenMinutes = 15
+    case oneHour = 60
+    case oneDay = 1_440
+
+    init(leadTime: EventAlertLeadTime?) {
+        self = leadTime.flatMap { Self(rawValue: $0.rawValue) } ?? .none
+    }
+
+    var id: Int { rawValue }
+    var leadTime: EventAlertLeadTime? {
+        rawValue < 0 ? nil : EventAlertLeadTime(rawValue: rawValue)
+    }
+
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .atStart: "At start"
+        case .fiveMinutes: "5 minutes before"
+        case .fifteenMinutes: "15 minutes before"
+        case .oneHour: "1 hour before"
+        case .oneDay: "1 day before"
+        }
     }
 }
 

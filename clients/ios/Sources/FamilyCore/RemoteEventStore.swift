@@ -66,24 +66,56 @@ extension HTTPResponse {
 }
 
 public actor RemoteEventStore: EventStore {
+    private struct CachedEvents: Codable {
+        let accountID: String
+        let events: [FamilyEvent]
+    }
+
     private let eventsURL: URL
     private let transport: any HTTPTransport
+    private let cacheURL: URL?
+    private let accountID: @Sendable () async throws -> String?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    public init(baseURL: URL, transport: any HTTPTransport = URLSessionHTTPTransport()) {
+    public init(
+        baseURL: URL,
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        cacheURL: URL? = nil,
+        accountID: @escaping @Sendable () async throws -> String? = { nil }
+    ) {
         eventsURL = baseURL.appending(path: "v1/events")
         self.transport = transport
+        self.cacheURL = cacheURL
+        self.accountID = accountID
         encoder = JSONEncoder()
         decoder = JSONDecoder()
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    public func events() async throws -> [FamilyEvent] {
-        let response = try await transport.send(HTTPRequest(method: .get, url: eventsURL))
-        try response.requireSuccess()
-        return try decoder.decode([FamilyEvent].self, from: response.body)
+    public func loadEvents() async throws -> EventSnapshot {
+        let activeAccountID = try await accountID()
+        do {
+            let response = try await transport.send(HTTPRequest(method: .get, url: eventsURL))
+            try response.requireSuccess()
+            let events = try decoder.decode([FamilyEvent].self, from: response.body)
+            if let activeAccountID {
+                try? writeCache(CachedEvents(accountID: activeAccountID, events: events))
+            }
+            return EventSnapshot(events: events, freshness: .fresh)
+        } catch {
+            if case RemoteStoreError.requestFailed(let statusCode) = error,
+               statusCode == 401 || statusCode == 403 {
+                throw error
+            }
+            guard let activeAccountID,
+                  let cached = try? readCache(),
+                  cached.accountID == activeAccountID else {
+                throw error
+            }
+            return EventSnapshot(events: cached.events, freshness: .cached)
+        }
     }
 
     public func save(_ event: FamilyEvent) async throws -> [EventConflict] {
@@ -106,6 +138,30 @@ public actor RemoteEventStore: EventStore {
         try response.requireSuccess()
     }
 
+    public func clearCache() async throws {
+        guard let cacheURL, FileManager.default.fileExists(atPath: cacheURL.path) else { return }
+        try FileManager.default.removeItem(at: cacheURL)
+    }
+
+    private func readCache() throws -> CachedEvents {
+        guard let cacheURL else { throw CocoaError(.fileNoSuchFile) }
+        return try decoder.decode(CachedEvents.self, from: Data(contentsOf: cacheURL))
+    }
+
+    private func writeCache(_ cache: CachedEvents) throws {
+        guard let cacheURL else { return }
+        try FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try encoder.encode(cache).write(to: cacheURL, options: .atomic)
+#if os(iOS)
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: cacheURL.path
+        )
+#endif
+    }
 }
 
 private struct SaveResponse: Codable {

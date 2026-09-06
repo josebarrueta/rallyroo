@@ -54,6 +54,29 @@ final class RemoteAuthenticationTests: XCTestCase {
         XCTAssertEqual(webRequest.challenge, expectedChallenge)
     }
 
+    func testRestoresTheStoredSessionWhenValidationIsOffline() async throws {
+        let storedSession = AuthSession(
+            accountID: "account-1",
+            displayName: "Alex",
+            role: .parent,
+            accessToken: "secret-token"
+        )
+        let sessionStore = TestAuthSessionStore()
+        try await sessionStore.save(storedSession)
+        let authentication: any Authentication = RemoteAuthentication(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: OfflineAuthenticationHTTPTransport(),
+            webSession: StubOAuthWebSession(
+                callbackURL: URL(string: "rallyroo://oauth-callback")!
+            ),
+            sessionStore: sessionStore
+        )
+
+        let restored = try await authentication.currentSession()
+
+        XCTAssertEqual(restored, storedSession)
+    }
+
     func testDeletesTheRemoteAccountAndClearsTheStoredSession() async throws {
         let storedSession = AuthSession(
             accountID: "account-1",
@@ -152,6 +175,14 @@ private actor TestAuthSessionStore: AuthSessionStore {
     func load() async throws -> AuthSession? { session }
     func save(_ session: AuthSession) async throws { self.session = session }
     func delete() async throws { session = nil }
+}
+
+private struct OfflineAuthenticationError: Error {}
+
+private actor OfflineAuthenticationHTTPTransport: HTTPTransport {
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        throw OfflineAuthenticationError()
+    }
 }
 
 private actor AuthenticationHTTPTransport: HTTPTransport {

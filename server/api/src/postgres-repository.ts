@@ -9,6 +9,7 @@ import type {
   FamilyMember,
   FamilyReminder,
 } from "./domain.js";
+import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type { RallyrooRepository } from "./repository.js";
 import type {
   CalendarSource,
@@ -376,7 +377,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
     const result = await this.pool.query<EventRow>(
       `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-              end_time, location, driver, source, status, recurrence
+              end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
@@ -387,24 +388,117 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query(
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
-         location, driver, source, status, recurrence
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         location, driver, source, status, alert_lead_time_minutes, recurrence
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
          end_time=EXCLUDED.end_time, location=EXCLUDED.location,
          driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+         alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence`,
       [
         event.familyID, event.id, event.title, event.kidID, event.participantIDs,
         event.startTime, event.endTime, event.location, event.driver,
-        event.source, event.status, event.recurrence ? JSON.stringify(event.recurrence) : null,
+        event.source, event.status, event.alertLeadTimeMinutes ?? null,
+        event.recurrence ? JSON.stringify(event.recurrence) : null,
       ],
     );
   }
 
   async deleteEvent(familyID: string, eventID: string): Promise<void> {
     await this.pool.query("DELETE FROM events WHERE family_id = $1 AND id = $2", [familyID, eventID]);
+  }
+
+  async claimDueEventNotifications(now: Date, limit: number): Promise<DueEventNotification[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const events = await client.query<EventRow>(
+        `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
+                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+         FROM events
+         WHERE alert_lead_time_minutes IS NOT NULL
+           AND start_time <= $1::timestamptz + interval '1 day'
+           AND (
+             (recurrence IS NULL AND start_time >= $1::timestamptz - interval '5 minutes')
+             OR
+             (recurrence IS NOT NULL
+              AND (recurrence->>'endDate')::timestamptz >= $1::timestamptz - interval '5 minutes')
+           )`,
+        [now.toISOString()],
+      );
+      const due = events.rows.flatMap((row) => {
+        const event = eventFromRow(row);
+        const through = new Date(now.getTime() + event.alertLeadTimeMinutes! * 60 * 1_000);
+        return eventOccurrenceStarts(event, through)
+          .filter((start) => {
+            const notifyAt = start.getTime() - event.alertLeadTimeMinutes! * 60 * 1_000;
+            return notifyAt <= now.getTime() && start.getTime() >= now.getTime() - 5 * 60 * 1_000;
+          })
+          .map((start) => ({ event, occurrenceStart: start.toISOString() }));
+      }).sort((left, right) => left.occurrenceStart.localeCompare(right.occurrenceStart));
+      const claimed: DueEventNotification[] = [];
+      for (const notification of due) {
+        if (claimed.length >= limit) break;
+        const result = await client.query(
+          `INSERT INTO event_notification_deliveries (
+             family_id, event_id, occurrence_start, notification_claimed_at
+           ) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (family_id, event_id, occurrence_start) DO UPDATE
+           SET notification_claimed_at = EXCLUDED.notification_claimed_at
+           WHERE event_notification_deliveries.notification_sent_at IS NULL
+             AND (
+               event_notification_deliveries.notification_claimed_at IS NULL
+               OR event_notification_deliveries.notification_claimed_at < $4::timestamptz - interval '5 minutes'
+             )
+           RETURNING occurrence_start`,
+          [
+            notification.event.familyID,
+            notification.event.id,
+            notification.occurrenceStart,
+            now.toISOString(),
+          ],
+        );
+        if (result.rows[0]) claimed.push(notification);
+      }
+      await client.query("COMMIT");
+      return claimed;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markEventNotificationSent(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE event_notification_deliveries
+       SET notification_claimed_at = NULL, notification_sent_at = $4
+       WHERE family_id = $1 AND event_id = $2 AND occurrence_start = $3
+         AND notification_claimed_at = $4`,
+      [familyID, eventID, occurrenceStart, claimedAt.toISOString()],
+    );
+  }
+
+  async releaseEventNotificationClaim(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE event_notification_deliveries SET notification_claimed_at = NULL
+       WHERE family_id = $1 AND event_id = $2 AND occurrence_start = $3
+         AND notification_sent_at IS NULL AND notification_claimed_at = $4`,
+      [familyID, eventID, occurrenceStart, claimedAt.toISOString()],
+    );
   }
 
   async saveCalendarSource(source: CalendarSource): Promise<void> {
@@ -689,6 +783,7 @@ interface EventRow {
   driver: string | null;
   source: FamilyEvent["source"];
   status: FamilyEvent["status"];
+  alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
 }
 
@@ -783,6 +878,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
     driver: row.driver,
     source: row.source,
     status: row.status,
+    alertLeadTimeMinutes: row.alert_lead_time_minutes,
     recurrence: row.recurrence,
   };
 }
@@ -800,6 +896,26 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     alertLeadTimeMinutes: row.alert_lead_time_minutes,
     createdByMemberID: row.created_by_member_id,
   };
+}
+
+function eventOccurrenceStarts(event: FamilyEvent, through: Date): Date[] {
+  const first = new Date(event.startTime);
+  if (!event.recurrence) return [first];
+  const recurrenceEnd = new Date(event.recurrence.endDate);
+  const starts: Date[] = [];
+  let current = first;
+  while (current <= recurrenceEnd && current <= through) {
+    starts.push(current);
+    const next = new Date(current);
+    switch (event.recurrence.frequency) {
+      case "daily": next.setUTCDate(next.getUTCDate() + event.recurrence.interval); break;
+      case "weekly": next.setUTCDate(next.getUTCDate() + 7 * event.recurrence.interval); break;
+      case "monthly": next.setUTCMonth(next.getUTCMonth() + event.recurrence.interval); break;
+    }
+    if (next <= current) break;
+    current = next;
+  }
+  return starts;
 }
 
 function asISOString(value: Date | string): string {

@@ -64,10 +64,13 @@ a custom server or another provider can implement `server/http-api.md`. Parents 
 add HTTPS iCalendar feeds for TeamSnap, schools, and sports calendars from Settings.
 Imported events remain read-only, participate in conflict detection, and consolidate
 exact duplicates across family members' subscriptions while preserving combined
-participants and provenance. Family reminders have one due instant, shared completion,
-multiple assignees, and optional alerts without blocking schedule time or creating
-conflicts. Local mode schedules on-device alerts; remote mode delivers assignee-only
-APNs notifications from the API. Conflict alerts remain local to each device for now.
+participants and provenance. Native events support participant-only alerts at their
+start or a selected lead time, including recurring occurrences. Family reminders have
+one due instant, shared completion, multiple assignees, and optional alerts without
+blocking schedule time or creating conflicts. Local mode schedules on-device alerts;
+remote mode delivers participant- or assignee-scoped APNs notifications from the API.
+Remote schedules keep an account-scoped last-good cache for read-only offline viewing.
+Conflict alerts remain local to each device for now.
 
 ## Secret scanning
 

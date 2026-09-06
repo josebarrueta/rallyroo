@@ -19,6 +19,7 @@ import {
 import { RallyrooMetrics } from "./metrics.js";
 import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
+import { EventNotificationDispatcher } from "./event-notification-dispatcher.js";
 import { ReminderNotificationDispatcher } from "./reminder-notification-dispatcher.js";
 import { RedisCache } from "./redis-cache.js";
 import { ResendInvitationEmailSender } from "./resend-invitation-email-sender.js";
@@ -47,6 +48,10 @@ const repository = PostgresRallyrooRepository.fromConfiguration(databaseConfigur
 const pushNotificationProvider = APNSPushNotificationProvider.fromEnvironment()
   ?? new NoopPushNotificationProvider();
 const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
+  repository,
+  pushNotificationProvider,
+});
+const eventNotificationDispatcher = new EventNotificationDispatcher({
   repository,
   pushNotificationProvider,
 });
@@ -95,22 +100,29 @@ const app = buildApp({
     },
   },
 });
-let reminderDispatchIsRunning = false;
-const reminderDispatchInterval = setInterval(async () => {
-  if (reminderDispatchIsRunning) return;
-  reminderDispatchIsRunning = true;
+let notificationDispatchIsRunning = false;
+const notificationDispatchInterval = setInterval(async () => {
+  if (notificationDispatchIsRunning) return;
+  notificationDispatchIsRunning = true;
   try {
-    await reminderNotificationDispatcher.dispatchDue();
-  } catch (error) {
-    app.log.error({ error }, "Reminder notification dispatch failed");
+    const results = await Promise.allSettled([
+      reminderNotificationDispatcher.dispatchDue(),
+      eventNotificationDispatcher.dispatchDue(),
+    ]);
+    if (results[0]?.status === "rejected") {
+      app.log.error({ error: results[0].reason }, "Reminder notification dispatch failed");
+    }
+    if (results[1]?.status === "rejected") {
+      app.log.error({ error: results[1].reason }, "Event notification dispatch failed");
+    }
   } finally {
-    reminderDispatchIsRunning = false;
+    notificationDispatchIsRunning = false;
   }
 }, 30_000);
-reminderDispatchInterval.unref();
+notificationDispatchInterval.unref();
 
 app.addHook("onClose", async () => {
-  clearInterval(reminderDispatchInterval);
+  clearInterval(notificationDispatchInterval);
   await Promise.all([cache.close?.(), repository.close()]);
 });
 
@@ -118,4 +130,7 @@ const port = Number(process.env.PORT ?? "3000");
 await app.listen({ port, host: process.env.HOST ?? "0.0.0.0" });
 void reminderNotificationDispatcher.dispatchDue().catch((error) => {
   app.log.error({ error }, "Initial reminder notification dispatch failed");
+});
+void eventNotificationDispatcher.dispatchDue().catch((error) => {
+  app.log.error({ error }, "Initial event notification dispatch failed");
 });

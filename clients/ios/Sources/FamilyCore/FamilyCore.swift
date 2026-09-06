@@ -42,6 +42,14 @@ public enum EventStatus: String, Codable, Sendable {
     case pendingReview = "pending_review"
 }
 
+public enum EventAlertLeadTime: Int, Codable, CaseIterable, Sendable {
+    case atStart = 0
+    case fiveMinutes = 5
+    case fifteenMinutes = 15
+    case oneHour = 60
+    case oneDay = 1_440
+}
+
 public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public var title: String
@@ -53,6 +61,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var driver: String?
     public var source: EventSource
     public var status: EventStatus
+    public var alertLeadTime: EventAlertLeadTime?
     public var recurrence: EventRecurrence?
     public var isReadOnly: Bool
     public var provenance: [EventProvenance]
@@ -60,6 +69,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, kidID, participantIDs, startTime, endTime, location
         case driver, source, status, recurrence, provenance
+        case alertLeadTime = "alertLeadTimeMinutes"
         case isReadOnly = "readOnly"
     }
 
@@ -74,6 +84,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         driver: String? = nil,
         source: EventSource,
         status: EventStatus,
+        alertLeadTime: EventAlertLeadTime? = .atStart,
         recurrence: EventRecurrence? = nil,
         isReadOnly: Bool = false,
         provenance: [EventProvenance] = []
@@ -88,6 +99,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.driver = driver
         self.source = source
         self.status = status
+        self.alertLeadTime = alertLeadTime
         self.recurrence = recurrence
         self.isReadOnly = isReadOnly
         self.provenance = provenance
@@ -105,6 +117,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         driver = try container.decodeIfPresent(String.self, forKey: .driver)
         source = try container.decode(EventSource.self, forKey: .source)
         status = try container.decode(EventStatus.self, forKey: .status)
+        alertLeadTime = try container.decodeIfPresent(EventAlertLeadTime.self, forKey: .alertLeadTime)
         recurrence = try container.decodeIfPresent(EventRecurrence.self, forKey: .recurrence)
         isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
         provenance = try container.decodeIfPresent([EventProvenance].self, forKey: .provenance) ?? []
@@ -131,15 +144,44 @@ public struct EventConflict: Equatable, Sendable {
     }
 }
 
+public enum EventDataFreshness: Equatable, Sendable {
+    case fresh
+    case cached
+}
+
+public struct EventSnapshot: Equatable, Sendable {
+    public let events: [FamilyEvent]
+    public let freshness: EventDataFreshness
+
+    public init(events: [FamilyEvent], freshness: EventDataFreshness) {
+        self.events = events
+        self.freshness = freshness
+    }
+}
+
 /// Backend-neutral persistence boundary for family events.
 ///
 /// The app depends on this protocol; local and remote backends supply conforming
 /// implementations without exposing their transport or storage details.
+public protocol EventAlertScheduler: Sendable {
+    func schedule(_ event: FamilyEvent) async throws
+    func cancel(_ event: FamilyEvent) async
+}
+
 public protocol EventStore: Sendable {
     @discardableResult
     func save(_ event: FamilyEvent) async throws -> [EventConflict]
     func delete(_ event: FamilyEvent) async throws
-    func events() async throws -> [FamilyEvent]
+    func loadEvents() async throws -> EventSnapshot
+    func clearCache() async throws
+}
+
+public extension EventStore {
+    func events() async throws -> [FamilyEvent] {
+        try await loadEvents().events
+    }
+
+    func clearCache() async throws {}
 }
 
 public actor LocalEventStore: EventStore {
@@ -175,7 +217,11 @@ public actor LocalEventStore: EventStore {
         try write(savedEvents)
     }
 
-    public func events() async throws -> [FamilyEvent] {
+    public func loadEvents() async throws -> EventSnapshot {
+        EventSnapshot(events: try storedEvents(), freshness: .fresh)
+    }
+
+    private func storedEvents() throws -> [FamilyEvent] {
         guard FileManager.default.fileExists(atPath: storageURL.path) else {
             return []
         }
