@@ -1959,6 +1959,59 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("preserves selected weekdays when an older client edits a multi-day series", async () => {
+    const data = repository();
+    const id = "00000000-0000-4000-8000-000000000097";
+    await data.saveEvent({
+      id,
+      familyID: "family-1",
+      title: "Practice",
+      kidID: "kid-1",
+      participantIDs: ["kid-1"],
+      startTime: "2026-09-07T18:00:00Z",
+      endTime: "2026-09-07T19:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [1, 3],
+        endDate: "2027-01-01T18:00:00Z",
+      },
+    });
+    const app = buildApp({ identityProvider, repository: data });
+
+    const response = await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=false`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id,
+        title: "Renamed practice",
+        kidID: "kid-1",
+        participantIDs: ["kid-1"],
+        startTime: "2026-09-07T18:00:00Z",
+        endTime: "2026-09-07T19:00:00Z",
+        location: null,
+        driver: null,
+        source: "manual",
+        status: "confirmed",
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          endDate: "2027-01-01T18:00:00Z",
+        },
+      },
+    });
+
+    const saved = (await data.eventsForFamily("family-1")).find((event) => event.id === id);
+    expect(response.statusCode).toBe(200);
+    expect(saved?.recurrence?.weekdays).toEqual([1, 3]);
+    await app.close();
+  });
+
   it("stores recurrence and reports conflicts when a parent writes an event", async () => {
     const data = repository();
     const app = buildApp({ identityProvider, repository: data });

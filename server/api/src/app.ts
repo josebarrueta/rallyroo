@@ -718,14 +718,21 @@ export function buildApp({
     if (referencedMemberIDs.some((memberID) => !memberIDs.has(memberID))) {
       return reply.code(400).send({ error: "unknown_participant" });
     }
+    const nativeEvents = await repository.eventsForFamily(account.familyID);
+    const existingEvent = nativeEvents.find((candidate) => candidate.id.toLowerCase() === eventID);
     const { recurrence, ...eventData } = parsed.data;
+    const existingWeekdays = existingEvent?.recurrence?.weekdays;
+    const effectiveRecurrence = recurrence?.frequency === "weekly"
+      && recurrence.weekdays === undefined
+      && existingWeekdays?.length
+      ? { ...recurrence, weekdays: existingWeekdays }
+      : recurrence;
     const event: FamilyEvent = {
       ...eventData,
       id: eventID,
       familyID: account.familyID,
-      ...(recurrence !== undefined ? { recurrence } : {}),
+      ...(effectiveRecurrence !== undefined ? { recurrence: effectiveRecurrence } : {}),
     };
-    const nativeEvents = await repository.eventsForFamily(account.familyID);
     const visibleImportedEvents = calendarSources
       ? await calendarSources.events(account.familyID, account.memberID)
       : [];
