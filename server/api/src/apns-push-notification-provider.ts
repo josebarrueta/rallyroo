@@ -79,6 +79,7 @@ export class APNSPushNotificationProvider implements PushNotificationProvider {
         "apns-topic": this.configuration.bundleID,
         "apns-push-type": "alert",
         "apns-priority": "10",
+        ...(notification.collapseID ? { "apns-collapse-id": notification.collapseID } : {}),
         "content-type": "application/json",
       });
       let status = 0;

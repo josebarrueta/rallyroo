@@ -20,6 +20,10 @@ _Avoid_: Reminder, task
 An alert-oriented family responsibility with one due instant, one or more assignees, and no duration. It never participates in event overlap conflicts.
 _Avoid_: Event, appointment
 
+**Event mutation**:
+A parent-authorized create, update, or delete of a native Event, serialized per Family and identified by a stable idempotency key. Its authoritative Event change, Family change cursor, and optional schedule update notification intent are recorded atomically before external delivery is attempted.
+_Avoid_: Imported calendar refresh, Event occurrence, transport retry
+
 **Assignee**:
 A family member responsible for a reminder. A reminder may have multiple assignees, but its completion state is shared.
 _Avoid_: Participant, attendee
@@ -37,8 +41,8 @@ The optional supported interval before a reminder's due instant or an event occu
 _Avoid_: Event duration, snooze
 
 **Schedule update notification**:
-A one-time push sent immediately after a parent saves an event and explicitly chooses to notify its participants. It summarizes the saved series once and is separate from occurrence-based event alerts.
-_Avoid_: Event alert, reminder alert
+A durable, one-time notification intent recorded atomically when a parent saves an event and explicitly chooses to notify its participants. Delivery is attempted promptly and retried after provider failure. It summarizes the saved series once, excludes the saving parent, and is separate from occurrence-based event alerts.
+_Avoid_: Event alert, reminder alert, best-effort push
 
 **Schedule draft**:
 A temporary, review-only event or reminder proposal extracted from typed, transcribed, or recognized text. It does not enter the family schedule until a parent explicitly confirms it.

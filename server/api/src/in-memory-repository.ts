@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type {
+  ClaimedScheduleUpdateNotification,
+  EventMutationPlan,
+  StoredEventMutationResult,
+  EventMutationSnapshot,
+  ScheduleUpdateNotificationIntent,
+} from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { RallyrooRepository } from "./repository.js";
 
@@ -23,6 +30,17 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   private readonly sentReminderNotifications = new Set<string>();
   private readonly claimedEventNotifications = new Map<string, Date>();
   private readonly sentEventNotifications = new Set<string>();
+  private readonly eventMutationResults = new Map<string, StoredEventMutationResult>();
+  private readonly scheduleUpdateNotifications = new Map<string, {
+    familyID: string;
+    idempotencyKey: string;
+    notification: ScheduleUpdateNotificationIntent;
+    status: "pending" | "claimed" | "sent";
+    claimedAt: Date | null;
+    attemptCount: number;
+    lastErrorCategory: string | null;
+    createdAt: Date;
+  }>();
 
   constructor(seed: SeedData = {}) {
     this.accounts = [...(seed.accounts ?? [])];
@@ -201,6 +219,106 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
 
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
     return this.events.filter((event) => event.familyID === familyID);
+  }
+
+  async eventMutationResult(
+    familyID: string,
+    idempotencyKey: string,
+  ): Promise<StoredEventMutationResult | null> {
+    const result = this.eventMutationResults.get(`${familyID}:${idempotencyKey}`);
+    return result ? structuredClone(result) : null;
+  }
+
+  async performEventMutation(
+    familyID: string,
+    idempotencyKey: string,
+    prepare: (snapshot: EventMutationSnapshot) => EventMutationPlan,
+  ): Promise<StoredEventMutationResult> {
+    const mutationKey = `${familyID}:${idempotencyKey}`;
+    const previous = this.eventMutationResults.get(mutationKey);
+    if (previous) return structuredClone(previous);
+
+    const plan = prepare({
+      events: this.events.filter((event) => event.familyID === familyID).map((event) => structuredClone(event)),
+      members: this.members.filter((member) => member.familyID === familyID).map((member) => structuredClone(member)),
+    });
+    const action = plan.action;
+    if (action.kind === "save") {
+      const index = this.events.findIndex((candidate) =>
+        candidate.familyID === familyID && candidate.id === action.event.id
+      );
+      if (index >= 0) this.events[index] = structuredClone(action.event);
+      else this.events.push(structuredClone(action.event));
+    } else {
+      removeWhere(this.events, (event) => event.familyID === familyID && event.id === action.eventID);
+    }
+    this.changeVersions.set(familyID, (this.changeVersions.get(familyID) ?? 0) + 1);
+    if (plan.notification) {
+      this.scheduleUpdateNotifications.set(plan.notification.id, {
+        familyID,
+        idempotencyKey,
+        notification: structuredClone(plan.notification),
+        status: "pending",
+        claimedAt: null,
+        attemptCount: 0,
+        lastErrorCategory: null,
+        createdAt: new Date(),
+      });
+    }
+    this.eventMutationResults.set(mutationKey, structuredClone(plan.result));
+    return structuredClone(plan.result);
+  }
+
+  async claimScheduleUpdateNotifications(
+    now: Date,
+    limit: number,
+    notificationID?: string,
+  ): Promise<ClaimedScheduleUpdateNotification[]> {
+    const staleBefore = now.getTime() - 5 * 60 * 1_000;
+    const candidates = [...this.scheduleUpdateNotifications.values()]
+      .filter((entry) =>
+        (!notificationID || entry.notification.id === notificationID)
+        && (entry.status === "pending"
+          || (entry.status === "claimed" && (entry.claimedAt?.getTime() ?? 0) < staleBefore))
+      )
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+      .slice(0, limit);
+    return candidates.map((entry) => {
+      entry.status = "claimed";
+      entry.claimedAt = now;
+      entry.attemptCount += 1;
+      return {
+        ...structuredClone(entry.notification),
+        familyID: entry.familyID,
+        idempotencyKey: entry.idempotencyKey,
+        claimedAt: now,
+      };
+    });
+  }
+
+  async completeScheduleUpdateNotification(
+    notification: ClaimedScheduleUpdateNotification,
+    outcome: "sent" | "noRecipients",
+    _completedAt: Date,
+  ): Promise<void> {
+    const entry = this.scheduleUpdateNotifications.get(notification.id);
+    if (!entry || entry.claimedAt?.getTime() !== notification.claimedAt.getTime()) return;
+    entry.status = "sent";
+    entry.claimedAt = null;
+    const key = `${notification.familyID}:${notification.idempotencyKey}`;
+    const result = this.eventMutationResults.get(key);
+    if (result) result.notificationOutcome = outcome;
+  }
+
+  async releaseScheduleUpdateNotification(
+    notification: ClaimedScheduleUpdateNotification,
+    errorCategory: string,
+  ): Promise<void> {
+    const entry = this.scheduleUpdateNotifications.get(notification.id);
+    if (!entry || entry.claimedAt?.getTime() !== notification.claimedAt.getTime()) return;
+    entry.status = "pending";
+    entry.claimedAt = null;
+    entry.lastErrorCategory = errorCategory;
   }
 
   async saveEvent(event: FamilyEvent): Promise<void> {

@@ -2,6 +2,7 @@ export interface PushNotification {
   title: string;
   body: string;
   data?: Record<string, string>;
+  collapseID?: string;
 }
 
 export interface PushNotificationProvider {
