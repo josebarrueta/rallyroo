@@ -201,7 +201,9 @@ final class FamilyMembersViewModel: ObservableObject {
     func save(_ member: FamilyMember) async throws { try await memberStore.save(member); await load() }
     func delete(_ member: FamilyMember) async throws { try await deletionService.delete(member); await load() }
     var canInvite: Bool { invitationStore != nil }
-    func saveEvent(_ event: FamilyEvent) async throws -> [EventConflict] { try await eventStore.save(event) }
+    func saveEvent(_ event: FamilyEvent, notifyParticipants: Bool) async throws -> [EventConflict] {
+        try await eventStore.save(event, notifyParticipants: notifyParticipants)
+    }
     func invite(
         role: FamilyMemberRole,
         recipientEmail: String,

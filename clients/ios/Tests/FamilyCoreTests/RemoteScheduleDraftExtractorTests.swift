@@ -37,6 +37,7 @@ final class RemoteScheduleDraftExtractorTests: XCTestCase {
         let request = try XCTUnwrap(recordedRequest)
         XCTAssertEqual(request.method, .post)
         XCTAssertEqual(request.url.path, "/v1/schedule-drafts")
+        XCTAssertEqual(request.timeoutInterval, 60)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: request.body!) as? [String: Any])
         XCTAssertEqual(json["inputType"] as? String, "voice")
         XCTAssertEqual(json["text"] as? String, "Soccer practice Tuesday at five")

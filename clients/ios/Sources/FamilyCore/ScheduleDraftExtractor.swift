@@ -88,7 +88,8 @@ public actor RemoteScheduleDraftExtractor: ScheduleDraftExtractor {
             method: .post,
             url: endpoint,
             headers: ["Content-Type": "application/json"],
-            body: try encoder.encode(Request(inputType: inputType, text: text, timeZone: timeZone))
+            body: try encoder.encode(Request(inputType: inputType, text: text, timeZone: timeZone)),
+            timeoutInterval: 60
         ))
         try response.requireSuccess()
         return try decoder.decode(Response.self, from: response.body).drafts

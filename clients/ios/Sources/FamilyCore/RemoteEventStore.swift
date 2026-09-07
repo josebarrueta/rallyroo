@@ -13,12 +13,20 @@ public struct HTTPRequest: Equatable, Sendable {
     public let url: URL
     public let headers: [String: String]
     public let body: Data?
+    public let timeoutInterval: TimeInterval
 
-    public init(method: HTTPMethod, url: URL, headers: [String: String] = [:], body: Data? = nil) {
+    public init(
+        method: HTTPMethod,
+        url: URL,
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        timeoutInterval: TimeInterval = 60
+    ) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.timeoutInterval = timeoutInterval
     }
 }
 
@@ -43,6 +51,7 @@ public actor URLSessionHTTPTransport: HTTPTransport {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method.rawValue
         urlRequest.httpBody = request.body
+        urlRequest.timeoutInterval = request.timeoutInterval
         request.headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -118,10 +127,18 @@ public actor RemoteEventStore: EventStore {
         }
     }
 
-    public func save(_ event: FamilyEvent) async throws -> [EventConflict] {
+    public func save(_ event: FamilyEvent, notifyParticipants: Bool = true) async throws -> [EventConflict] {
+        var components = URLComponents(
+            url: eventsURL.appending(path: event.id.uuidString),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [URLQueryItem(
+            name: "notifyParticipants",
+            value: notifyParticipants.description
+        )]
         let response = try await transport.send(HTTPRequest(
             method: .put,
-            url: eventsURL.appending(path: event.id.uuidString),
+            url: components.url!,
             headers: ["Content-Type": "application/json"],
             body: try encoder.encode(event)
         ))

@@ -49,8 +49,11 @@ final class WeeklyScheduleViewModel: ObservableObject {
         }
     }
 
-    func addEvent(_ event: FamilyEvent) async throws -> [EventConflict] {
-        let conflicts = try await eventStore.save(event)
+    func addEvent(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool = true
+    ) async throws -> [EventConflict] {
+        let conflicts = try await eventStore.save(event, notifyParticipants: notifyParticipants)
         try? await alertScheduler?.schedule(event)
         if !conflicts.isEmpty, alertPreferences.areConflictAlertsEnabled {
             let message = ConflictNotificationMessage.make(

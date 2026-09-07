@@ -9,16 +9,19 @@ import FamilyCore
 struct ScheduleCaptureSheet: View {
     let extractor: any ScheduleDraftExtractor
     let members: [FamilyMember]
-    let onSaveEvent: (FamilyEvent) async throws -> Void
+    let onSaveEvent: (FamilyEvent, Bool) async throws -> Void
     let onSaveReminder: (FamilyReminder) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var speech = ScheduleSpeechTranscriber()
+    @State private var pauseDetector = SpeechPauseDetector()
     @State private var inputText = ""
     @State private var inputType: ScheduleDraftInputType = .text
     @State private var isShowingPhotoPicker = false
+    @State private var isShowingNotifyPrompt = false
     @State private var drafts: [EditableScheduleDraft] = []
     @State private var isWorking = false
+    @State private var workingMessage = ""
     @State private var errorMessage: String?
 
     var body: some View {
@@ -31,14 +34,22 @@ struct ScheduleCaptureSheet: View {
                     HStack {
                         Button {
                             inputType = .voice
-                            speech.toggle()
+                            if speech.isRecording {
+                                finishVoiceCapture()
+                            } else {
+                                speech.toggle()
+                            }
                         } label: {
                             Label(speech.isRecording ? "Stop" : "Speak", systemImage: speech.isRecording ? "stop.circle" : "mic")
                         }
+                        .buttonStyle(.bordered)
                         Spacer()
                         Button("Read image", systemImage: "photo") {
+                            pauseDetector.cancel()
+                            speech.stop()
                             isShowingPhotoPicker = true
                         }
+                        .buttonStyle(.bordered)
                     }
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
@@ -98,10 +109,12 @@ struct ScheduleCaptureSheet: View {
                 }
 
                 if isWorking {
-                    HStack {
-                        Spacer()
-                        ProgressView(drafts.isEmpty ? "Making drafts…" : "Working…")
-                        Spacer()
+                    Section {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                        Text(workingMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 if let errorMessage {
@@ -111,22 +124,45 @@ struct ScheduleCaptureSheet: View {
             .navigationTitle("Create with AI")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { speech.stop(); dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if drafts.isEmpty {
-                        Button("Make drafts") { extract() }
-                            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
-                    } else {
-                        Button("Add selected") { save() }
-                            .disabled(!drafts.contains(where: { $0.isSelected && $0.canImport }) || isWorking)
+                    Button("Cancel") {
+                        pauseDetector.cancel()
+                        speech.stop()
+                        dismiss()
                     }
                 }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isWorking {
+                        ProgressView()
+                    } else if drafts.isEmpty {
+                        Button("Create") { extract() }
+                            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else {
+                        Button("Add selected") {
+                            if drafts.contains(where: { $0.isSelected && $0.canImport && $0.kind == .event }) {
+                                isShowingNotifyPrompt = true
+                            } else {
+                                save(notifyParticipants: false)
+                            }
+                        }
+                        .disabled(!drafts.contains(where: { $0.isSelected && $0.canImport }))
+                    }
+                }
+            }
+            .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
+                Button("Yes, notify") { save(notifyParticipants: true) }
+                    .keyboardShortcut(.defaultAction)
+                Button("Add without notifying") { save(notifyParticipants: false) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Send one immediate schedule-update notification for each selected event? Scheduled event alerts remain separate.")
             }
             .onChange(of: speech.transcript) { transcript in
                 guard speech.isRecording || !transcript.isEmpty else { return }
                 inputText = transcript
                 inputType = .voice
+                pauseDetector.receivedSpeech {
+                    finishVoiceCapture()
+                }
             }
             .sheet(isPresented: $isShowingPhotoPicker) {
                 SchedulePhotoPicker { data in
@@ -137,6 +173,10 @@ struct ScheduleCaptureSheet: View {
             }
             .onChange(of: speech.errorMessage) { message in
                 if let message { errorMessage = message }
+            }
+            .onDisappear {
+                pauseDetector.cancel()
+                speech.stop()
             }
         }
     }
@@ -151,9 +191,19 @@ struct ScheduleCaptureSheet: View {
         )
     }
 
+    private func finishVoiceCapture() {
+        guard !isWorking,
+              !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        pauseDetector.cancel()
+        speech.stop()
+        extract()
+    }
+
     private func extract() {
         isWorking = true
+        workingMessage = "Creating your schedule… This can take up to 60 seconds."
         errorMessage = nil
+        pauseDetector.cancel()
         speech.stop()
         Task {
             defer { isWorking = false }
@@ -172,19 +222,26 @@ struct ScheduleCaptureSheet: View {
 
     private func recognize(_ data: Data) async {
         isWorking = true
+        workingMessage = "Reading text from the image…"
         errorMessage = nil
-        defer { isWorking = false }
         do {
             inputText = try await ScheduleImageTextRecognizer.recognize(data)
             inputType = .image
-            if inputText.isEmpty { errorMessage = "No readable text was found in that image." }
+            isWorking = false
+            if inputText.isEmpty {
+                errorMessage = "No readable text was found in that image."
+            } else {
+                extract()
+            }
         } catch {
+            isWorking = false
             errorMessage = "Rallyroo could not read that image."
         }
     }
 
-    private func save() {
+    private func save(notifyParticipants: Bool) {
         isWorking = true
+        workingMessage = "Adding selected items…"
         errorMessage = nil
         Task {
             defer { isWorking = false }
@@ -193,7 +250,11 @@ struct ScheduleCaptureSheet: View {
                 for index in selectedIndices {
                     let draft = drafts[index]
                     switch draft.kind {
-                    case .event: try await onSaveEvent(draft.event(source: inputType == .voice ? .voice : .manual))
+                    case .event:
+                        try await onSaveEvent(
+                            draft.event(source: inputType == .voice ? .voice : .manual),
+                            notifyParticipants
+                        )
                     case .reminder: try await onSaveReminder(draft.reminder)
                     }
                     drafts[index].isSelected = false
