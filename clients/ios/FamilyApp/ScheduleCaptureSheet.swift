@@ -1,7 +1,8 @@
 import AVFoundation
 import PhotosUI
-import Speech
+@preconcurrency import Speech
 import SwiftUI
+import UniformTypeIdentifiers
 import Vision
 import FamilyCore
 
@@ -15,7 +16,7 @@ struct ScheduleCaptureSheet: View {
     @StateObject private var speech = ScheduleSpeechTranscriber()
     @State private var inputText = ""
     @State private var inputType: ScheduleDraftInputType = .text
-    @State private var photoItem: PhotosPickerItem?
+    @State private var isShowingPhotoPicker = false
     @State private var drafts: [EditableScheduleDraft] = []
     @State private var isWorking = false
     @State private var errorMessage: String?
@@ -35,8 +36,8 @@ struct ScheduleCaptureSheet: View {
                             Label(speech.isRecording ? "Stop" : "Speak", systemImage: speech.isRecording ? "stop.circle" : "mic")
                         }
                         Spacer()
-                        PhotosPicker(selection: $photoItem, matching: .images) {
-                            Label("Read image", systemImage: "photo")
+                        Button("Read image", systemImage: "photo") {
+                            isShowingPhotoPicker = true
                         }
                     }
                     Text("AI creates drafts only. Review every item before adding it.")
@@ -127,9 +128,12 @@ struct ScheduleCaptureSheet: View {
                 inputText = transcript
                 inputType = .voice
             }
-            .onChange(of: photoItem) { item in
-                guard let item else { return }
-                Task { await recognize(item) }
+            .sheet(isPresented: $isShowingPhotoPicker) {
+                SchedulePhotoPicker { data in
+                    isShowingPhotoPicker = false
+                    guard let data else { return }
+                    Task { await recognize(data) }
+                }
             }
             .onChange(of: speech.errorMessage) { message in
                 if let message { errorMessage = message }
@@ -166,14 +170,11 @@ struct ScheduleCaptureSheet: View {
         }
     }
 
-    private func recognize(_ item: PhotosPickerItem) async {
+    private func recognize(_ data: Data) async {
         isWorking = true
         errorMessage = nil
         defer { isWorking = false }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
-                throw ScheduleCaptureError.imageUnavailable
-            }
             inputText = try await ScheduleImageTextRecognizer.recognize(data)
             inputType = .image
             if inputText.isEmpty { errorMessage = "No readable text was found in that image." }
@@ -265,7 +266,43 @@ private struct EditableScheduleDraft: Identifiable {
     }
 }
 
-private enum ScheduleCaptureError: Error { case imageUnavailable, speechUnavailable }
+private enum ScheduleCaptureError: Error { case speechUnavailable }
+
+private struct SchedulePhotoPicker: UIViewControllerRepresentable {
+    let onSelection: @MainActor @Sendable (Data?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onSelection: onSelection) }
+
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        private let onSelection: @MainActor @Sendable (Data?) -> Void
+
+        init(onSelection: @escaping @MainActor @Sendable (Data?) -> Void) {
+            self.onSelection = onSelection
+        }
+
+        nonisolated func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            guard let provider = results.first?.itemProvider,
+                  provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+                Task { @MainActor in onSelection(nil) }
+                return
+            }
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { @Sendable [onSelection] data, _ in
+                Task { @MainActor in onSelection(data) }
+            }
+        }
+    }
+}
 
 private enum ScheduleImageTextRecognizer {
     static func recognize(_ data: Data) async throws -> String {
@@ -296,14 +333,14 @@ private final class ScheduleSpeechTranscriber: ObservableObject {
         errorMessage = nil
         if isRecording { stop() }
         else {
-            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            SFSpeechRecognizer.requestAuthorization { @Sendable [weak self] status in
                 Task { @MainActor in
                     guard let self else { return }
                     guard status == .authorized else {
                         self.errorMessage = "Allow Speech Recognition and Microphone access in Settings to use voice capture."
                         return
                     }
-                    AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in
                         Task { @MainActor in
                             guard granted else {
                                 self.errorMessage = "Allow Speech Recognition and Microphone access in Settings to use voice capture."
@@ -342,13 +379,13 @@ private final class ScheduleSpeechTranscriber: ObservableObject {
         self.request = request
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { @Sendable buffer, _ in
             request.append(buffer)
         }
         audioEngine.prepare()
         try audioEngine.start()
         isRecording = true
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
+        task = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, error in
             let text = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal == true
             Task { @MainActor in
