@@ -8,6 +8,7 @@ import Fastify, {
 import { z } from "zod";
 import type { Account, EventConflict, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
 import type { CalendarSourceModule } from "./calendar-source-module.js";
+import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import {
   NoopInvitationEmailSender,
@@ -53,10 +54,22 @@ const eventSchema = z.object({
   recurrence: z.object({
     frequency: z.enum(["daily", "weekly", "monthly"]),
     interval: z.number().int().positive(),
+    weekdays: z.array(z.union([
+      z.literal(1), z.literal(2), z.literal(3), z.literal(4),
+      z.literal(5), z.literal(6), z.literal(7),
+    ])).min(1).transform((days) => [...new Set(days)].sort()).optional(),
     endDate: z.string().datetime(),
+  }).refine((recurrence) => recurrence.frequency === "weekly" || recurrence.weekdays === undefined, {
+    message: "weekdays are supported only for weekly recurrence",
   }).nullable().optional(),
 }).refine((event) => new Date(event.endTime) > new Date(event.startTime), {
   message: "endTime must follow startTime",
+}).refine((event) => !event.recurrence || (
+  new Date(event.recurrence.endDate) >= new Date(event.startTime)
+  && new Date(event.recurrence.endDate).getTime() - new Date(event.startTime).getTime()
+    <= 732 * 24 * 60 * 60 * 1_000
+), {
+  message: "recurrence must end within 732 days after startTime",
 });
 
 const reminderSchema = z.object({
@@ -689,6 +702,7 @@ export function buildApp({
     if (!account) return;
     const parsed = eventSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_event", details: parsed.error.issues });
+    const notifyParticipants = (request.query as { notifyParticipants?: string }).notifyParticipants !== "false";
     const routeID = (request.params as { id: string }).id.toLowerCase();
     const eventID = parsed.data.id.toLowerCase();
     if (routeID !== eventID) return reply.code(400).send({ error: "event_id_mismatch" });
@@ -728,17 +742,22 @@ export function buildApp({
     );
     await repository.saveEvent(event);
     await repository.markFamilyChanged(account.familyID);
-    const deviceTokens = await repository.deviceTokensForFamily(account.familyID);
-    try {
-      await pushNotificationProvider.send(deviceTokens, {
-        title: event.title,
-        body: familyVisibleConflicts.length > 0
-          ? "Schedule conflict detected. Open Rallyroo to review."
-          : "Your family schedule was updated.",
-        data: { eventID: event.id },
-      });
-    } catch {
-      // Saving the source-of-truth event must not fail because APNs is unavailable.
+    if (notifyParticipants) {
+      const notificationMemberIDs = event.participantIDs.filter((id) => id !== account.memberID);
+      const deviceTokens = await repository.deviceTokensForMembers(account.familyID, notificationMemberIDs);
+      if (deviceTokens.length > 0) {
+        try {
+          await pushNotificationProvider.send(deviceTokens, {
+            title: event.title,
+            body: familyVisibleConflicts.length > 0
+              ? "Schedule conflict detected. Open Rallyroo to review."
+              : "Your family schedule was updated.",
+            data: { eventID: event.id },
+          });
+        } catch {
+          // Saving the source-of-truth event must not fail because APNs is unavailable.
+        }
+      }
     }
     return { conflicts };
   });
@@ -862,21 +881,10 @@ function occurrenceRanges(event: FamilyEvent, rangeEnd: Date): Array<{ start: Da
   const duration = new Date(event.endTime).getTime() - firstStart.getTime();
   if (!event.recurrence) return [{ start: firstStart, end: new Date(firstStart.getTime() + duration) }];
 
-  const recurrenceEnd = new Date(event.recurrence.endDate);
-  const occurrences: Array<{ start: Date; end: Date }> = [];
-  let start = firstStart;
-  while (start <= recurrenceEnd && start <= rangeEnd) {
-    occurrences.push({ start, end: new Date(start.getTime() + duration) });
-    const next = new Date(start);
-    switch (event.recurrence.frequency) {
-      case "daily": next.setUTCDate(next.getUTCDate() + event.recurrence.interval); break;
-      case "weekly": next.setUTCDate(next.getUTCDate() + 7 * event.recurrence.interval); break;
-      case "monthly": next.setUTCMonth(next.getUTCMonth() + event.recurrence.interval); break;
-    }
-    if (next <= start) break;
-    start = next;
-  }
-  return occurrences;
+  return eventOccurrenceStarts(event, rangeEnd).map((start) => ({
+    start,
+    end: new Date(start.getTime() + duration),
+  }));
 }
 
 function clientEvent({ familyID: _familyID, ...event }: FamilyEvent) {

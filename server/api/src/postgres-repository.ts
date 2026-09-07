@@ -10,6 +10,7 @@ import type {
   FamilyReminder,
 } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { RallyrooRepository } from "./repository.js";
 import type {
   CalendarSource,
@@ -896,26 +897,6 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     alertLeadTimeMinutes: row.alert_lead_time_minutes,
     createdByMemberID: row.created_by_member_id,
   };
-}
-
-function eventOccurrenceStarts(event: FamilyEvent, through: Date): Date[] {
-  const first = new Date(event.startTime);
-  if (!event.recurrence) return [first];
-  const recurrenceEnd = new Date(event.recurrence.endDate);
-  const starts: Date[] = [];
-  let current = first;
-  while (current <= recurrenceEnd && current <= through) {
-    starts.push(current);
-    const next = new Date(current);
-    switch (event.recurrence.frequency) {
-      case "daily": next.setUTCDate(next.getUTCDate() + event.recurrence.interval); break;
-      case "weekly": next.setUTCDate(next.getUTCDate() + 7 * event.recurrence.interval); break;
-      case "monthly": next.setUTCMonth(next.getUTCMonth() + event.recurrence.interval); break;
-    }
-    if (next <= current) break;
-    current = next;
-  }
-  return starts;
 }
 
 function asISOString(value: Date | string): string {

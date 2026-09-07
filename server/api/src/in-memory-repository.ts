@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { RallyrooRepository } from "./repository.js";
 
 interface SeedData {
@@ -332,26 +333,6 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     const index = this.members.findIndex((member) => member.familyID === familyID && member.id === memberID);
     if (index >= 0) this.members.splice(index, 1);
   }
-}
-
-function eventOccurrenceStarts(event: FamilyEvent, through: Date): Date[] {
-  const first = new Date(event.startTime);
-  if (!event.recurrence) return [first];
-  const end = new Date(event.recurrence.endDate);
-  const starts: Date[] = [];
-  let current = first;
-  while (current <= end && current <= through) {
-    starts.push(current);
-    const next = new Date(current);
-    switch (event.recurrence.frequency) {
-      case "daily": next.setUTCDate(next.getUTCDate() + event.recurrence.interval); break;
-      case "weekly": next.setUTCDate(next.getUTCDate() + 7 * event.recurrence.interval); break;
-      case "monthly": next.setUTCMonth(next.getUTCMonth() + event.recurrence.interval); break;
-    }
-    if (next <= current) break;
-    current = next;
-  }
-  return starts;
 }
 
 function eventNotificationKey(familyID: string, eventID: string, occurrenceStart: string): string {

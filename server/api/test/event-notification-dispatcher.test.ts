@@ -84,6 +84,35 @@ describe("EventNotificationDispatcher", () => {
     expect(await repository.claimDueEventNotifications(now, 100)).toEqual([]);
   });
 
+  it("claims alerts for every selected weekday in a weekly series", async () => {
+    const repository = new InMemoryRallyrooRepository();
+    await repository.saveEvent({
+      ...event,
+      startTime: "2026-09-07T18:00:00.000Z",
+      endTime: "2026-09-07T19:00:00.000Z",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [1, 3],
+        endDate: "2026-09-16T18:00:00.000Z",
+      },
+    });
+
+    const monday = await repository.claimDueEventNotifications(
+      new Date("2026-09-07T17:45:00.000Z"),
+      100,
+    );
+    const wednesday = await repository.claimDueEventNotifications(
+      new Date("2026-09-09T17:45:00.000Z"),
+      100,
+    );
+
+    expect(monday.map((notification) => notification.occurrenceStart))
+      .toEqual(["2026-09-07T18:00:00.000Z"]);
+    expect(wednesday.map((notification) => notification.occurrenceStart))
+      .toEqual(["2026-09-09T18:00:00.000Z"]);
+  });
+
   it("releases a failed event delivery claim for retry", async () => {
     let marked = false;
     let released = false;

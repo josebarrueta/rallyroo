@@ -36,6 +36,7 @@ export interface FamilyMember {
 export interface EventRecurrence {
   frequency: "daily" | "weekly" | "monthly";
   interval: number;
+  weekdays?: Array<1 | 2 | 3 | 4 | 5 | 6 | 7> | undefined;
   endDate: string;
 }
 

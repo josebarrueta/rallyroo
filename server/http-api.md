@@ -27,7 +27,7 @@ it changes. The app also refreshes whenever it becomes active.
 ## Events
 
 - `GET /v1/events` → JSON array of events.
-- `PUT /v1/events/{id}` with an event body → conflict result.
+- `PUT /v1/events/{id}?notifyParticipants=true|false` with an event body → conflict result.
 - `DELETE /v1/events/{id}` → empty 2xx response.
 
 Event bodies use the Swift `FamilyEvent` fields, including `id`, `title`,
@@ -37,6 +37,16 @@ Event bodies use the Swift `FamilyEvent` fields, including `id`, `title`,
 to `0` (at start). `kidID` is temporarily included for
 compatibility and may be null. A recurrence contains `frequency` (`daily`,
 `weekly`, or `monthly`), a positive `interval`, and an ISO 8601 `endDate`.
+Weekly recurrences may include `weekdays`, a unique array using ISO weekday
+numbers (`1` Monday through `7` Sunday). Omitting `weekdays` retains legacy
+once-per-week behavior. New or updated recurrences must end no more than 732
+days after their start, keeping expansion, conflict checks, and alerts bounded.
+
+`notifyParticipants=true` requests one immediate schedule-update push to devices
+owned by selected participants, excluding the parent making the change. It is
+separate from `alertLeadTimeMinutes`, which schedules a notification for each
+occurrence. Passing `false` saves without an immediate push. The query defaults
+to `true` for older clients.
 
 Save response:
 

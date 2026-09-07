@@ -36,6 +36,10 @@ _Avoid_: Per-assignee completion
 The optional supported interval before a reminder's due instant or an event occurrence's start when the responsible members should be notified. Reminder alerts go to assignees; event alerts go to participants.
 _Avoid_: Event duration, snooze
 
+**Schedule update notification**:
+A one-time push sent immediately after a parent saves an event and explicitly chooses to notify its participants. It summarizes the saved series once and is separate from occurrence-based event alerts.
+_Avoid_: Event alert, reminder alert
+
 **Schedule draft**:
 A temporary, review-only event or reminder proposal extracted from typed, transcribed, or recognized text. It does not enter the family schedule until a parent explicitly confirms it.
 _Avoid_: Imported event, saved event, automatic action

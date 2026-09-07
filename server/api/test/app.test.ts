@@ -823,7 +823,7 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
-  it("registers a device and pushes event changes to the family", async () => {
+  it("pushes requested event updates only to participants", async () => {
     const pushes: Array<{ tokens: string[]; title: string }> = [];
     const pushNotificationProvider: PushNotificationProvider = {
       async send(tokens, notification) {
@@ -839,11 +839,11 @@ describe("Rallyroo API", () => {
     const registration = await app.inject({
       method: "PUT",
       url: "/v1/devices/device-token-1",
-      headers: { authorization: "Bearer parent-token" },
+      headers: { authorization: "Bearer kid-token" },
     });
     const write = await app.inject({
       method: "PUT",
-      url: "/v1/events/00000000-0000-4000-8000-000000000006",
+      url: "/v1/events/00000000-0000-4000-8000-000000000006?notifyParticipants=true",
       headers: { authorization: "Bearer parent-token" },
       payload: {
         id: "00000000-0000-4000-8000-000000000006",
@@ -871,6 +871,39 @@ describe("Rallyroo API", () => {
       (event: { id: string }) => event.id === "00000000-0000-4000-8000-000000000006",
     )?.alertLeadTimeMinutes).toBe(0);
     expect(pushes).toEqual([{ tokens: ["device-token-1"], title: "Band practice" }]);
+    await app.close();
+  });
+
+  it("saves an event without an immediate update push when notification is declined", async () => {
+    const pushes: string[][] = [];
+    const data = repository();
+    await data.saveDeviceToken("family-1", "kid-1", "kid-device");
+    const app = buildApp({
+      identityProvider,
+      repository: data,
+      pushNotificationProvider: { async send(tokens) { pushes.push(tokens); } },
+    });
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/events/00000000-0000-4000-8000-000000000096?notifyParticipants=false",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: "00000000-0000-4000-8000-000000000096",
+        title: "Quiet update",
+        kidID: "kid-1",
+        participantIDs: ["kid-1"],
+        startTime: "2026-08-27T18:00:00Z",
+        endTime: "2026-08-27T19:00:00Z",
+        location: null,
+        driver: null,
+        source: "manual",
+        status: "confirmed",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(pushes).toEqual([]);
     await app.close();
   });
 
@@ -1214,6 +1247,11 @@ describe("Rallyroo API", () => {
       },
     });
 
+    await app.inject({
+      method: "PUT",
+      url: "/v1/devices/private-conflict-test-device",
+      headers: { authorization: "Bearer kid-token" },
+    });
     const saved = await app.inject({
       method: "PUT",
       url: "/v1/events/00000000-0000-4000-8000-000000000079",
@@ -1222,7 +1260,7 @@ describe("Rallyroo API", () => {
         id: "00000000-0000-4000-8000-000000000079",
         title: "Family activity",
         kidID: "parent-1",
-        participantIDs: ["parent-1"],
+        participantIDs: ["parent-1", "kid-1"],
         startTime: "2026-09-12T18:30:00Z",
         endTime: "2026-09-12T19:30:00Z",
         location: null,
@@ -1942,6 +1980,7 @@ describe("Rallyroo API", () => {
         recurrence: {
           frequency: "weekly",
           interval: 1,
+          weekdays: [7, 3, 3],
           endDate: "2026-12-31T23:59:59Z"
         }
       },
@@ -1954,7 +1993,7 @@ describe("Rallyroo API", () => {
     const saved = (await data.eventsForFamily("family-1")).find(
       (event) => event.id === "00000000-0000-4000-8000-000000000002",
     );
-    expect(saved?.recurrence?.frequency).toBe("weekly");
+    expect(saved?.recurrence).toMatchObject({ frequency: "weekly", weekdays: [3, 7] });
     await app.close();
   });
 });
