@@ -144,6 +144,26 @@ public struct EventConflict: Equatable, Sendable {
     }
 }
 
+public enum ScheduleUpdateNotificationOutcome: String, Codable, Equatable, Sendable {
+    case sent
+    case queuedForRetry
+    case noRecipients
+    case notRequested
+}
+
+public struct EventMutationResult: Equatable, Sendable {
+    public let conflicts: [EventConflict]
+    public let notificationOutcome: ScheduleUpdateNotificationOutcome
+
+    public init(
+        conflicts: [EventConflict],
+        notificationOutcome: ScheduleUpdateNotificationOutcome
+    ) {
+        self.conflicts = conflicts
+        self.notificationOutcome = notificationOutcome
+    }
+}
+
 public enum EventDataFreshness: Equatable, Sendable {
     case fresh
     case cached
@@ -170,16 +190,28 @@ public protocol EventAlertScheduler: Sendable {
 
 public protocol EventStore: Sendable {
     @discardableResult
-    func save(_ event: FamilyEvent, notifyParticipants: Bool) async throws -> [EventConflict]
-    func delete(_ event: FamilyEvent) async throws
+    func save(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult
+    func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws
     func loadEvents() async throws -> EventSnapshot
     func clearCache() async throws
 }
 
 public extension EventStore {
     @discardableResult
-    func save(_ event: FamilyEvent) async throws -> [EventConflict] {
-        try await save(event, notifyParticipants: true)
+    func save(_ event: FamilyEvent, notifyParticipants: Bool = true) async throws -> [EventConflict] {
+        try await save(
+            event,
+            notifyParticipants: notifyParticipants,
+            idempotencyKey: UUID()
+        ).conflicts
+    }
+
+    func delete(_ event: FamilyEvent) async throws {
+        try await delete(event, idempotencyKey: UUID())
     }
 
     func events() async throws -> [FamilyEvent] {
@@ -203,7 +235,11 @@ public actor LocalEventStore: EventStore {
     }
 
     @discardableResult
-    public func save(_ event: FamilyEvent, notifyParticipants: Bool = true) async throws -> [EventConflict] {
+    public func save(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
         guard event.endTime > event.startTime else {
             throw EventValidationError.endTimeMustFollowStartTime
         }
@@ -213,10 +249,13 @@ public actor LocalEventStore: EventStore {
         let conflicts = conflicts(for: event, against: savedEvents)
         savedEvents.append(event)
         try write(savedEvents)
-        return conflicts
+        return EventMutationResult(
+            conflicts: conflicts,
+            notificationOutcome: notifyParticipants ? .noRecipients : .notRequested
+        )
     }
 
-    public func delete(_ event: FamilyEvent) async throws {
+    public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {
         var savedEvents = try await events()
         savedEvents.removeAll { $0.id == event.id }
         try write(savedEvents)

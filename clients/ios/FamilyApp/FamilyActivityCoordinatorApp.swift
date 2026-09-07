@@ -214,6 +214,7 @@ struct FamilyActivityCoordinatorApp: App {
 
 extension Notification.Name {
     static let familyDataDidChange = Notification.Name("familyDataDidChange")
+    static let scheduleUpdateNotice = Notification.Name("scheduleUpdateNotice")
 }
 
 enum AppStorage {
