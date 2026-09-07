@@ -12,4 +12,4 @@ spec:
   ref:
     # Automatically promote patch releases. Moving to another minor series is
     # an explicit architecture/application compatibility decision.
-    semver: ">=0.7.0 <0.8.0"
+    semver: ">=0.8.0 <0.9.0"
