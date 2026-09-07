@@ -16,6 +16,9 @@ jobs:
         working-directory: clients/ios
     steps:
       - uses: actions/checkout@v5
+      - name: Check AI capture concurrency bridges
+        working-directory: .
+        run: scripts/test-ai-capture-concurrency.sh
       - uses: actions/setup-node@v5
         with:
           node-version: 22
