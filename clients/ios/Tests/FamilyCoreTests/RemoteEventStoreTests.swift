@@ -133,6 +133,26 @@ final class RemoteEventStoreTests: XCTestCase {
         }
     }
 
+    func testSavesAnEventWithoutRequestingAnImmediateUpdateNotification() async throws {
+        let transport = RecordingHTTPTransport(
+            responses: [HTTPResponse(statusCode: 200, body: Data("{\"conflicts\":[]}".utf8))]
+        )
+        let store: any EventStore = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+
+        _ = try await store.save(sampleEvent(), notifyParticipants: false)
+
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(
+            URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems,
+            [URLQueryItem(name: "notifyParticipants", value: "false")]
+        )
+        XCTAssertEqual(request.timeoutInterval, 60)
+    }
+
     func testSavesAnEventThroughTheRemoteAPI() async throws {
         let transport = RecordingHTTPTransport(
             responses: [HTTPResponse(statusCode: 200, body: Data("{\"conflicts\":[]}".utf8))]

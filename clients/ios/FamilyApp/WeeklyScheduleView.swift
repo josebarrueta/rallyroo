@@ -68,8 +68,8 @@ struct WeeklyScheduleView: View {
             .navigationTitle("Rallyroo")
             .toolbar { toolbarContent }
             .sheet(isPresented: $isAddingEvent) {
-                AddEventSheet(members: viewModel.members, locationSearch: locationSearch) {
-                    try await viewModel.addEvent($0)
+                AddEventSheet(members: viewModel.members, locationSearch: locationSearch) { event, notifyParticipants in
+                    try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
                 }
             }
             .sheet(isPresented: $isCapturingSchedule) {
@@ -77,7 +77,9 @@ struct WeeklyScheduleView: View {
                     ScheduleCaptureSheet(
                         extractor: scheduleDraftExtractor,
                         members: viewModel.members,
-                        onSaveEvent: { _ = try await viewModel.addEvent($0) },
+                        onSaveEvent: { event, notifyParticipants in
+                            _ = try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
+                        },
                         onSaveReminder: { try await reminderStore.save($0) }
                     )
                 }
@@ -85,7 +87,9 @@ struct WeeklyScheduleView: View {
             .sheet(item: $editingEvent) { event in
                 AddEventSheet(
                     event: event, members: viewModel.members, locationSearch: locationSearch,
-                    onSave: { try await viewModel.addEvent($0) },
+                    onSave: { event, notifyParticipants in
+                        try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
+                    },
                     onDelete: { try await viewModel.deleteEvent($0) }
                 )
             }

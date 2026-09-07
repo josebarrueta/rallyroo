@@ -48,6 +48,22 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["At start"].exists)
     }
 
+    func testSavingAnEventAsksSeparatelyAboutImmediateParticipantNotifications() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["Add"].tap()
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Notification choice test")
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Yes, notify"].exists)
+        XCTAssertTrue(app.buttons["Save without notifying"].exists)
+    }
+
     func testManualLocationRemainsSavableWhenSuggestionsAreUnavailable() {
         let app = XCUIApplication()
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
@@ -67,6 +83,8 @@ final class FamilyAppUITests: XCTestCase {
         ]
         XCTAssertTrue(fallbackMessage.waitForExistence(timeout: 5))
         app.buttons["Save"].tap()
+        XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
+        app.buttons["Save without notifying"].tap()
 
         XCTAssertTrue(app.staticTexts["Location fallback test"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["123 Main Street"].exists)

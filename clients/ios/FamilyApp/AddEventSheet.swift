@@ -2,7 +2,7 @@ import SwiftUI
 import FamilyCore
 
 struct AddEventSheet: View {
-    let onSave: (FamilyEvent) async throws -> [EventConflict]
+    let onSave: (FamilyEvent, Bool) async throws -> [EventConflict]
     let onDelete: ((FamilyEvent) async throws -> Void)?
     let members: [FamilyMember]
 
@@ -18,11 +18,13 @@ struct AddEventSheet: View {
     @State private var driver: String
     @State private var repeatOption: RepeatOption
     @State private var recurrenceEndDate: Date
+    @State private var selectedWeekdays: Set<EventRecurrence.Weekday>
     @State private var isSaving = false
     @State private var alertMessage = ""
     @State private var dismissAfterAlert = false
     @State private var isShowingAlert = false
     @State private var isShowingDeleteConfirmation = false
+    @State private var isShowingNotifyPrompt = false
     @State private var locationSuggestions: [LocationSuggestion] = []
     @State private var locationSearchMessage: String?
 
@@ -31,7 +33,7 @@ struct AddEventSheet: View {
         prefill: ActivityEventPrefill? = nil,
         members: [FamilyMember],
         locationSearch: any LocationSearch = EmptyLocationSearch(),
-        onSave: @escaping (FamilyEvent) async throws -> [EventConflict],
+        onSave: @escaping (FamilyEvent, Bool) async throws -> [EventConflict],
         onDelete: ((FamilyEvent) async throws -> Void)? = nil
     ) {
         existingEvent = event
@@ -56,6 +58,9 @@ struct AddEventSheet: View {
             value: 6,
             to: event?.startTime ?? .now
         )!)
+        _selectedWeekdays = State(initialValue: Set(
+            event?.recurrence?.weekdays ?? [Self.weekday(for: event?.startTime ?? .now)]
+        ))
     }
 
     var body: some View {
@@ -81,11 +86,32 @@ struct AddEventSheet: View {
                             Text(option.title).tag(option)
                         }
                     }
+                    if repeatOption == .weekly || repeatOption == .biweekly {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("On")
+                                .font(.subheadline)
+                            HStack(spacing: 6) {
+                                ForEach(EventRecurrence.Weekday.allCases, id: \.rawValue) { weekday in
+                                    Button(weekday.shortTitle) {
+                                        if selectedWeekdays.contains(weekday) && selectedWeekdays.count > 1 {
+                                            selectedWeekdays.remove(weekday)
+                                        } else {
+                                            selectedWeekdays.insert(weekday)
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(selectedWeekdays.contains(weekday) ? AppTheme.purple : .secondary)
+                                    .accessibilityLabel(weekday.title)
+                                    .accessibilityAddTraits(selectedWeekdays.contains(weekday) ? .isSelected : [])
+                                }
+                            }
+                        }
+                    }
                     if repeatOption != .never {
                         DatePicker(
                             "Repeat until",
                             selection: $recurrenceEndDate,
-                            in: startTime...,
+                            in: startTime...latestRecurrenceEndDate,
                             displayedComponents: .date
                         )
                     }
@@ -112,6 +138,12 @@ struct AddEventSheet: View {
                 }
             }
             .navigationTitle(existingEvent == nil ? "Add Event" : "Edit Event")
+            .onChange(of: startTime) { newStartTime in
+                recurrenceEndDate = min(max(recurrenceEndDate, newStartTime), latestRecurrenceEndDate)
+                if repeatOption != .weekly && repeatOption != .biweekly {
+                    selectedWeekdays = [Self.weekday(for: newStartTime)]
+                }
+            }
             .task(id: location) {
                 let query = location.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard query.count >= 2 else {
@@ -146,10 +178,22 @@ struct AddEventSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        save()
+                        isShowingNotifyPrompt = true
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
                 }
+            }
+            .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
+                Button("Yes, notify") {
+                    save(notifyParticipants: true)
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Save without notifying") {
+                    save(notifyParticipants: false)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Send one immediate schedule-update notification to the selected participants? This is separate from the scheduled event alert.")
             }
             .alert("Event status", isPresented: $isShowingAlert) {
                 Button("OK") {
@@ -174,12 +218,12 @@ struct AddEventSheet: View {
         }
     }
 
-    private func save() {
+    private func save(notifyParticipants: Bool) {
         isSaving = true
         Task {
             defer { isSaving = false }
             do {
-                let conflicts = try await onSave(event)
+                let conflicts = try await onSave(event, notifyParticipants)
                 if conflicts.isEmpty {
                     dismiss()
                 } else {
@@ -235,7 +279,10 @@ struct AddEventSheet: View {
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
             alertLeadTime: alertChoice.leadTime,
-            recurrence: repeatOption.recurrence(ending: recurrenceEndDate)
+            recurrence: repeatOption.recurrence(
+                ending: recurrenceEndDate,
+                weekdays: selectedWeekdays.sorted()
+            )
         )
     }
 
@@ -250,6 +297,15 @@ struct AddEventSheet: View {
                 }
             }
         )
+    }
+
+    private var latestRecurrenceEndDate: Date {
+        Calendar.autoupdatingCurrent.date(byAdding: .day, value: 732, to: startTime)!
+    }
+
+    private static func weekday(for date: Date, calendar: Calendar = .autoupdatingCurrent) -> EventRecurrence.Weekday {
+        let value = calendar.component(.weekday, from: date)
+        return EventRecurrence.Weekday(rawValue: value == 1 ? 7 : value - 1) ?? .monday
     }
 
     private func optionalText(_ value: String) -> String? {
@@ -317,13 +373,32 @@ private enum RepeatOption: String, CaseIterable, Identifiable {
         }
     }
 
-    func recurrence(ending endDate: Date) -> EventRecurrence? {
+    func recurrence(
+        ending endDate: Date,
+        weekdays: [EventRecurrence.Weekday]
+    ) -> EventRecurrence? {
         switch self {
         case .never: nil
         case .daily: EventRecurrence(frequency: .daily, endDate: endDate)
-        case .weekly: EventRecurrence(frequency: .weekly, endDate: endDate)
-        case .biweekly: EventRecurrence(frequency: .weekly, interval: 2, endDate: endDate)
+        case .weekly: EventRecurrence(frequency: .weekly, weekdays: weekdays, endDate: endDate)
+        case .biweekly: EventRecurrence(frequency: .weekly, interval: 2, weekdays: weekdays, endDate: endDate)
         case .monthly: EventRecurrence(frequency: .monthly, endDate: endDate)
         }
     }
+}
+
+private extension EventRecurrence.Weekday {
+    var title: String {
+        switch self {
+        case .monday: "Monday"
+        case .tuesday: "Tuesday"
+        case .wednesday: "Wednesday"
+        case .thursday: "Thursday"
+        case .friday: "Friday"
+        case .saturday: "Saturday"
+        case .sunday: "Sunday"
+        }
+    }
+
+    var shortTitle: String { String(title.prefix(2)) }
 }

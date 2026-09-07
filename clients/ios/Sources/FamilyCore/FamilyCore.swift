@@ -170,13 +170,18 @@ public protocol EventAlertScheduler: Sendable {
 
 public protocol EventStore: Sendable {
     @discardableResult
-    func save(_ event: FamilyEvent) async throws -> [EventConflict]
+    func save(_ event: FamilyEvent, notifyParticipants: Bool) async throws -> [EventConflict]
     func delete(_ event: FamilyEvent) async throws
     func loadEvents() async throws -> EventSnapshot
     func clearCache() async throws
 }
 
 public extension EventStore {
+    @discardableResult
+    func save(_ event: FamilyEvent) async throws -> [EventConflict] {
+        try await save(event, notifyParticipants: true)
+    }
+
     func events() async throws -> [FamilyEvent] {
         try await loadEvents().events
     }
@@ -198,7 +203,7 @@ public actor LocalEventStore: EventStore {
     }
 
     @discardableResult
-    public func save(_ event: FamilyEvent) async throws -> [EventConflict] {
+    public func save(_ event: FamilyEvent, notifyParticipants: Bool = true) async throws -> [EventConflict] {
         guard event.endTime > event.startTime else {
             throw EventValidationError.endTimeMustFollowStartTime
         }
