@@ -22,6 +22,7 @@ import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
 import { EventNotificationDispatcher } from "./event-notification-dispatcher.js";
 import { ReminderNotificationDispatcher } from "./reminder-notification-dispatcher.js";
+import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import { RedisCache } from "./redis-cache.js";
 import { ResendInvitationEmailSender } from "./resend-invitation-email-sender.js";
 import { configuredSecret } from "./runtime-configuration.js";
@@ -54,6 +55,11 @@ const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
 });
 const eventNotificationDispatcher = new EventNotificationDispatcher({
   repository,
+  pushNotificationProvider,
+});
+const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispatcher({
+  persistence: repository,
+  recipients: repository,
   pushNotificationProvider,
 });
 const calendarEncryptionKey = configuredSecret("CALENDAR_SOURCE_ENCRYPTION_KEY");
@@ -116,12 +122,16 @@ const notificationDispatchInterval = setInterval(async () => {
     const results = await Promise.allSettled([
       reminderNotificationDispatcher.dispatchDue(),
       eventNotificationDispatcher.dispatchDue(),
+      scheduleUpdateNotificationDispatcher.dispatchDue(),
     ]);
     if (results[0]?.status === "rejected") {
       app.log.error({ error: results[0].reason }, "Reminder notification dispatch failed");
     }
     if (results[1]?.status === "rejected") {
       app.log.error({ error: results[1].reason }, "Event notification dispatch failed");
+    }
+    if (results[2]?.status === "rejected") {
+      app.log.error({ error: results[2].reason }, "Schedule update notification dispatch failed");
     }
   } finally {
     notificationDispatchIsRunning = false;
@@ -141,4 +151,7 @@ void reminderNotificationDispatcher.dispatchDue().catch((error) => {
 });
 void eventNotificationDispatcher.dispatchDue().catch((error) => {
   app.log.error({ error }, "Initial event notification dispatch failed");
+});
+void scheduleUpdateNotificationDispatcher.dispatchDue().catch((error) => {
+  app.log.error({ error }, "Initial schedule update notification dispatch failed");
 });

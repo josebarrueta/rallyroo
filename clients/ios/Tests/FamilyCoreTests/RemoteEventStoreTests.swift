@@ -155,18 +155,30 @@ final class RemoteEventStoreTests: XCTestCase {
 
     func testSavesAnEventThroughTheRemoteAPI() async throws {
         let transport = RecordingHTTPTransport(
-            responses: [HTTPResponse(statusCode: 200, body: Data("{\"conflicts\":[]}".utf8))]
+            responses: [HTTPResponse(
+                statusCode: 200,
+                body: Data("{\"conflicts\":[],\"notificationOutcome\":\"queuedForRetry\"}".utf8)
+            )]
         )
         let store: any EventStore = RemoteEventStore(
             baseURL: URL(string: "https://api.example.com")!,
             transport: transport
         )
+        let idempotencyKey = UUID(uuidString: "55555555-5555-4555-8555-555555555555")!
 
-        let conflicts = try await store.save(sampleEvent())
+        let result = try await store.save(
+            sampleEvent(),
+            notifyParticipants: true,
+            idempotencyKey: idempotencyKey
+        )
 
-        XCTAssertEqual(conflicts, [])
+        XCTAssertEqual(result, EventMutationResult(
+            conflicts: [],
+            notificationOutcome: .queuedForRetry
+        ))
         let requests = await transport.recordedRequests()
         XCTAssertEqual(requests.first?.method, .put)
+        XCTAssertEqual(requests.first?.headers["Idempotency-Key"], idempotencyKey.uuidString.lowercased())
         XCTAssertTrue(requests.first?.url.path.hasPrefix("/v1/events/") == true)
         let body = try XCTUnwrap(requests.first?.body)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])

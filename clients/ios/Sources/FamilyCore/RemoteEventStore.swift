@@ -127,7 +127,11 @@ public actor RemoteEventStore: EventStore {
         }
     }
 
-    public func save(_ event: FamilyEvent, notifyParticipants: Bool = true) async throws -> [EventConflict] {
+    public func save(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
         var components = URLComponents(
             url: eventsURL.appending(path: event.id.uuidString),
             resolvingAgainstBaseURL: false
@@ -139,18 +143,25 @@ public actor RemoteEventStore: EventStore {
         let response = try await transport.send(HTTPRequest(
             method: .put,
             url: components.url!,
-            headers: ["Content-Type": "application/json"],
+            headers: [
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotencyKey.uuidString.lowercased(),
+            ],
             body: try encoder.encode(event)
         ))
         try response.requireSuccess()
         let payload = try decoder.decode(SaveResponse.self, from: response.body)
-        return payload.conflicts.compactMap { $0.eventConflict }
+        return EventMutationResult(
+            conflicts: payload.conflicts.compactMap { $0.eventConflict },
+            notificationOutcome: payload.notificationOutcome ?? .notRequested
+        )
     }
 
-    public func delete(_ event: FamilyEvent) async throws {
+    public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {
         let response = try await transport.send(HTTPRequest(
             method: .delete,
-            url: eventsURL.appending(path: event.id.uuidString)
+            url: eventsURL.appending(path: event.id.uuidString),
+            headers: ["Idempotency-Key": idempotencyKey.uuidString.lowercased()]
         ))
         try response.requireSuccess()
     }
@@ -183,6 +194,7 @@ public actor RemoteEventStore: EventStore {
 
 private struct SaveResponse: Codable {
     let conflicts: [ConflictPayload]
+    let notificationOutcome: ScheduleUpdateNotificationOutcome?
 }
 
 private struct ConflictPayload: Codable {

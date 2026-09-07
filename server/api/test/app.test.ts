@@ -874,6 +874,55 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("replays an Event mutation idempotently without sending another schedule update notification", async () => {
+    const pushes: string[][] = [];
+    const data = repository();
+    await data.saveDeviceToken("family-1", "kid-1", "kid-device");
+    const app = buildApp({
+      identityProvider,
+      repository: data,
+      pushNotificationProvider: { async send(tokens) { pushes.push(tokens); } },
+    });
+    const id = "00000000-0000-4000-8000-000000000095";
+    const headers = {
+      authorization: "Bearer parent-token",
+      "idempotency-key": "55555555-5555-4555-8555-555555555595",
+    };
+    const payload = {
+      id,
+      title: "Band practice",
+      kidID: "kid-1",
+      participantIDs: ["kid-1"],
+      startTime: "2026-08-26T18:00:00Z",
+      endTime: "2026-08-26T19:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+    };
+
+    const first = await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=true`,
+      headers,
+      payload,
+    });
+    const replay = await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=false`,
+      headers,
+      payload: { ...payload, title: "A transport retry must not replace the Event" },
+    });
+
+    expect(first.json().notificationOutcome).toBe("sent");
+    expect(replay.json().notificationOutcome).toBe("sent");
+    expect(pushes).toEqual([["kid-device"]]);
+    expect((await data.eventsForFamily("family-1")).find((candidate) => candidate.id === id)?.title)
+      .toBe("Band practice");
+    expect(await data.familyChangeVersion("family-1")).toBe(1);
+    await app.close();
+  });
+
   it("saves an event without an immediate update push when notification is declined", async () => {
     const pushes: string[][] = [];
     const data = repository();

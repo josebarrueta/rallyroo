@@ -201,8 +201,16 @@ final class FamilyMembersViewModel: ObservableObject {
     func save(_ member: FamilyMember) async throws { try await memberStore.save(member); await load() }
     func delete(_ member: FamilyMember) async throws { try await deletionService.delete(member); await load() }
     var canInvite: Bool { invitationStore != nil }
-    func saveEvent(_ event: FamilyEvent, notifyParticipants: Bool) async throws -> [EventConflict] {
-        try await eventStore.save(event, notifyParticipants: notifyParticipants)
+    func saveEvent(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
+        try await eventStore.save(
+            event,
+            notifyParticipants: notifyParticipants,
+            idempotencyKey: idempotencyKey
+        )
     }
     func invite(
         role: FamilyMemberRole,

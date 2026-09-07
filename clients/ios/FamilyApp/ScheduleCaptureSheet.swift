@@ -7,65 +7,77 @@ import Vision
 import FamilyCore
 
 struct ScheduleCaptureSheet: View {
-    let extractor: any ScheduleDraftExtractor
     let members: [FamilyMember]
-    let onSaveEvent: (FamilyEvent, Bool) async throws -> Void
-    let onSaveReminder: (FamilyReminder) async throws -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var speech = ScheduleSpeechTranscriber()
-    @State private var pauseDetector = SpeechPauseDetector()
-    @State private var inputText = ""
-    @State private var inputType: ScheduleDraftInputType = .text
-    @State private var isShowingPhotoPicker = false
+    @StateObject private var intake: ScheduleDraftIntake
     @State private var isShowingNotifyPrompt = false
-    @State private var drafts: [EditableScheduleDraft] = []
-    @State private var isWorking = false
-    @State private var workingMessage = ""
-    @State private var errorMessage: String?
+
+    init(
+        extractor: any ScheduleDraftExtractor,
+        members: [FamilyMember],
+        onSaveEvent: @escaping @MainActor (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
+        onSaveReminder: @escaping @MainActor (FamilyReminder) async throws -> Void
+    ) {
+        self.members = members
+        let persistence = ClosureScheduleDraftPersistence(
+            onSaveEvent: onSaveEvent,
+            onSaveReminder: onSaveReminder
+        )
+        _intake = StateObject(wrappedValue: ScheduleDraftIntake(
+            extractor: extractor,
+            speech: ScheduleSpeechTranscriber(),
+            imageRecognizer: AppleScheduleImageTextRecognizer(),
+            persistence: persistence
+        ))
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Describe your schedule") {
-                    TextEditor(text: $inputText)
+                    TextEditor(text: $intake.inputText)
                         .frame(minHeight: 110)
                         .accessibilityLabel("Schedule description")
                     HStack {
                         Button {
-                            inputType = .voice
-                            if speech.isRecording {
-                                finishVoiceCapture()
-                            } else {
-                                speech.toggle()
-                            }
+                            intake.toggleVoiceCapture()
                         } label: {
-                            Label(speech.isRecording ? "Stop" : "Speak", systemImage: speech.isRecording ? "stop.circle" : "mic")
+                            Label(
+                                intake.phase == .recording ? "Stop" : "Speak",
+                                systemImage: intake.phase == .recording ? "stop.circle" : "mic"
+                            )
                         }
                         .buttonStyle(.bordered)
+                        .disabled(intake.isWorking)
                         Spacer()
                         Button("Read image", systemImage: "photo") {
-                            pauseDetector.cancel()
-                            speech.stop()
-                            isShowingPhotoPicker = true
+                            intake.requestImage()
                         }
                         .buttonStyle(.bordered)
+                        .disabled(intake.isWorking)
                     }
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if !drafts.isEmpty {
-                        Button("Update drafts from revised text") { extract() }
-                            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isWorking)
+                    if !intake.drafts.isEmpty {
+                        Button("Update drafts from revised text") { intake.extract() }
+                            .disabled(
+                                intake.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || intake.isWorking
+                            )
                     }
                 }
 
-                if !drafts.isEmpty {
+                if !intake.drafts.isEmpty {
                     Section("Review drafts") {
-                        ForEach($drafts) { $draft in
+                        ForEach($intake.drafts) { $draft in
                             VStack(alignment: .leading, spacing: 10) {
                                 Toggle(isOn: $draft.isSelected) {
-                                    Label(draft.kind == .event ? "Event" : "Reminder", systemImage: draft.kind == .event ? "calendar" : "checklist")
+                                    Label(
+                                        draft.kind == .event ? "Event" : "Reminder",
+                                        systemImage: draft.kind == .event ? "calendar" : "checklist"
+                                    )
                                 }
                                 .disabled(!draft.canImport)
                                 TextField("Title", text: $draft.title)
@@ -95,9 +107,12 @@ struct ScheduleCaptureSheet: View {
                                         .font(.caption)
                                         .foregroundStyle(.orange)
                                 } else if draft.memberIDs.isEmpty {
-                                    Label("Choose at least one family member.", systemImage: "person.crop.circle.badge.questionmark")
-                                        .font(.caption)
-                                        .foregroundStyle(.orange)
+                                    Label(
+                                        "Choose at least one family member.",
+                                        systemImage: "person.crop.circle.badge.questionmark"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
                                 }
                                 Text("Confidence: \(Int(draft.confidence * 100))%")
                                     .font(.caption2)
@@ -106,18 +121,19 @@ struct ScheduleCaptureSheet: View {
                             .padding(.vertical, 4)
                         }
                     }
+                    .disabled(intake.phase == .extracting || intake.phase == .saving)
                 }
 
-                if isWorking {
+                if intake.isWorking {
                     Section {
                         ProgressView()
                             .progressViewStyle(.linear)
-                        Text(workingMessage)
+                        Text(intake.workingMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                if let errorMessage {
+                if let errorMessage = intake.errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
                 }
             }
@@ -125,63 +141,78 @@ struct ScheduleCaptureSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        pauseDetector.cancel()
-                        speech.stop()
+                        intake.cancel()
                         dismiss()
                     }
+                    .disabled(intake.phase == .saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if isWorking {
+                    if intake.isWorking {
                         ProgressView()
-                    } else if drafts.isEmpty {
-                        Button("Create") { extract() }
-                            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else if intake.drafts.isEmpty {
+                        Button("Create") { intake.extract() }
+                            .disabled(intake.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     } else {
                         Button("Add selected") {
-                            if drafts.contains(where: { $0.isSelected && $0.canImport && $0.kind == .event }) {
+                            if intake.drafts.contains(where: {
+                                $0.isSelected && $0.canImport && $0.kind == .event
+                            }) {
                                 isShowingNotifyPrompt = true
                             } else {
-                                save(notifyParticipants: false)
+                                intake.saveSelected(notifyParticipants: false)
                             }
                         }
-                        .disabled(!drafts.contains(where: { $0.isSelected && $0.canImport }))
+                        .disabled(!intake.drafts.contains(where: { $0.isSelected && $0.canImport }))
                     }
                 }
             }
             .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
-                Button("Yes, notify") { save(notifyParticipants: true) }
+                Button("Yes, notify") { intake.saveSelected(notifyParticipants: true) }
                     .keyboardShortcut(.defaultAction)
-                Button("Add without notifying") { save(notifyParticipants: false) }
+                Button("Add without notifying") { intake.saveSelected(notifyParticipants: false) }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Send one immediate schedule-update notification for each selected event? Scheduled event alerts remain separate.")
+                Text("Send one schedule update notification for each selected Event? Scheduled Event alerts remain separate.")
             }
-            .onChange(of: speech.transcript) { transcript in
-                guard speech.isRecording || !transcript.isEmpty else { return }
-                inputText = transcript
-                inputType = .voice
-                pauseDetector.receivedSpeech {
-                    finishVoiceCapture()
+            .sheet(isPresented: imagePickerBinding) {
+                SchedulePhotoPicker { data in intake.completeImageSelection(data) }
+            }
+            .onChange(of: intake.didComplete) { didComplete in
+                guard didComplete else { return }
+                NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                if let message = completionMessage {
+                    NotificationCenter.default.post(
+                        name: .scheduleUpdateNotice,
+                        object: nil,
+                        userInfo: ["message": message]
+                    )
                 }
+                dismiss()
             }
-            .sheet(isPresented: $isShowingPhotoPicker) {
-                SchedulePhotoPicker { data in
-                    isShowingPhotoPicker = false
-                    guard let data else { return }
-                    Task { await recognize(data) }
-                }
-            }
-            .onChange(of: speech.errorMessage) { message in
-                if let message { errorMessage = message }
-            }
-            .onDisappear {
-                pauseDetector.cancel()
-                speech.stop()
-            }
+            .interactiveDismissDisabled(intake.phase == .saving)
+            .onDisappear { intake.cancel() }
         }
     }
 
-    private func memberBinding(_ memberID: KidID, draft: Binding<EditableScheduleDraft>) -> Binding<Bool> {
+    private var imagePickerBinding: Binding<Bool> {
+        Binding(
+            get: { intake.isRequestingImage },
+            set: { if !$0 { intake.completeImageSelection(nil) } }
+        )
+    }
+
+    private var completionMessage: String? {
+        guard let summary = intake.saveSummary else { return nil }
+        return ScheduleUpdateNotificationMessage.make(
+            queuedCount: summary.queuedNotificationCount,
+            noRecipientCount: summary.noRecipientCount
+        )
+    }
+
+    private func memberBinding(
+        _ memberID: KidID,
+        draft: Binding<EditableScheduleDraft>
+    ) -> Binding<Bool> {
         Binding(
             get: { draft.wrappedValue.memberIDs.contains(memberID) },
             set: { selected in
@@ -190,140 +221,31 @@ struct ScheduleCaptureSheet: View {
             }
         )
     }
-
-    private func finishVoiceCapture() {
-        guard !isWorking,
-              !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        pauseDetector.cancel()
-        speech.stop()
-        extract()
-    }
-
-    private func extract() {
-        isWorking = true
-        workingMessage = "Creating your schedule… This can take up to 60 seconds."
-        errorMessage = nil
-        pauseDetector.cancel()
-        speech.stop()
-        Task {
-            defer { isWorking = false }
-            do {
-                drafts = try await extractor.extract(
-                    text: inputText,
-                    inputType: inputType,
-                    timeZone: TimeZone.autoupdatingCurrent.identifier
-                ).map(EditableScheduleDraft.init)
-                if drafts.isEmpty { errorMessage = "No schedule items were found." }
-            } catch {
-                errorMessage = "Rallyroo could not make drafts right now. Try again."
-            }
-        }
-    }
-
-    private func recognize(_ data: Data) async {
-        isWorking = true
-        workingMessage = "Reading text from the image…"
-        errorMessage = nil
-        do {
-            inputText = try await ScheduleImageTextRecognizer.recognize(data)
-            inputType = .image
-            isWorking = false
-            if inputText.isEmpty {
-                errorMessage = "No readable text was found in that image."
-            } else {
-                extract()
-            }
-        } catch {
-            isWorking = false
-            errorMessage = "Rallyroo could not read that image."
-        }
-    }
-
-    private func save(notifyParticipants: Bool) {
-        isWorking = true
-        workingMessage = "Adding selected items…"
-        errorMessage = nil
-        Task {
-            defer { isWorking = false }
-            do {
-                let selectedIndices = drafts.indices.filter { drafts[$0].isSelected && drafts[$0].canImport }
-                for index in selectedIndices {
-                    let draft = drafts[index]
-                    switch draft.kind {
-                    case .event:
-                        try await onSaveEvent(
-                            draft.event(source: inputType == .voice ? .voice : .manual),
-                            notifyParticipants
-                        )
-                    case .reminder: try await onSaveReminder(draft.reminder)
-                    }
-                    drafts[index].isSelected = false
-                }
-                NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-                dismiss()
-            } catch {
-                errorMessage = "Some drafts could not be added. Items already added are now deselected."
-            }
-        }
-    }
 }
 
-private struct EditableScheduleDraft: Identifiable {
-    let id = UUID()
-    let kind: ScheduleDraftKind
-    var title: String
-    var memberIDs: Set<KidID>
-    var startTime: Date
-    var endTime: Date
-    var dueAt: Date
-    var location: String
-    var alertLeadTimeMinutes: Int?
-    let clarification: String?
-    let confidence: Double
-    var isSelected: Bool
+@MainActor
+private final class ClosureScheduleDraftPersistence: ScheduleDraftPersistence {
+    private let onSaveEvent: @MainActor (FamilyEvent, Bool, UUID) async throws -> EventMutationResult
+    private let onSaveReminder: @MainActor (FamilyReminder) async throws -> Void
 
-    init(_ draft: ScheduleDraft) {
-        kind = draft.kind
-        title = draft.title
-        memberIDs = Set(draft.memberIDs)
-        startTime = draft.startTime ?? .now
-        endTime = draft.endTime ?? (draft.startTime ?? .now).addingTimeInterval(60 * 60)
-        dueAt = draft.dueAt ?? .now
-        location = draft.location ?? ""
-        alertLeadTimeMinutes = draft.alertLeadTimeMinutes
-        clarification = draft.clarification
-        confidence = draft.confidence
-        isSelected = draft.clarification == nil
+    init(
+        onSaveEvent: @escaping @MainActor (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
+        onSaveReminder: @escaping @MainActor (FamilyReminder) async throws -> Void
+    ) {
+        self.onSaveEvent = onSaveEvent
+        self.onSaveReminder = onSaveReminder
     }
 
-    var canImport: Bool {
-        guard clarification == nil, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !memberIDs.isEmpty else { return false }
-        return kind == .reminder || endTime > startTime
+    func saveEvent(
+        _ event: FamilyEvent,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
+        try await onSaveEvent(event, notifyParticipants, idempotencyKey)
     }
 
-    func event(source: EventSource) -> FamilyEvent {
-        let sortedMemberIDs = memberIDs.sorted { $0.rawValue < $1.rawValue }
-        return FamilyEvent(
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            kidID: sortedMemberIDs.first,
-            participantIDs: sortedMemberIDs,
-            startTime: startTime,
-            endTime: endTime,
-            location: location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : location,
-            source: source,
-            status: .confirmed,
-            alertLeadTime: alertLeadTimeMinutes.flatMap(EventAlertLeadTime.init(rawValue:))
-        )
-    }
-
-    var reminder: FamilyReminder {
-        FamilyReminder(
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            assigneeIDs: memberIDs.sorted { $0.rawValue < $1.rawValue },
-            dueAt: dueAt,
-            alertLeadTime: alertLeadTimeMinutes.flatMap(ReminderAlertLeadTime.init(rawValue:))
-        )
+    func saveReminder(_ reminder: FamilyReminder) async throws {
+        try await onSaveReminder(reminder)
     }
 }
 
@@ -365,13 +287,13 @@ private struct SchedulePhotoPicker: UIViewControllerRepresentable {
     }
 }
 
-private enum ScheduleImageTextRecognizer {
-    static func recognize(_ data: Data) async throws -> String {
+private struct AppleScheduleImageTextRecognizer: ScheduleImageTextRecognition {
+    func recognizeText(in imageData: Data) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
-            let handler = VNImageRequestHandler(data: data)
+            let handler = VNImageRequestHandler(data: imageData)
             try handler.perform([request])
             return (request.results ?? [])
                 .compactMap { $0.topCandidates(1).first?.string }
@@ -381,35 +303,41 @@ private enum ScheduleImageTextRecognizer {
 }
 
 @MainActor
-private final class ScheduleSpeechTranscriber: ObservableObject {
-    @Published private(set) var transcript = ""
-    @Published private(set) var isRecording = false
-    @Published private(set) var errorMessage: String?
+private final class ScheduleSpeechTranscriber: ScheduleSpeechCapture {
+    private(set) var isRecording = false
     private let audioEngine = AVAudioEngine()
     private let recognizer = SFSpeechRecognizer()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var onTranscript: (@MainActor @Sendable (String) -> Void)?
+    private var onFailure: (@MainActor @Sendable (String) -> Void)?
+    private var captureGeneration = UUID()
 
-    func toggle() {
-        errorMessage = nil
-        if isRecording { stop() }
-        else {
-            SFSpeechRecognizer.requestAuthorization { @Sendable [weak self] status in
-                Task { @MainActor in
-                    guard let self else { return }
-                    guard status == .authorized else {
-                        self.errorMessage = "Allow Speech Recognition and Microphone access in Settings to use voice capture."
-                        return
-                    }
-                    AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in
-                        Task { @MainActor in
-                            guard granted else {
-                                self.errorMessage = "Allow Speech Recognition and Microphone access in Settings to use voice capture."
-                                return
-                            }
-                            do { try self.start() }
-                            catch { self.errorMessage = "Voice capture could not start." }
+    func start(
+        onTranscript: @escaping @MainActor @Sendable (String) -> Void,
+        onFailure: @escaping @MainActor @Sendable (String) -> Void
+    ) {
+        stop()
+        let generation = UUID()
+        captureGeneration = generation
+        self.onTranscript = onTranscript
+        self.onFailure = onFailure
+        SFSpeechRecognizer.requestAuthorization { @Sendable [weak self] status in
+            Task { @MainActor in
+                guard let self, self.captureGeneration == generation else { return }
+                guard status == .authorized else {
+                    onFailure("Allow Speech Recognition and Microphone access in Settings to use voice capture.")
+                    return
+                }
+                AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in
+                    Task { @MainActor in
+                        guard self.captureGeneration == generation else { return }
+                        guard granted else {
+                            onFailure("Allow Speech Recognition and Microphone access in Settings to use voice capture.")
+                            return
                         }
+                        do { try self.beginAudioCapture() }
+                        catch { onFailure("Voice capture could not start.") }
                     }
                 }
             }
@@ -417,6 +345,7 @@ private final class ScheduleSpeechTranscriber: ObservableObject {
     }
 
     func stop() {
+        captureGeneration = UUID()
         guard isRecording else { return }
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
@@ -428,9 +357,7 @@ private final class ScheduleSpeechTranscriber: ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    private func start() throws {
-        stop()
-        transcript = ""
+    private func beginAudioCapture() throws {
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
@@ -450,8 +377,9 @@ private final class ScheduleSpeechTranscriber: ObservableObject {
             let text = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal == true
             Task { @MainActor in
-                if let text { self?.transcript = text }
-                if error != nil || isFinal { self?.stop() }
+                guard let self else { return }
+                if let text { self.onTranscript?(text) }
+                if error != nil || isFinal { self.stop() }
             }
         }
     }

@@ -12,6 +12,7 @@ struct WeeklyScheduleView: View {
     @State private var editingEvent: FamilyEvent?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
+    @State private var scheduleUpdateNotice: String?
 
     init(
         eventStore: any EventStore,
@@ -64,12 +65,19 @@ struct WeeklyScheduleView: View {
                     .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
                         Task { await viewModel.loadEvents() }
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: .scheduleUpdateNotice)) { notification in
+                        scheduleUpdateNotice = notification.userInfo?["message"] as? String
+                    }
             }
             .navigationTitle("Rallyroo")
             .toolbar { toolbarContent }
             .sheet(isPresented: $isAddingEvent) {
-                AddEventSheet(members: viewModel.members, locationSearch: locationSearch) { event, notifyParticipants in
-                    try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
+                AddEventSheet(members: viewModel.members, locationSearch: locationSearch) { event, notifyParticipants, idempotencyKey in
+                    try await viewModel.addEvent(
+                        event,
+                        notifyParticipants: notifyParticipants,
+                        idempotencyKey: idempotencyKey
+                    )
                 }
             }
             .sheet(isPresented: $isCapturingSchedule) {
@@ -77,8 +85,12 @@ struct WeeklyScheduleView: View {
                     ScheduleCaptureSheet(
                         extractor: scheduleDraftExtractor,
                         members: viewModel.members,
-                        onSaveEvent: { event, notifyParticipants in
-                            _ = try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
+                        onSaveEvent: { event, notifyParticipants, idempotencyKey in
+                            try await viewModel.addEvent(
+                                event,
+                                notifyParticipants: notifyParticipants,
+                                idempotencyKey: idempotencyKey
+                            )
                         },
                         onSaveReminder: { try await reminderStore.save($0) }
                     )
@@ -87,11 +99,25 @@ struct WeeklyScheduleView: View {
             .sheet(item: $editingEvent) { event in
                 AddEventSheet(
                     event: event, members: viewModel.members, locationSearch: locationSearch,
-                    onSave: { event, notifyParticipants in
-                        try await viewModel.addEvent(event, notifyParticipants: notifyParticipants)
+                    onSave: { event, notifyParticipants, idempotencyKey in
+                        try await viewModel.addEvent(
+                            event,
+                            notifyParticipants: notifyParticipants,
+                            idempotencyKey: idempotencyKey
+                        )
                     },
-                    onDelete: { try await viewModel.deleteEvent($0) }
+                    onDelete: { event, idempotencyKey in
+                        try await viewModel.deleteEvent(event, idempotencyKey: idempotencyKey)
+                    }
                 )
+            }
+            .alert("Event status", isPresented: Binding(
+                get: { scheduleUpdateNotice != nil },
+                set: { if !$0 { scheduleUpdateNotice = nil } }
+            )) {
+                Button("OK") { scheduleUpdateNotice = nil }
+            } message: {
+                Text(scheduleUpdateNotice ?? "")
             }
              .tint(AppTheme.purple)
         }

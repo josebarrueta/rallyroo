@@ -51,9 +51,15 @@ final class WeeklyScheduleViewModel: ObservableObject {
 
     func addEvent(
         _ event: FamilyEvent,
-        notifyParticipants: Bool = true
-    ) async throws -> [EventConflict] {
-        let conflicts = try await eventStore.save(event, notifyParticipants: notifyParticipants)
+        notifyParticipants: Bool = true,
+        idempotencyKey: UUID = UUID()
+    ) async throws -> EventMutationResult {
+        let result = try await eventStore.save(
+            event,
+            notifyParticipants: notifyParticipants,
+            idempotencyKey: idempotencyKey
+        )
+        let conflicts = result.conflicts
         try? await alertScheduler?.schedule(event)
         if !conflicts.isEmpty, alertPreferences.areConflictAlertsEnabled {
             let message = ConflictNotificationMessage.make(
@@ -66,11 +72,11 @@ final class WeeklyScheduleViewModel: ObservableObject {
         let snapshot = try await eventStore.loadEvents()
         events = snapshot.events.sorted { $0.startTime < $1.startTime }
         isShowingCachedEvents = snapshot.freshness == .cached
-        return conflicts
+        return result
     }
 
-    func deleteEvent(_ event: FamilyEvent) async throws {
-        try await eventStore.delete(event)
+    func deleteEvent(_ event: FamilyEvent, idempotencyKey: UUID = UUID()) async throws {
+        try await eventStore.delete(event, idempotencyKey: idempotencyKey)
         await alertScheduler?.cancel(event)
         let snapshot = try await eventStore.loadEvents()
         events = snapshot.events.sorted { $0.startTime < $1.startTime }

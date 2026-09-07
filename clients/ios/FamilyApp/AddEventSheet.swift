@@ -2,8 +2,8 @@ import SwiftUI
 import FamilyCore
 
 struct AddEventSheet: View {
-    let onSave: (FamilyEvent, Bool) async throws -> [EventConflict]
-    let onDelete: ((FamilyEvent) async throws -> Void)?
+    let onSave: (FamilyEvent, Bool, UUID) async throws -> EventMutationResult
+    let onDelete: ((FamilyEvent, UUID) async throws -> Void)?
     let members: [FamilyMember]
 
     private let existingEvent: FamilyEvent?
@@ -27,14 +27,16 @@ struct AddEventSheet: View {
     @State private var isShowingNotifyPrompt = false
     @State private var locationSuggestions: [LocationSuggestion] = []
     @State private var locationSearchMessage: String?
+    @State private var mutationID = UUID()
+    @State private var deletionID = UUID()
 
     init(
         event: FamilyEvent? = nil,
         prefill: ActivityEventPrefill? = nil,
         members: [FamilyMember],
         locationSearch: any LocationSearch = EmptyLocationSearch(),
-        onSave: @escaping (FamilyEvent, Bool) async throws -> [EventConflict],
-        onDelete: ((FamilyEvent) async throws -> Void)? = nil
+        onSave: @escaping (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
+        onDelete: ((FamilyEvent, UUID) async throws -> Void)? = nil
     ) {
         existingEvent = event
         self.onSave = onSave
@@ -223,15 +225,21 @@ struct AddEventSheet: View {
         Task {
             defer { isSaving = false }
             do {
-                let conflicts = try await onSave(event, notifyParticipants)
-                if conflicts.isEmpty {
+                let result = try await onSave(event, notifyParticipants, mutationID)
+                let deliveryMessage = ScheduleUpdateNotificationMessage.make(
+                    for: result.notificationOutcome
+                ) ?? ""
+                if result.conflicts.isEmpty && deliveryMessage.isEmpty {
                     dismiss()
                 } else {
-                    alertMessage = ConflictNotificationMessage.make(
+                    let conflictMessage = result.conflicts.isEmpty ? "" : ConflictNotificationMessage.make(
                         event: event,
-                        conflicts: conflicts,
+                        conflicts: result.conflicts,
                         members: members
                     )
+                    alertMessage = [conflictMessage, deliveryMessage]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: "\n\n")
                     dismissAfterAlert = true
                     isShowingAlert = true
                 }
@@ -256,7 +264,7 @@ struct AddEventSheet: View {
         Task {
             defer { isSaving = false }
             do {
-                try await onDelete(existingEvent)
+                try await onDelete(existingEvent, deletionID)
                 dismiss()
             } catch {
                 alertMessage = "The event could not be deleted."

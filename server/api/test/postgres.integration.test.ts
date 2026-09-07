@@ -146,6 +146,54 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     await reader.close();
   });
 
+  it("serializes concurrent Event mutations before calculating conflicts", async () => {
+    const repository = repositoryForTest();
+    const app = buildApp({ identityProvider, repository });
+    const session = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    const participantID = session.json().accountID;
+    const eventPayload = (id: string, title: string) => ({
+      id,
+      title,
+      kidID: null,
+      participantIDs: [participantID],
+      startTime: "2026-10-01T18:00:00Z",
+      endTime: "2026-10-01T19:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+    });
+
+    const responses = await Promise.all([
+      app.inject({
+        method: "PUT",
+        url: "/v1/events/10000000-0000-4000-8000-000000000001?notifyParticipants=false",
+        headers: {
+          authorization: "Bearer integration-token",
+          "idempotency-key": "10000000-0000-4000-8000-000000000011",
+        },
+        payload: eventPayload("10000000-0000-4000-8000-000000000001", "First concurrent Event"),
+      }),
+      app.inject({
+        method: "PUT",
+        url: "/v1/events/10000000-0000-4000-8000-000000000002?notifyParticipants=false",
+        headers: {
+          authorization: "Bearer integration-token",
+          "idempotency-key": "10000000-0000-4000-8000-000000000012",
+        },
+        payload: eventPayload("10000000-0000-4000-8000-000000000002", "Second concurrent Event"),
+      }),
+    ]);
+
+    expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+    expect(responses.map((response) => response.json().conflicts.length).sort()).toEqual([0, 1]);
+    await app.close();
+  });
+
   it("persists reminder completion across PostgreSQL repository instances", async () => {
     const writerRepository = repositoryForTest();
     const writer = buildApp({ identityProvider, repository: writerRepository });

@@ -1,7 +1,8 @@
 import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type { EventMutationPersistence } from "./event-mutation-persistence.js";
 
-export interface RallyrooRepository {
+export interface RallyrooRepository extends EventMutationPersistence {
   accountForIdentity(subject: string): Promise<Account | null>;
   provisionParentAccount(subject: string, displayName: string): Promise<Account>;
   deleteAccount(subject: string): Promise<void>;

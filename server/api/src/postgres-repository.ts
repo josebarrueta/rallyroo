@@ -10,6 +10,12 @@ import type {
   FamilyReminder,
 } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type {
+  ClaimedScheduleUpdateNotification,
+  EventMutationPlan,
+  StoredEventMutationResult,
+  EventMutationSnapshot,
+} from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { RallyrooRepository } from "./repository.js";
 import type {
@@ -385,6 +391,182 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return result.rows.map(eventFromRow);
   }
 
+  async eventMutationResult(
+    familyID: string,
+    idempotencyKey: string,
+  ): Promise<StoredEventMutationResult | null> {
+    const result = await this.pool.query<{ result: StoredEventMutationResult }>(
+      "SELECT result FROM event_mutation_results WHERE family_id = $1 AND idempotency_key = $2",
+      [familyID, idempotencyKey],
+    );
+    return result.rows[0]?.result ?? null;
+  }
+
+  async performEventMutation(
+    familyID: string,
+    idempotencyKey: string,
+    prepare: (snapshot: EventMutationSnapshot) => EventMutationPlan,
+  ): Promise<StoredEventMutationResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [familyID]);
+      const prior = await client.query<{ result: StoredEventMutationResult }>(
+        "SELECT result FROM event_mutation_results WHERE family_id = $1 AND idempotency_key = $2",
+        [familyID, idempotencyKey],
+      );
+      if (prior.rows[0]) {
+        await client.query("COMMIT");
+        return prior.rows[0].result;
+      }
+      const events = await client.query<EventRow>(
+        `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
+                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+         FROM events WHERE family_id = $1 ORDER BY start_time`,
+        [familyID],
+      );
+      const members = await client.query<MemberRow>(
+        `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+         FROM family_members WHERE family_id = $1 ORDER BY name`,
+        [familyID],
+      );
+      const plan = prepare({
+        events: events.rows.map(eventFromRow),
+        members: members.rows.map(memberFromRow),
+      });
+      if (plan.action.kind === "save") {
+        const event = plan.action.event;
+        await client.query(
+          `INSERT INTO events (
+             family_id, id, title, kid_id, participant_ids, start_time, end_time,
+             location, driver, source, status, alert_lead_time_minutes, recurrence
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT (family_id, id) DO UPDATE SET
+             title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
+             participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
+             end_time=EXCLUDED.end_time, location=EXCLUDED.location,
+             driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+             alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
+             recurrence=EXCLUDED.recurrence`,
+          eventValues(event),
+        );
+      } else {
+        await client.query(
+          "DELETE FROM events WHERE family_id = $1 AND id = $2",
+          [familyID, plan.action.eventID],
+        );
+      }
+      await client.query(
+        `INSERT INTO family_change_versions (family_id, version) VALUES ($1, 1)
+         ON CONFLICT (family_id) DO UPDATE
+         SET version = family_change_versions.version + 1, updated_at = now()`,
+        [familyID],
+      );
+      if (plan.notification) {
+        await client.query(
+          `INSERT INTO schedule_update_notifications (
+             id, family_id, event_id, idempotency_key, title, body, participant_ids
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            plan.notification.id, familyID, plan.notification.eventID, idempotencyKey,
+            plan.notification.title, plan.notification.body, plan.notification.participantIDs,
+          ],
+        );
+      }
+      await client.query(
+        `INSERT INTO event_mutation_results (family_id, idempotency_key, result)
+         VALUES ($1, $2, $3::jsonb)`,
+        [familyID, idempotencyKey, JSON.stringify(plan.result)],
+      );
+      await client.query("COMMIT");
+      return plan.result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async claimScheduleUpdateNotifications(
+    now: Date,
+    limit: number,
+    notificationID?: string,
+  ): Promise<ClaimedScheduleUpdateNotification[]> {
+    const result = await this.pool.query<ScheduleUpdateNotificationRow>(
+      `WITH candidates AS (
+         SELECT id FROM schedule_update_notifications
+         WHERE ($3::uuid IS NULL OR id = $3)
+           AND (status = 'pending' OR (status = 'claimed' AND claimed_at < $1::timestamptz - interval '5 minutes'))
+         ORDER BY created_at
+         FOR UPDATE SKIP LOCKED
+         LIMIT $2
+       )
+       UPDATE schedule_update_notifications AS notification
+       SET status = 'claimed', claimed_at = $1, attempt_count = attempt_count + 1
+       FROM candidates
+       WHERE notification.id = candidates.id
+       RETURNING notification.id::text, notification.family_id, notification.event_id::text,
+                 notification.idempotency_key::text, notification.title, notification.body,
+                 notification.participant_ids, notification.claimed_at`,
+      [now.toISOString(), limit, notificationID ?? null],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      familyID: row.family_id,
+      eventID: row.event_id,
+      idempotencyKey: row.idempotency_key,
+      title: row.title,
+      body: row.body,
+      participantIDs: row.participant_ids,
+      claimedAt: new Date(row.claimed_at),
+    }));
+  }
+
+  async completeScheduleUpdateNotification(
+    notification: ClaimedScheduleUpdateNotification,
+    outcome: "sent" | "noRecipients",
+    completedAt: Date,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const completed = await client.query(
+        `UPDATE schedule_update_notifications
+         SET status = 'sent', claimed_at = NULL, sent_at = $3, last_error_category = NULL
+         WHERE id = $1 AND status = 'claimed' AND claimed_at = $2
+         RETURNING family_id, idempotency_key`,
+        [notification.id, notification.claimedAt.toISOString(), completedAt.toISOString()],
+      );
+      if (completed.rows[0]) {
+        await client.query(
+          `UPDATE event_mutation_results
+           SET result = jsonb_set(result, '{notificationOutcome}', to_jsonb($3::text)), updated_at = now()
+           WHERE family_id = $1 AND idempotency_key = $2`,
+          [notification.familyID, notification.idempotencyKey, outcome],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async releaseScheduleUpdateNotification(
+    notification: ClaimedScheduleUpdateNotification,
+    errorCategory: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE schedule_update_notifications
+       SET status = 'pending', claimed_at = NULL, last_error_category = $3
+       WHERE id = $1 AND status = 'claimed' AND claimed_at = $2`,
+      [notification.id, notification.claimedAt.toISOString(), errorCategory],
+    );
+  }
+
   async saveEvent(event: FamilyEvent): Promise<void> {
     await this.pool.query(
       `INSERT INTO events (
@@ -398,12 +580,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence`,
-      [
-        event.familyID, event.id, event.title, event.kidID, event.participantIDs,
-        event.startTime, event.endTime, event.location, event.driver,
-        event.source, event.status, event.alertLeadTimeMinutes ?? null,
-        event.recurrence ? JSON.stringify(event.recurrence) : null,
-      ],
+      eventValues(event),
     );
   }
 
@@ -788,6 +965,17 @@ interface EventRow {
   recurrence: EventRecurrence | null;
 }
 
+interface ScheduleUpdateNotificationRow {
+  id: string;
+  family_id: string;
+  event_id: string;
+  idempotency_key: string;
+  title: string;
+  body: string;
+  participant_ids: string[];
+  claimed_at: Date | string;
+}
+
 interface ReminderRow {
   family_id: string;
   id: string;
@@ -864,6 +1052,26 @@ function accountFromRow(row: AccountRow): Account {
     memberID: row.member_id,
     role: row.role,
   };
+}
+
+function memberFromRow(row: MemberRow): FamilyMember {
+  return {
+    familyID: row.family_id,
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    colorTag: row.color_tag,
+    ...(row.grade_or_birth_year !== null ? { gradeOrBirthYear: row.grade_or_birth_year } : {}),
+  };
+}
+
+function eventValues(event: FamilyEvent): unknown[] {
+  return [
+    event.familyID, event.id, event.title, event.kidID, event.participantIDs,
+    event.startTime, event.endTime, event.location, event.driver,
+    event.source, event.status, event.alertLeadTimeMinutes ?? null,
+    event.recurrence ? JSON.stringify(event.recurrence) : null,
+  ];
 }
 
 function eventFromRow(row: EventRow): FamilyEvent {

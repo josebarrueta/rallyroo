@@ -6,9 +6,10 @@ import Fastify, {
   type FastifyServerOptions,
 } from "fastify";
 import { z } from "zod";
-import type { Account, EventConflict, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
+import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
 import type { CalendarSourceModule } from "./calendar-source-module.js";
-import { eventOccurrenceStarts } from "./event-recurrence.js";
+import { EventMutationError, EventMutationModule } from "./event-mutation.js";
+import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import {
   NoopInvitationEmailSender,
@@ -169,6 +170,19 @@ export function buildApp({
     scheduleDrafts: { max: 10, timeWindow: 60_000 },
     ...rateLimits,
   };
+  const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispatcher({
+    persistence: repository,
+    recipients: repository,
+    pushNotificationProvider,
+  });
+  const eventMutations = new EventMutationModule({
+    persistence: repository,
+    importedEvents: {
+      visibleEvents: (familyID, memberID) => calendarSources?.events(familyID, memberID) ?? Promise.resolve([]),
+      sharedEvents: (familyID) => calendarSources?.sharedEvents(familyID) ?? Promise.resolve([]),
+    },
+    notificationDispatcher: scheduleUpdateNotificationDispatcher,
+  });
   const app = Fastify({ logger });
   fastifyRateLimit(
     app,
@@ -698,87 +712,53 @@ export function buildApp({
   });
 
   app.put("/v1/events/:id", async (request, reply) => {
-    const account = await requireParent(request, reply);
-    if (!account) return;
+    const account = requiredAccount(request);
     const parsed = eventSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_event", details: parsed.error.issues });
     const notifyParticipants = (request.query as { notifyParticipants?: string }).notifyParticipants !== "false";
     const routeID = (request.params as { id: string }).id.toLowerCase();
     const eventID = parsed.data.id.toLowerCase();
     if (routeID !== eventID) return reply.code(400).send({ error: "event_id_mismatch" });
-    if (calendarSources && (await calendarSources.events(account.familyID, account.memberID)).some((event) => event.id.toLowerCase() === eventID)) {
-      return reply.code(409).send({ error: "imported_event_read_only" });
-    }
-    const familyMembers = await repository.membersForFamily(account.familyID);
-    const memberIDs = new Set(familyMembers.map((member) => member.id));
-    const referencedMemberIDs = [
-      ...parsed.data.participantIDs,
-      ...(parsed.data.kidID ? [parsed.data.kidID] : []),
-    ];
-    if (referencedMemberIDs.some((memberID) => !memberIDs.has(memberID))) {
-      return reply.code(400).send({ error: "unknown_participant" });
-    }
-    const nativeEvents = await repository.eventsForFamily(account.familyID);
-    const existingEvent = nativeEvents.find((candidate) => candidate.id.toLowerCase() === eventID);
+    const idempotencyKey = mutationIdempotencyKey(request, reply);
+    if (!idempotencyKey) return;
     const { recurrence, ...eventData } = parsed.data;
-    const existingWeekdays = existingEvent?.recurrence?.weekdays;
-    const effectiveRecurrence = recurrence?.frequency === "weekly"
-      && recurrence.weekdays === undefined
-      && existingWeekdays?.length
-      ? { ...recurrence, weekdays: existingWeekdays }
-      : recurrence;
-    const event: FamilyEvent = {
-      ...eventData,
-      id: eventID,
-      familyID: account.familyID,
-      ...(effectiveRecurrence !== undefined ? { recurrence: effectiveRecurrence } : {}),
-    };
-    const visibleImportedEvents = calendarSources
-      ? await calendarSources.events(account.familyID, account.memberID)
-      : [];
-    const sharedImportedEvents = calendarSources
-      ? await calendarSources.sharedEvents(account.familyID)
-      : [];
-    const conflicts = detectConflicts(
-      event,
-      [...nativeEvents, ...visibleImportedEvents].filter((candidate) => candidate.id !== event.id),
-    );
-    const familyVisibleConflicts = detectConflicts(
-      event,
-      [...nativeEvents, ...sharedImportedEvents].filter((candidate) => candidate.id !== event.id),
-    );
-    await repository.saveEvent(event);
-    await repository.markFamilyChanged(account.familyID);
-    if (notifyParticipants) {
-      const notificationMemberIDs = event.participantIDs.filter((id) => id !== account.memberID);
-      const deviceTokens = await repository.deviceTokensForMembers(account.familyID, notificationMemberIDs);
-      if (deviceTokens.length > 0) {
-        try {
-          await pushNotificationProvider.send(deviceTokens, {
-            title: event.title,
-            body: familyVisibleConflicts.length > 0
-              ? "Schedule conflict detected. Open Rallyroo to review."
-              : "Your family schedule was updated.",
-            data: { eventID: event.id },
-          });
-        } catch {
-          // Saving the source-of-truth event must not fail because APNs is unavailable.
-        }
+    try {
+      return await eventMutations.save({
+        account,
+        idempotencyKey,
+        notifyParticipants,
+        event: {
+          ...eventData,
+          id: eventID,
+          familyID: account.familyID,
+          ...(recurrence !== undefined ? { recurrence } : {}),
+        },
+      });
+    } catch (error) {
+      if (error instanceof EventMutationError) {
+        return reply.code(error.statusCode).send({ error: error.code });
       }
+      throw error;
     }
-    return { conflicts };
   });
 
   app.delete("/v1/events/:id", async (request, reply) => {
-    const account = await requireParent(request, reply);
-    if (!account) return;
-    const eventID = (request.params as { id: string }).id.toLowerCase();
-    if (calendarSources && (await calendarSources.events(account.familyID, account.memberID)).some((event) => event.id.toLowerCase() === eventID)) {
-      return reply.code(409).send({ error: "imported_event_read_only" });
+    const account = requiredAccount(request);
+    const idempotencyKey = mutationIdempotencyKey(request, reply);
+    if (!idempotencyKey) return;
+    try {
+      await eventMutations.delete({
+        account,
+        eventID: (request.params as { id: string }).id,
+        idempotencyKey,
+      });
+      return reply.code(204).send();
+    } catch (error) {
+      if (error instanceof EventMutationError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
     }
-    await repository.deleteEvent(account.familyID, eventID);
-    await repository.markFamilyChanged(account.familyID);
-    return reply.code(204).send();
   });
 
   app.get("/v1/family-members", async (request) => {
@@ -849,49 +829,18 @@ async function requireParent(request: FastifyRequest, reply: FastifyReply): Prom
   return account;
 }
 
-function detectConflicts(event: FamilyEvent, existingEvents: FamilyEvent[]): EventConflict[] {
-  const conflicts: EventConflict[] = [];
-  const rangeEnd = [event, ...existingEvents].reduce((latest, candidate) => {
-    const candidateEnd = new Date(candidate.recurrence?.endDate ?? candidate.endTime);
-    return candidateEnd > latest ? candidateEnd : latest;
-  }, new Date(event.endTime));
-  const eventOccurrences = occurrenceRanges(event, rangeEnd);
-  for (const existing of existingEvents) {
-    const overlaps = eventOccurrences.some((occurrence) =>
-      occurrenceRanges(existing, rangeEnd).some((existingOccurrence) =>
-        occurrence.start < existingOccurrence.end && existingOccurrence.start < occurrence.end
-      )
-    );
-    if (!overlaps) continue;
-    const memberID = event.participantIDs.find((id) => existing.participantIDs.includes(id));
-    if (memberID) {
-      conflicts.push({
-        kind: "overlapping_participant",
-        memberID,
-        driver: null,
-        eventIDs: [existing.id, event.id],
-      });
-    } else if (event.driver && event.driver === existing.driver) {
-      conflicts.push({
-        kind: "double_booked_driver",
-        memberID: null,
-        driver: event.driver,
-        eventIDs: [existing.id, event.id],
-      });
-    }
+function mutationIdempotencyKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): string | null {
+  const header = request.headers["idempotency-key"];
+  if (header === undefined) return randomUUID();
+  const parsed = z.string().uuid().safeParse(header);
+  if (!parsed.success) {
+    void reply.code(400).send({ error: "invalid_idempotency_key" });
+    return null;
   }
-  return conflicts;
-}
-
-function occurrenceRanges(event: FamilyEvent, rangeEnd: Date): Array<{ start: Date; end: Date }> {
-  const firstStart = new Date(event.startTime);
-  const duration = new Date(event.endTime).getTime() - firstStart.getTime();
-  if (!event.recurrence) return [{ start: firstStart, end: new Date(firstStart.getTime() + duration) }];
-
-  return eventOccurrenceStarts(event, rangeEnd).map((start) => ({
-    start,
-    end: new Date(start.getTime() + duration),
-  }));
+  return parsed.data;
 }
 
 function clientEvent({ familyID: _familyID, ...event }: FamilyEvent) {
