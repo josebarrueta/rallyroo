@@ -46,7 +46,15 @@ const locationProvider: LocationSearchProvider = googlePlacesAPIKey
   ? new GooglePlacesLocationSearchProvider(googlePlacesAPIKey)
   : new EmptyLocationSearchProvider();
 
-const repository = PostgresRallyrooRepository.fromConfiguration(databaseConfiguration);
+const familyDataEncryptionKey = configuredSecret("FAMILY_DATA_ENCRYPTION_KEY");
+if (!familyDataEncryptionKey) {
+  throw new Error("FAMILY_DATA_ENCRYPTION_KEY is required");
+}
+const repository = PostgresRallyrooRepository.fromConfiguration(
+  databaseConfiguration,
+  familyDataEncryptionKey,
+);
+await repository.validateFamilyDataEncryption();
 const pushNotificationProvider = APNSPushNotificationProvider.fromEnvironment()
   ?? new NoopPushNotificationProvider();
 const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
@@ -114,6 +122,27 @@ const app = buildApp({
     },
   },
 });
+let familyDataProtectionIsRunning = false;
+const protectLegacyFamilyData = async (): Promise<void> => {
+  if (familyDataProtectionIsRunning) return;
+  familyDataProtectionIsRunning = true;
+  try {
+    const protectedCount = await repository.protectLegacyFamilyData(100);
+    if (protectedCount > 0) {
+      app.log.info({ protectedCount }, "Protected legacy Family data");
+    }
+  } catch (error) {
+    app.log.error({ error }, "Legacy Family data protection failed");
+  } finally {
+    familyDataProtectionIsRunning = false;
+  }
+};
+await protectLegacyFamilyData();
+const familyDataProtectionInterval = setInterval(() => {
+  void protectLegacyFamilyData();
+}, 30_000);
+familyDataProtectionInterval.unref();
+
 let notificationDispatchIsRunning = false;
 const notificationDispatchInterval = setInterval(async () => {
   if (notificationDispatchIsRunning) return;
@@ -140,6 +169,7 @@ const notificationDispatchInterval = setInterval(async () => {
 notificationDispatchInterval.unref();
 
 app.addHook("onClose", async () => {
+  clearInterval(familyDataProtectionInterval);
   clearInterval(notificationDispatchInterval);
   await Promise.all([cache.close?.(), repository.close()]);
 });

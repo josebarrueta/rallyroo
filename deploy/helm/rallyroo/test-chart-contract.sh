@@ -26,6 +26,7 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set postgres.credentialsSecret=rallyroo-postgres \
   --set providerSecrets.stytch=rallyroo-stytch \
   --set providerSecrets.calendarEncryption=rallyroo-calendar-encryption \
+  --set providerSecrets.familyDataEncryption=rallyroo-family-data-encryption \
   --set providerSecrets.googlePlaces=rallyroo-google-places \
   --set providerSecrets.resendInvitations=rallyroo-resend-invitations \
   --set providerSecrets.apns=rallyroo-apns \
@@ -73,6 +74,9 @@ grep -q 'secretName: rallyroo-stytch' "$rendered"
 grep -q 'name: CALENDAR_SOURCE_ENCRYPTION_KEY_FILE' "$rendered"
 grep -q 'value: /run/secrets/calendar-encryption/key' "$rendered"
 grep -q 'secretName: rallyroo-calendar-encryption' "$rendered"
+grep -q 'name: FAMILY_DATA_ENCRYPTION_KEY_FILE' "$rendered"
+grep -q 'value: /run/secrets/family-data-encryption/key' "$rendered"
+grep -q 'secretName: rallyroo-family-data-encryption' "$rendered"
 grep -q 'name: GOOGLE_PLACES_API_KEY_FILE' "$rendered"
 grep -q 'value: /run/secrets/google-places/api-key' "$rendered"
 grep -q 'secretName: rallyroo-google-places' "$rendered"

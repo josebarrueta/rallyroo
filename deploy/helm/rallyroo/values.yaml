@@ -17,6 +17,7 @@ runtimeSecret: rallyroo-runtime
 providerSecrets:
   stytch: ""
   calendarEncryption: ""
+  familyDataEncryption: ""
   googlePlaces: ""
   resendInvitations: ""
   apns: ""

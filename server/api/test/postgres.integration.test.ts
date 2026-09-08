@@ -11,12 +11,16 @@ import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
 const migrationsDirectory = fileURLToPath(new URL("../migrations/pre", import.meta.url));
+const familyDataEncryptionKey = Buffer.alloc(32, 7).toString("base64");
 let databaseURL = "";
 let adminPool: Pool;
 const repositories: PostgresRallyrooRepository[] = [];
 
 function repositoryForTest(): PostgresRallyrooRepository {
-  const repository = PostgresRallyrooRepository.fromConnectionString(databaseURL);
+  const repository = PostgresRallyrooRepository.fromConnectionString(
+    databaseURL,
+    familyDataEncryptionKey,
+  );
   repositories.push(repository);
   return repository;
 }
@@ -112,16 +116,25 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
     });
     expect(session.statusCode).toBe(200);
+    const account = (await writerRepository.accountForIdentity("integration-parent"))!;
+    const participantID = "integration-participant";
+    await writerRepository.saveMember({
+      familyID: account.familyID,
+      id: participantID,
+      name: "Casey",
+      role: "kid",
+      colorTag: "green",
+    });
 
     const saved = await writer.inject({
       method: "PUT",
-      url: "/v1/events/00000000-0000-4000-8000-000000000099",
+      url: "/v1/events/00000000-0000-4000-8000-000000000099?notifyParticipants=true",
       headers: { authorization: "Bearer integration-token" },
       payload: {
         id: "00000000-0000-4000-8000-000000000099",
         title: "Integration rehearsal",
         kidID: null,
-        participantIDs: [],
+        participantIDs: [participantID],
         startTime: "2026-09-01T18:00:00Z",
         endTime: "2026-09-01T19:00:00Z",
         location: null,
@@ -149,7 +162,106 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(events.json()).toEqual([
       expect.objectContaining({ id: "00000000-0000-4000-8000-000000000099", title: "Integration rehearsal" }),
     ]);
+
+    const inspectionPool = new Pool({ connectionString: databaseURL });
+    const stored = await inspectionPool.query<{
+      title: string;
+      start_time: Date;
+      end_time: Date;
+      wrapped_key: string;
+      result: unknown | null;
+      result_ciphertext: string | null;
+      notification_title: string;
+      notification_body: string;
+    }>(
+      `SELECT event.title, event.start_time, event.end_time, family_key.wrapped_key,
+              mutation.result, mutation.result_ciphertext,
+              notification.title AS notification_title,
+              notification.body AS notification_body
+       FROM events event
+       JOIN family_data_keys family_key ON family_key.family_id = event.family_id
+       JOIN event_mutation_results mutation ON mutation.family_id = event.family_id
+       JOIN schedule_update_notifications notification
+         ON notification.family_id = event.family_id AND notification.event_id = event.id
+       WHERE event.id = $1 AND family_key.active`,
+      ["00000000-0000-4000-8000-000000000099"],
+    );
+    await inspectionPool.end();
+    expect(stored.rows[0]?.title).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.title).not.toContain("Integration rehearsal");
+    expect(stored.rows[0]?.wrapped_key).toMatch(/^rrk1\.1\./);
+    expect(stored.rows[0]?.result).toBeNull();
+    expect(stored.rows[0]?.result_ciphertext).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.notification_title).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.notification_body).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.start_time.toISOString()).toBe("2026-09-01T18:00:00.000Z");
+    expect(stored.rows[0]?.end_time.toISOString()).toBe("2026-09-01T19:00:00.000Z");
     await reader.close();
+  });
+
+  it("migrates existing protected details without changing schedule metadata", async () => {
+    const familyID = "legacy-family";
+    const memberID = "legacy-parent";
+    const eventID = "00000000-0000-4000-8000-000000000098";
+    const reminderID = "abcdefab-cdef-4abc-8def-abcdefabc300";
+    const seed = new Pool({ connectionString: databaseURL });
+    await seed.query(
+      `INSERT INTO family_members (family_id, id, name, role, color_tag)
+       VALUES ($1, $2, 'Legacy Person', 'parent', 'blue')`,
+      [familyID, memberID],
+    );
+    await seed.query(
+      `INSERT INTO accounts (identity_subject, family_id, member_id, role)
+       VALUES ('legacy-subject', $1, $2, 'parent')`,
+      [familyID, memberID],
+    );
+    await seed.query(
+      `INSERT INTO events (
+         family_id, id, title, kid_id, participant_ids, start_time, end_time,
+         location, driver, source, status
+       ) VALUES ($1,$2,'Legacy appointment',NULL,$3,'2026-09-12T18:00:00Z',
+                 '2026-09-12T19:00:00Z','Legacy clinic','Legacy driver','manual','confirmed')`,
+      [familyID, eventID, [memberID]],
+    );
+    await seed.query(
+      `INSERT INTO family_reminders (
+         family_id, id, title, assignee_ids, due_at, status, created_by_member_id
+       ) VALUES ($1,$2,'Legacy medication',$3,'2026-09-12T17:00:00Z','open',$4)`,
+      [familyID, reminderID, [memberID], memberID],
+    );
+    await seed.end();
+
+    const repository = repositoryForTest();
+    expect(await repository.protectLegacyFamilyData(100)).toBe(5);
+    expect(await repository.eventsForFamily(familyID)).toEqual([
+      expect.objectContaining({
+        title: "Legacy appointment",
+        location: "Legacy clinic",
+        driver: "Legacy driver",
+        startTime: "2026-09-12T18:00:00.000Z",
+        endTime: "2026-09-12T19:00:00.000Z",
+      }),
+    ]);
+    expect(await repository.remindersForFamily(familyID)).toEqual([
+      expect.objectContaining({ title: "Legacy medication", dueAt: "2026-09-12T17:00:00.000Z" }),
+    ]);
+    expect(await repository.membersForFamily(familyID)).toEqual([
+      expect.objectContaining({ name: "Legacy Person" }),
+    ]);
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    const plaintextCount = await inspection.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM (
+         SELECT name AS value FROM family_members WHERE family_id = $1
+         UNION ALL SELECT title FROM events WHERE family_id = $1
+         UNION ALL SELECT location FROM events WHERE family_id = $1
+         UNION ALL SELECT driver FROM events WHERE family_id = $1
+         UNION ALL SELECT title FROM family_reminders WHERE family_id = $1
+       ) protected_details WHERE value IS NOT NULL AND value NOT LIKE 'rr1.%'`,
+      [familyID],
+    );
+    await inspection.end();
+    expect(plaintextCount.rows[0]?.count).toBe("0");
   });
 
   it("serializes concurrent Event mutations before calculating conflicts", async () => {
@@ -243,6 +355,28 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         completedByMemberID: session.json().accountID,
       }),
     ]);
+    const members = await reader.inject({
+      method: "GET",
+      url: "/v1/family-members",
+      headers: { authorization: "Bearer integration-token" },
+    });
+    expect(members.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Alex" }),
+    ]));
+
+    const inspectionPool = new Pool({ connectionString: databaseURL });
+    const stored = await inspectionPool.query<{ reminder_title: string; member_name: string }>(
+      `SELECT reminder.title AS reminder_title, member.name AS member_name
+       FROM family_reminders reminder
+       JOIN family_members member ON member.family_id = reminder.family_id
+       WHERE reminder.id = $1 AND member.id = $2`,
+      [reminderID, session.json().accountID],
+    );
+    await inspectionPool.end();
+    expect(stored.rows[0]?.reminder_title).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.reminder_title).not.toContain("Persistent reminder");
+    expect(stored.rows[0]?.member_name).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.member_name).not.toContain("Alex");
     await reader.close();
   });
 
@@ -387,6 +521,30 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(events.json()).toEqual(expect.arrayContaining([
       expect.objectContaining({ title: "Persisted team practice", source: "calendar", readOnly: true }),
     ]));
+
+    const inspectionPool = new Pool({ connectionString: databaseURL });
+    const stored = await inspectionPool.query<{
+      source_name: string;
+      event_title: string;
+      external_uid: string;
+      feed_url_ciphertext: string;
+    }>(
+      `SELECT source.name AS source_name, source.feed_url_ciphertext,
+              event.title AS event_title, event.external_uid
+       FROM calendar_sources source
+       JOIN imported_calendar_events event
+         ON event.family_id = source.family_id AND event.source_id = source.id
+       WHERE source.id = $1`,
+      [created.json().id],
+    );
+    await inspectionPool.end();
+    expect(stored.rows[0]?.source_name).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.event_title).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.external_uid).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.feed_url_ciphertext).toMatch(/^rr1\.1\./);
+    expect(stored.rows[0]?.source_name).not.toContain("TeamSnap");
+    expect(stored.rows[0]?.event_title).not.toContain("Persisted team practice");
+    expect(stored.rows[0]?.external_uid).not.toContain("persisted-calendar@example");
     await reader.close();
   });
 
@@ -423,6 +581,15 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     });
     expect(isolatedList.json()).toEqual([]);
     expect(isolatedDelete.statusCode).toBe(404);
+
+    const inspectionPool = new Pool({ connectionString: databaseURL });
+    const storedInvitation = await inspectionPool.query<{ recipient_email: string }>(
+      "SELECT recipient_email FROM family_invitations WHERE id = $1",
+      [invitation.json().id],
+    );
+    await inspectionPool.end();
+    expect(storedInvitation.rows[0]?.recipient_email).toMatch(/^rr1\.1\./);
+    expect(storedInvitation.rows[0]?.recipient_email).not.toContain("child@example.com");
 
     const joined = await app.inject({
       method: "POST",

@@ -77,6 +77,16 @@ unsupported structured-output runtimes fall back to JSON-only generation before 
 same validation. Draft extraction never writes events or reminders and request bodies
 are not logged.
 
+## Family data protection
+
+`FAMILY_DATA_ENCRYPTION_KEY` is required and must contain exactly 32 random bytes
+encoded as standard Base64. It wraps independent per-Family AES-256-GCM data keys;
+the master key and unwrapped Family keys are never stored in PostgreSQL. Descriptive
+Event, Reminder, Member, invitation, calendar, and notification fields are protected
+at the PostgreSQL persistence seam. Times, recurrence, alert triggers, statuses, and
+opaque routing identifiers remain queryable. Existing plaintext is protected in
+bounded, resumable background batches after upgrade.
+
 ## Calendar subscriptions
 
 Set `CALENDAR_SOURCE_ENCRYPTION_KEY` to a base64-encoded 32-byte random key to

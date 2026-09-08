@@ -60,6 +60,7 @@ Kubernetes Secret keys.
 | `rallyroo-resend-invitations` | `RESEND_API_KEY` | Resend, Sending access |
 | `rallyroo-apns` | `APNS_PRIVATE_KEY`, `APNS_KEY_ID` | Apple Developer |
 | `rallyroo-calendar-encryption` | `CALENDAR_SOURCE_ENCRYPTION_KEY` | Rallyroo-generated |
+| `rallyroo-family-data-encryption` | `FAMILY_DATA_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-observability` | `METRICS_BEARER_TOKEN` | Rallyroo-generated |
 | `rallyroo-deployment-alert-webhook` | concealed `token`, text `address` | Rallyroo-generated shared HMAC and `https://alerts.rallyroo.dev/flux` |
 | `rallyroo-alert-worker-resend` | `RESEND_API_KEY` | Resend, Full access |
@@ -120,6 +121,21 @@ openssl rand -base64 32 | tr -d '\n' | pbcopy
 Paste it into `rallyroo-calendar-encryption` →
 `CALENDAR_SOURCE_ENCRYPTION_KEY`. Keep this key stable after calendar subscriptions
 exist. Losing or changing it makes stored subscription URLs unreadable.
+
+### Family data encryption key
+
+The API requires exactly 32 random bytes encoded as standard Base64. This key
+wraps independent per-Family AES-256-GCM data keys; it does not directly encrypt
+Event or Reminder details.
+
+```bash
+openssl rand -base64 32 | tr -d '\n' | pbcopy
+```
+
+Paste it into `rallyroo-family-data-encryption` →
+`FAMILY_DATA_ENCRYPTION_KEY`. Keep an administrator-only recovery copy. Losing
+this key makes every wrapped Family data key, and therefore all protected Family
+details, unreadable. Never reuse the calendar-source key.
 
 ### Metrics bearer token
 

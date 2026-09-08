@@ -30,14 +30,27 @@ export function calendarURLProtection(encodedKey: string): {
       if (version !== "v1" || !nonceValue || !tagValue || !ciphertextValue || extra.length > 0) {
         throw new Error("Invalid protected calendar URL");
       }
-      const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(nonceValue, "base64url"));
-      decipher.setAuthTag(Buffer.from(tagValue, "base64url"));
+      const nonce = decodeCanonicalBase64URL(nonceValue);
+      const tag = decodeCanonicalBase64URL(tagValue);
+      const ciphertext = decodeCanonicalBase64URL(ciphertextValue);
+      if (nonce.length !== 12 || tag.length !== 16 || ciphertext.length === 0) {
+        throw new Error("Invalid protected calendar URL");
+      }
+      const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+      decipher.setAuthTag(tag);
       return Buffer.concat([
-        decipher.update(Buffer.from(ciphertextValue, "base64url")),
+        decipher.update(ciphertext),
         decipher.final(),
       ]).toString("utf8");
     },
   };
+}
+
+function decodeCanonicalBase64URL(value: string): Buffer {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid protected calendar URL");
+  const decoded = Buffer.from(value, "base64url");
+  if (decoded.toString("base64url") !== value) throw new Error("Invalid protected calendar URL");
+  return decoded;
 }
 
 export async function fetchPublicCalendarFeed(

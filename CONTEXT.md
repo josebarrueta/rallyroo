@@ -52,6 +52,10 @@ _Avoid_: Imported event, saved event, automatic action
 A question attached to a schedule draft when required information is ambiguous. A draft needing clarification cannot be saved until the parent revises the source text and receives a complete proposal.
 _Avoid_: Model guess, default date
 
+**Protected Family detail**:
+Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, or notification. Scheduling instants, alert triggers, statuses, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
+_Avoid_: Schedule metadata, trigger, ciphertext
+
 **Personal calendar**:
 An imported calendar visible only to the parent who connected it.
 _Avoid_: Private event, public calendar
