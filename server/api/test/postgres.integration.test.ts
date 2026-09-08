@@ -39,6 +39,11 @@ const identityProvider: IdentityProvider = {
         displayName: "Morgan",
         accessToken: "successor-token",
       },
+      "recovery-oauth-token": {
+        subject: "invitation-recovery-parent",
+        displayName: "Riley",
+        accessToken: "recovery-token",
+      },
     };
     const identity = identities[token];
     if (!identity) throw new Error("invalid OAuth token");
@@ -54,6 +59,7 @@ const identityProvider: IdentityProvider = {
       "other-token": { subject: "other-parent", displayName: "Jordan" },
       "deleting-owner-token": { subject: "deleting-calendar-owner", displayName: "Taylor" },
       "successor-token": { subject: "calendar-owner-successor", displayName: "Morgan" },
+      "recovery-token": { subject: "invitation-recovery-parent", displayName: "Riley" },
     };
     const identity = identities[token];
     if (!identity) throw new Error("invalid session");
@@ -435,6 +441,55 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       headers: { authorization: "Bearer integration-token" },
     });
     expect(pending.json()).toEqual([]);
+    await app.close();
+  });
+
+  it("atomically moves an existing account and device from an empty accidental family", async () => {
+    const repository = repositoryForTest();
+    const app = buildApp({ identityProvider, repository });
+    const owner = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    const accidental = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: { oauthToken: "recovery-oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    const oldAccount = await repository.accountForIdentity("invitation-recovery-parent");
+    expect(oldAccount).not.toBeNull();
+    expect(oldAccount?.familyID).not.toBe((await repository.accountForIdentity("integration-parent"))?.familyID);
+    await repository.saveDeviceToken(oldAccount!.familyID, oldAccount!.memberID, "recovery-device-token");
+    const invitation = await app.inject({
+      method: "POST",
+      url: "/v1/invitations",
+      headers: { authorization: "Bearer integration-token" },
+      payload: { role: "parent", email: "recovery@example.com" },
+    });
+
+    const recovered = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: {
+        oauthToken: "recovery-oauth-token",
+        codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq",
+        invitationCode: invitation.json().code,
+      },
+    });
+
+    expect(owner.statusCode).toBe(200);
+    expect(accidental.statusCode).toBe(200);
+    expect(recovered.statusCode).toBe(200);
+    expect(recovered.json()).toMatchObject({ role: "parent", displayName: "Riley" });
+    const recoveredAccount = await repository.accountForIdentity("invitation-recovery-parent");
+    expect(recoveredAccount?.familyID).toBe((await repository.accountForIdentity("integration-parent"))?.familyID);
+    expect(await repository.membersForFamily(oldAccount!.familyID)).toEqual([]);
+    expect(await repository.deviceTokensForFamily(oldAccount!.familyID)).toEqual([]);
+    expect(await repository.deviceTokensForMembers(
+      recoveredAccount!.familyID,
+      [recoveredAccount!.memberID],
+    )).toEqual(["recovery-device-token"]);
     await app.close();
   });
 

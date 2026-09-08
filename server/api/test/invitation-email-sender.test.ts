@@ -5,7 +5,7 @@ const delivery = {
   recipientEmail: "kid@example.com",
   inviterName: "Alex & Jordan",
   role: "kid" as const,
-  invitationURL: "rallyroo://invite?code=secure-code",
+  invitationURL: "https://rallyroo.dev/invite#code=secure-code",
   expiresAt: "2026-09-02T12:00:00Z",
 };
 
@@ -35,7 +35,8 @@ describe("ResendInvitationEmailSender", () => {
         from: "Rallyroo <invites@example.com>",
         to: ["kid@example.com"],
         subject: "Alex & Jordan invited you to Rallyroo",
-        text: expect.stringContaining("rallyroo://invite?code=secure-code"),
+        text: expect.stringContaining("https://rallyroo.dev/invite#code=secure-code"),
+        html: expect.stringContaining('href="https://rallyroo.dev/invite#code=secure-code"'),
       }),
     }]);
   });
