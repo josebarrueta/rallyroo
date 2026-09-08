@@ -37,6 +37,18 @@ const identityProvider: IdentityProvider = {
         accessToken: "new-parent-token",
       };
     }
+    if (token === "stranded-oauth-token") {
+      return {
+        identity: { subject: "stranded-subject", displayName: "Taylor" },
+        accessToken: "stranded-token",
+      };
+    }
+    if (token === "occupied-oauth-token") {
+      return {
+        identity: { subject: "occupied-subject", displayName: "Morgan" },
+        accessToken: "occupied-token",
+      };
+    }
     throw new Error("invalid OAuth token");
   },
   async verifySession(token) {
@@ -68,6 +80,8 @@ function repository() {
       { identitySubject: "kid-subject", familyID: "family-1", memberID: "kid-1", role: "kid" },
       { identitySubject: "family-parent-subject", familyID: "family-1", memberID: "parent-3", role: "parent" },
       { identitySubject: "other-parent-subject", familyID: "family-2", memberID: "parent-2", role: "parent" },
+      { identitySubject: "stranded-subject", familyID: "family-3", memberID: "parent-4", role: "parent" },
+      { identitySubject: "occupied-subject", familyID: "family-4", memberID: "parent-5", role: "parent" },
     ],
     members: [
       { id: "parent-1", familyID: "family-1", name: "Alex", role: "parent", colorTag: "blue" },
@@ -75,6 +89,8 @@ function repository() {
       { id: "kid-2", familyID: "family-1", name: "Noah", role: "kid", colorTag: "orange" },
       { id: "parent-3", familyID: "family-1", name: "Jamie", role: "parent", colorTag: "teal" },
       { id: "parent-2", familyID: "family-2", name: "Jordan", role: "parent", colorTag: "green" },
+      { id: "parent-4", familyID: "family-3", name: "Taylor", role: "parent", colorTag: "blue" },
+      { id: "parent-5", familyID: "family-4", name: "Morgan", role: "parent", colorTag: "blue" },
     ],
     events: [{
       id: "00000000-0000-4000-8000-000000000001",
@@ -84,6 +100,18 @@ function repository() {
       participantIDs: ["kid-1"],
       startTime: "2026-08-23T16:00:00Z",
       endTime: "2026-08-23T17:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+    }, {
+      id: "00000000-0000-4000-8000-000000000002",
+      familyID: "family-4",
+      title: "Keep this family",
+      kidID: null,
+      participantIDs: ["parent-5"],
+      startTime: "2026-08-24T16:00:00Z",
+      endTime: "2026-08-24T17:00:00Z",
       location: null,
       driver: null,
       source: "manual",
@@ -519,12 +547,12 @@ describe("Rallyroo API", () => {
       {
         recipientEmail: "newkid@example.com",
         role: "kid",
-        invitationURL: `rallyroo://invite?code=${sent.json().code}`,
+        invitationURL: `https://rallyroo.dev/invite#code=${sent.json().code}`,
       },
       {
         recipientEmail: "newkid@example.com",
         role: "kid",
-        invitationURL: `rallyroo://invite?code=${resent.json().code}`,
+        invitationURL: `https://rallyroo.dev/invite#code=${resent.json().code}`,
       },
     ]);
     await app.close();
@@ -579,6 +607,60 @@ describe("Rallyroo API", () => {
     const account = await data.accountForIdentity("new-parent-subject");
     expect(account?.familyID).toBe("family-1");
     expect(account?.role).toBe("kid");
+    await app.close();
+  });
+
+  it("moves an existing account from an empty accidental family when accepting an invitation", async () => {
+    const data = repository();
+    const app = buildApp({ identityProvider, repository: data });
+    const invitation = await app.inject({
+      method: "POST",
+      url: "/v1/invitations",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { role: "parent", email: "parent@example.com" },
+    });
+
+    const session = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: {
+        oauthToken: "stranded-oauth-token",
+        codeVerifier,
+        invitationCode: invitation.json().code,
+      },
+    });
+
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({ displayName: "Taylor", role: "parent" });
+    expect((await data.accountForIdentity("stranded-subject"))?.familyID).toBe("family-1");
+    expect(await data.membersForFamily("family-3")).toEqual([]);
+    await app.close();
+  });
+
+  it("does not discard an existing Family with schedule data when accepting an invitation", async () => {
+    const data = repository();
+    const app = buildApp({ identityProvider, repository: data });
+    const invitation = await app.inject({
+      method: "POST",
+      url: "/v1/invitations",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { role: "parent", email: "parent@example.com" },
+    });
+
+    const session = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: {
+        oauthToken: "occupied-oauth-token",
+        codeVerifier,
+        invitationCode: invitation.json().code,
+      },
+    });
+
+    expect(session.statusCode).toBe(409);
+    expect(session.json()).toEqual({ error: "invitation_account_conflict" });
+    expect((await data.accountForIdentity("occupied-subject"))?.familyID).toBe("family-4");
+    expect((await data.eventsForFamily("family-4"))).toHaveLength(1);
     await app.close();
   });
 

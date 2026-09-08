@@ -2,6 +2,11 @@ import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyRemind
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type { EventMutationPersistence } from "./event-mutation-persistence.js";
 
+export type InvitationConsumptionResult =
+  | { status: "accepted"; account: Account }
+  | { status: "invalid" }
+  | { status: "account_conflict" };
+
 export interface RallyrooRepository extends EventMutationPersistence {
   accountForIdentity(subject: string): Promise<Account | null>;
   provisionParentAccount(subject: string, displayName: string): Promise<Account>;
@@ -15,7 +20,11 @@ export interface RallyrooRepository extends EventMutationPersistence {
     codeHash: string,
     expiresAt: string,
   ): Promise<FamilyInvitation | null>;
-  consumeInvitation(codeHash: string, subject: string, displayName: string): Promise<Account | null>;
+  consumeInvitation(
+    codeHash: string,
+    subject: string,
+    displayName: string,
+  ): Promise<InvitationConsumptionResult>;
   familyChangeVersion(familyID: string): Promise<number>;
   markFamilyChanged(familyID: string): Promise<void>;
   saveDeviceToken(familyID: string, memberID: string, token: string): Promise<void>;

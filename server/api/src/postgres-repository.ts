@@ -17,7 +17,7 @@ import type {
   EventMutationSnapshot,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
-import type { RallyrooRepository } from "./repository.js";
+import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 import type {
   CalendarSource,
   CalendarSourceRepository,
@@ -270,20 +270,17 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     codeHash: string,
     subject: string,
     displayName: string,
-  ): Promise<Account | null> {
+  ): Promise<InvitationConsumptionResult> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [subject]);
-      const existing = await client.query<AccountRow>(
+      const existingResult = await client.query<AccountRow>(
         `SELECT identity_subject, family_id, member_id, role
-         FROM accounts WHERE identity_subject = $1`,
+         FROM accounts WHERE identity_subject = $1
+         FOR UPDATE`,
         [subject],
       );
-      if (existing.rows[0]) {
-        await client.query("COMMIT");
-        return accountFromRow(existing.rows[0]);
-      }
       const invitationResult = await client.query<InvitationRow>(
         `SELECT family_id, role FROM family_invitations
          WHERE code_hash = $1 AND consumed_at IS NULL AND expires_at > now()
@@ -293,19 +290,83 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       const invitation = invitationResult.rows[0];
       if (!invitation) {
         await client.query("ROLLBACK");
-        return null;
+        return { status: "invalid" };
       }
+
+      const existingRow = existingResult.rows[0];
+      const affectedFamilyIDs = [...new Set([
+        invitation.family_id,
+        ...(existingRow ? [existingRow.family_id] : []),
+      ])].sort();
+      for (const familyID of affectedFamilyIDs) {
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+          [familyID],
+        );
+      }
+
+      if (existingRow?.family_id === invitation.family_id) {
+        await client.query(
+          "UPDATE family_invitations SET consumed_at = now() WHERE code_hash = $1",
+          [codeHash],
+        );
+        await client.query("COMMIT");
+        return { status: "accepted", account: accountFromRow(existingRow) };
+      }
+
       const memberID = `${invitation.role}-${randomUUID()}`;
-      await client.query(
-        `INSERT INTO family_members (family_id, id, name, role, color_tag)
-         VALUES ($1, $2, $3, $4, 'blue')`,
-        [invitation.family_id, memberID, displayName, invitation.role],
-      );
-      await client.query(
-        `INSERT INTO accounts (identity_subject, family_id, member_id, role)
-         VALUES ($1, $2, $3, $4)`,
-        [subject, invitation.family_id, memberID, invitation.role],
-      );
+      if (existingRow) {
+        const disposableResult = await client.query<{ disposable: boolean }>(
+          `SELECT
+             (SELECT count(*) = 1 FROM accounts WHERE family_id = $1) AND
+             (SELECT count(*) = 1 FROM family_members WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM events WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM family_reminders WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM family_invitations WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM calendar_sources WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM event_mutation_results WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM schedule_update_notifications WHERE family_id = $1)
+             AS disposable`,
+          [existingRow.family_id],
+        );
+        if (!disposableResult.rows[0]?.disposable) {
+          await client.query("ROLLBACK");
+          return { status: "account_conflict" };
+        }
+
+        await client.query(
+          `INSERT INTO family_members (family_id, id, name, role, color_tag)
+           VALUES ($1, $2, $3, $4, 'blue')`,
+          [invitation.family_id, memberID, displayName, invitation.role],
+        );
+        await client.query(
+          `UPDATE accounts SET family_id = $1, member_id = $2, role = $3
+           WHERE identity_subject = $4`,
+          [invitation.family_id, memberID, invitation.role, subject],
+        );
+        await client.query(
+          `UPDATE device_tokens SET family_id = $1, member_id = $2, updated_at = now()
+           WHERE family_id = $3 AND member_id = $4`,
+          [invitation.family_id, memberID, existingRow.family_id, existingRow.member_id],
+        );
+        await client.query(
+          "DELETE FROM family_members WHERE family_id = $1 AND id = $2",
+          [existingRow.family_id, existingRow.member_id],
+        );
+        await client.query("DELETE FROM family_change_versions WHERE family_id = $1", [existingRow.family_id]);
+      } else {
+        await client.query(
+          `INSERT INTO family_members (family_id, id, name, role, color_tag)
+           VALUES ($1, $2, $3, $4, 'blue')`,
+          [invitation.family_id, memberID, displayName, invitation.role],
+        );
+        await client.query(
+          `INSERT INTO accounts (identity_subject, family_id, member_id, role)
+           VALUES ($1, $2, $3, $4)`,
+          [subject, invitation.family_id, memberID, invitation.role],
+        );
+      }
+
       await client.query(
         "UPDATE family_invitations SET consumed_at = now() WHERE code_hash = $1",
         [codeHash],
@@ -318,10 +379,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
       await client.query("COMMIT");
       return {
-        identitySubject: subject,
-        familyID: invitation.family_id,
-        memberID,
-        role: invitation.role,
+        status: "accepted",
+        account: {
+          identitySubject: subject,
+          familyID: invitation.family_id,
+          memberID,
+          role: invitation.role,
+        },
       };
     } catch (error) {
       await client.query("ROLLBACK");

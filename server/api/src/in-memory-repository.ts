@@ -9,7 +9,7 @@ import type {
   ScheduleUpdateNotificationIntent,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
-import type { RallyrooRepository } from "./repository.js";
+import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 
 interface SeedData {
   accounts?: Account[];
@@ -161,14 +161,57 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     codeHash: string,
     subject: string,
     displayName: string,
-  ): Promise<Account | null> {
-    const existing = await this.accountForIdentity(subject);
-    if (existing) return existing;
-    const index = this.invitations.findIndex((invitation) =>
+  ): Promise<InvitationConsumptionResult> {
+    const invitationIndex = this.invitations.findIndex((invitation) =>
       invitation.codeHash === codeHash && new Date(invitation.expiresAt) > new Date()
     );
-    if (index < 0) return null;
-    const invitation = this.invitations.splice(index, 1)[0]!;
+    if (invitationIndex < 0) return { status: "invalid" };
+    const invitation = this.invitations[invitationIndex]!;
+    const existing = await this.accountForIdentity(subject);
+
+    if (existing?.familyID === invitation.familyID) {
+      this.invitations.splice(invitationIndex, 1);
+      return { status: "accepted", account: existing };
+    }
+
+    if (existing) {
+      const sourceIsDisposable = this.accounts.filter(
+        (account) => account.familyID === existing.familyID,
+      ).length === 1
+        && this.members.filter((member) => member.familyID === existing.familyID).length === 1
+        && !this.events.some((event) => event.familyID === existing.familyID)
+        && !this.reminders.some((reminder) => reminder.familyID === existing.familyID)
+        && !this.invitations.some((candidate) => candidate.familyID === existing.familyID);
+      if (!sourceIsDisposable) return { status: "account_conflict" };
+
+      const oldFamilyID = existing.familyID;
+      const oldMemberID = existing.memberID;
+      const memberID = `${invitation.role}-${randomUUID()}`;
+      this.members.push({
+        id: memberID,
+        familyID: invitation.familyID,
+        name: displayName,
+        role: invitation.role,
+        colorTag: "blue",
+      });
+      existing.familyID = invitation.familyID;
+      existing.memberID = memberID;
+      existing.role = invitation.role;
+      for (const device of this.devices.values()) {
+        if (device.familyID === oldFamilyID && device.memberID === oldMemberID) {
+          device.familyID = invitation.familyID;
+          device.memberID = memberID;
+        }
+      }
+      removeWhere(this.members, (member) =>
+        member.familyID === oldFamilyID && member.id === oldMemberID
+      );
+      this.changeVersions.delete(oldFamilyID);
+      this.invitations.splice(invitationIndex, 1);
+      await this.markFamilyChanged(invitation.familyID);
+      return { status: "accepted", account: existing };
+    }
+
     const memberID = `${invitation.role}-${randomUUID()}`;
     const account: Account = {
       identitySubject: subject,
@@ -184,8 +227,9 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
       colorTag: "blue",
     });
     this.accounts.push(account);
+    this.invitations.splice(invitationIndex, 1);
     await this.markFamilyChanged(invitation.familyID);
-    return account;
+    return { status: "accepted", account };
   }
 
   async familyChangeVersion(familyID: string): Promise<number> {

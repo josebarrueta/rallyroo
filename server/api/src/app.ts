@@ -284,19 +284,27 @@ export function buildApp({
         parsed.data.codeVerifier,
       );
       const existingAccount = await repository.accountForIdentity(issued.identity.subject);
-      const account = existingAccount ?? (parsed.data.invitationCode
-        ? await repository.consumeInvitation(
+      let account: Account;
+      if (parsed.data.invitationCode) {
+        const consumption = await repository.consumeInvitation(
           invitationHash(parsed.data.invitationCode),
           issued.identity.subject,
           issued.identity.displayName,
-        )
-        : await repository.provisionParentAccount(
+        );
+        if (consumption.status !== "accepted") {
+          await identityProvider.revokeSession(issued.accessToken);
+          return reply.code(consumption.status === "account_conflict" ? 409 : 403).send({
+            error: consumption.status === "account_conflict"
+              ? "invitation_account_conflict"
+              : "invalid_invitation",
+          });
+        }
+        account = consumption.account;
+      } else {
+        account = existingAccount ?? await repository.provisionParentAccount(
           issued.identity.subject,
           issued.identity.displayName,
-        ));
-      if (!account) {
-        await identityProvider.revokeSession(issued.accessToken);
-        return reply.code(403).send({ error: "invalid_invitation" });
+        );
       }
       const members = await repository.membersForFamily(account.familyID);
       const member = members.find((candidate) => candidate.id === account.memberID);
@@ -363,14 +371,13 @@ export function buildApp({
     const members = await repository.membersForFamily(account.familyID);
     const inviterName = members.find((member) => member.id === account.memberID)?.name
       ?? "Your family";
-    const invitationURL = new URL("rallyroo://invite");
-    invitationURL.searchParams.set("code", code);
+    const invitationURL = invitationWebURL(code);
     try {
       await invitationEmailSender.send({
         recipientEmail: parsed.data.email,
         inviterName,
         role: parsed.data.role,
-        invitationURL: invitationURL.toString(),
+        invitationURL,
         expiresAt,
       });
     } catch {
@@ -434,14 +441,13 @@ export function buildApp({
     const members = await repository.membersForFamily(account.familyID);
     const inviterName = members.find((member) => member.id === account.memberID)?.name
       ?? "Your family";
-    const invitationURL = new URL("rallyroo://invite");
-    invitationURL.searchParams.set("code", code);
+    const invitationURL = invitationWebURL(code);
     try {
       await invitationEmailSender.send({
         recipientEmail: existing.recipientEmail,
         inviterName,
         role: invitation.role,
-        invitationURL: invitationURL.toString(),
+        invitationURL,
         expiresAt: invitation.expiresAt,
       });
     } catch {
@@ -804,6 +810,12 @@ export function buildApp({
   });
 
   return app;
+}
+
+function invitationWebURL(code: string): string {
+  const url = new URL("https://rallyroo.dev/invite");
+  url.hash = new URLSearchParams({ code }).toString();
+  return url.toString();
 }
 
 function invitationHash(code: string): string {

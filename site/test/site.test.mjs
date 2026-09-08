@@ -5,12 +5,15 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDirectory = join(root, "public");
-const requiredPages = ["index.html", "privacy.html", "terms.html", "support.html", "404.html"];
+const requiredPages = ["index.html", "privacy.html", "terms.html", "support.html", "invite.html", "404.html"];
 
 for (const page of requiredPages) {
   const html = await readFile(join(publicDirectory, page), "utf8");
   assert.match(html, /<html lang="en">/, `${page} must declare its language`);
-  assert.doesNotMatch(html, /<script\b|https?:\/\/(?!api\.rallyroo\.dev)/i, `${page} must remain tracker-free`);
+  assert.doesNotMatch(html, /https?:\/\/(?!api\.rallyroo\.dev)/i, `${page} must remain tracker-free`);
+  if (page !== "invite.html") {
+    assert.doesNotMatch(html, /<script\b/i, `${page} must remain script-free`);
+  }
 
   for (const [, href] of html.matchAll(/href="([^"]+)"/g)) {
     if (href.startsWith("mailto:") || href.startsWith("https://api.rallyroo.dev")) continue;
@@ -25,6 +28,18 @@ for (const page of requiredPages) {
   }
 }
 
+const invitation = await readFile(join(publicDirectory, "invite.html"), "utf8");
+assert.match(invitation, /<script type="module" src="\/invite\.js"><\/script>/);
+assert.match(invitation, /id="open-rallyroo"/);
+
+const { invitationDeepLink } = await import("../public/invite.js");
+assert.equal(
+  invitationDeepLink("#code=opaque%20invitation"),
+  "rallyroo://invite?code=opaque+invitation"
+);
+assert.equal(invitationDeepLink("#code="), null);
+assert.equal(invitationDeepLink(""), null);
+
 const privacy = await readFile(join(publicDirectory, "privacy.html"), "utf8");
 assert.match(privacy, /support@rallyroo\.dev/);
 assert.match(privacy, /account deletion/i);
@@ -35,6 +50,7 @@ assert.match(terms, /TestFlight/);
 
 const headers = await readFile(join(publicDirectory, "_headers"), "utf8");
 assert.match(headers, /Content-Security-Policy:/);
+assert.match(headers, /script-src 'self'/);
 assert.match(headers, /frame-ancestors 'none'/);
 assert.match(headers, /Permissions-Policy:/);
 
