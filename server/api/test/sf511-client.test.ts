@@ -33,6 +33,7 @@ describe("SF511Client", () => {
     const [stopsURL] = requests[2]!;
     expect(stopsURL.pathname).toBe("/transit/stops");
     expect(stopsURL.searchParams.get("operator_id")).toBe("CT");
+    expect(stopsURL.searchParams.get("format")).toBe("json");
   });
 
   it("bounds response bodies and never includes credentialed URLs in errors", async () => {

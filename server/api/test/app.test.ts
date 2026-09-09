@@ -162,6 +162,17 @@ describe("Rallyroo API", () => {
     expect(kidState.statusCode).toBe(200);
     expect(kidState.json().installation).not.toHaveProperty("familyID");
     expect(kidState.json().subscriptions).toEqual([]);
+    expect(kidState.json().providerStatus).toMatchObject({
+      catalog: { state: "unavailable" },
+      realtime: { state: "unavailable" },
+    });
+    const catalog = await app.inject({
+      method: "GET",
+      url: "/v1/modules/commuter/catalog",
+      headers: { authorization: "Bearer kid-token" },
+    });
+    expect(catalog.statusCode).toBe(200);
+    expect(catalog.json()).toMatchObject({ status: { state: "unavailable" }, stops: [] });
     expect((await app.inject({
       method: "POST",
       url: "/v1/modules/commuter/subscriptions",
