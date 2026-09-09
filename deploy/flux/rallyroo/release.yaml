@@ -39,6 +39,7 @@ spec:
       googlePlaces: rallyroo-google-places
       resendInvitations: rallyroo-resend-invitations
       apns: rallyroo-apns
+      sf511: rallyroo-sf511
       observability: rallyroo-observability
     runtimeConfig:
       enabled: true
