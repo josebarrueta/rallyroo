@@ -6,6 +6,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0FF80868CC44AF508E5F26 /* CommuterSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8119B122747C6AE9DC354B /* CommuterSettingsView.swift */; };
 		A10000000000000000000001 /* FamilyActivityCoordinatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */; };
 		A10000000000000000000002 /* WeeklyScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* WeeklyScheduleView.swift */; };
 		A10000000000000000000044 /* ScheduleCaptureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000045 /* ScheduleCaptureSheet.swift */; };
@@ -37,6 +38,7 @@
 
 /* Begin PBXFileReference section */
 		A10000000000000000000010 /* FamilyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B8119B122747C6AE9DC354B /* CommuterSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommuterSettingsView.swift; sourceTree = "<group>"; };
 		A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyActivityCoordinatorApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* WeeklyScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyScheduleView.swift; sourceTree = "<group>"; };
 		A10000000000000000000045 /* ScheduleCaptureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleCaptureSheet.swift; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 		A10000000000000000000041 /* FamilyApp */ = {
 			isa = PBXGroup;
 			children = (
+				B8119B122747C6AE9DC354B /* CommuterSettingsView.swift */,
 				A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */,
 				A10000000000000000000012 /* WeeklyScheduleView.swift */,
 				A10000000000000000000045 /* ScheduleCaptureSheet.swift */,
@@ -236,6 +239,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0FF80868CC44AF508E5F26 /* CommuterSettingsView.swift in Sources */,
 				A10000000000000000000001 /* FamilyActivityCoordinatorApp.swift in Sources */,
 				A10000000000000000000002 /* WeeklyScheduleView.swift in Sources */,
 				A10000000000000000000044 /* ScheduleCaptureSheet.swift in Sources */,
