@@ -8,6 +8,8 @@ import type { PushNotificationProvider } from "../src/push-notification-provider
 import type { ScheduleDraftExtractor } from "../src/schedule-draft-extractor.js";
 import { CalendarSourceModule } from "../src/calendar-source-module.js";
 import { InMemoryCalendarSourceRepository } from "../src/in-memory-calendar-source-repository.js";
+import { CommuterModule } from "../src/commuter-module.js";
+import { InMemoryCommuterRepository } from "../src/in-memory-commuter-repository.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -121,6 +123,88 @@ function repository() {
 }
 
 describe("Rallyroo API", () => {
+  it("exposes parent-managed Commuter state without leaking personal subscriptions", async () => {
+    const commuter = new CommuterModule(new InMemoryCommuterRepository());
+    const app = buildApp({ identityProvider, repository: repository(), commuter });
+
+    expect((await app.inject({
+      method: "PUT",
+      url: "/v1/modules/commuter",
+      headers: { authorization: "Bearer parent-token" },
+    })).statusCode).toBe(200);
+    const subscriptionPayload = {
+      visibility: "personal",
+      agencyID: "CT",
+      routeID: "caltrain-local",
+      directionID: "northbound",
+      originStopID: "70171",
+      destinationStopID: "70011",
+      serviceWeekdays: [1, 2, 3, 4, 5],
+      windowStartMinutes: 420,
+      windowEndMinutes: 540,
+      alertKinds: ["delay", "cancellation"],
+      minimumDelayMinutes: 15,
+    };
+    const personalResponse = await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/subscriptions",
+      headers: { authorization: "Bearer parent-token" },
+      payload: subscriptionPayload,
+    });
+    expect(personalResponse.statusCode).toBe(201);
+    expect(personalResponse.json()).not.toHaveProperty("familyID");
+
+    const kidState = await app.inject({
+      method: "GET",
+      url: "/v1/modules/commuter",
+      headers: { authorization: "Bearer kid-token" },
+    });
+    expect(kidState.statusCode).toBe(200);
+    expect(kidState.json().installation).not.toHaveProperty("familyID");
+    expect(kidState.json().subscriptions).toEqual([]);
+    expect((await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/subscriptions",
+      headers: { authorization: "Bearer kid-token" },
+      payload: personalResponse.json(),
+    })).statusCode).toBe(403);
+
+    const familyResponse = await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/subscriptions",
+      headers: { authorization: "Bearer family-parent-token" },
+      payload: { ...subscriptionPayload, visibility: "family" },
+    });
+    expect(familyResponse.statusCode).toBe(201);
+    expect((await app.inject({
+      method: "GET",
+      url: "/v1/modules/commuter",
+      headers: { authorization: "Bearer kid-token" },
+    })).json().subscriptions).toHaveLength(1);
+    expect((await app.inject({
+      method: "PATCH",
+      url: "/v1/modules/commuter/subscriptions/not-a-uuid",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { status: "paused" },
+    })).statusCode).toBe(400);
+    expect((await app.inject({
+      method: "PATCH",
+      url: "/v1/modules/commuter",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { status: "disabled" },
+    })).statusCode).toBe(204);
+    const disabledState = await app.inject({
+      method: "GET",
+      url: "/v1/modules/commuter",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    expect(disabledState.json()).toMatchObject({
+      installation: { status: "disabled" },
+      subscriptions: [{ visibility: "personal" }, { visibility: "family" }],
+    });
+    await app.close();
+  });
+
   it("separates dependency-free liveness from PostgreSQL readiness", async () => {
     const ready = buildApp({
       identityProvider,

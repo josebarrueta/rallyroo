@@ -53,8 +53,20 @@ A question attached to a schedule draft when required information is ambiguous. 
 _Avoid_: Model guess, default date
 
 **Protected Family detail**:
-Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, or notification. Scheduling instants, alert triggers, statuses, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
+Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, or notification. Scheduling instants, alert triggers, statuses, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
 _Avoid_: Schedule metadata, trigger, ciphertext
+
+**Commuter installation**:
+The parent-enabled, Family-level activation of Rallyroo's shipped Commuter capability. Installation state is independent from provider health and individual commute subscriptions.
+_Avoid_: Downloaded plugin, commute subscription
+
+**Commute subscription**:
+A personal or Family-visible preference for receiving alerts about a bounded transit route, direction, stop pair, service window, and condition. It is neither an Event nor a Reminder.
+_Avoid_: Event, Reminder, live departure
+
+**Commute alert**:
+A short-lived, deduplicated report of a matching fresh transit condition. Personal commute alerts target only their owning parent; Family commute alerts use Family visibility.
+_Avoid_: Event alert, schedule update notification
 
 **Personal calendar**:
 An imported calendar visible only to the parent who connected it.
@@ -63,3 +75,7 @@ _Avoid_: Private event, public calendar
 **Family calendar**:
 An imported calendar visible under the family's existing permissions.
 _Avoid_: Public calendar
+
+**Provider status**:
+The independently reported freshness and availability of Commuter's static catalog and real-time feeds. Provider failure must not silently disable an installation or erase its last-good static catalog.
+_Avoid_: Installation status, subscription status

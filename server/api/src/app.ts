@@ -8,6 +8,7 @@ import Fastify, {
 import { z } from "zod";
 import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
 import type { CalendarSourceModule } from "./calendar-source-module.js";
+import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
 import { EventMutationError, EventMutationModule } from "./event-mutation.js";
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import type { IdentityProvider } from "./identity-provider.js";
@@ -120,6 +121,27 @@ const calendarSourceVisibilitySchema = z.object({
   visibility: z.enum(["personal", "family"]),
 });
 
+const commuterSubscriptionSchema = z.object({
+  visibility: z.enum(["personal", "family"]),
+  agencyID: z.literal("CT"),
+  routeID: z.string().trim().min(1).max(200),
+  directionID: z.string().trim().min(1).max(200),
+  originStopID: z.string().trim().min(1).max(200),
+  destinationStopID: z.string().trim().min(1).max(200),
+  serviceWeekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+  windowStartMinutes: z.number().int().min(0).max(1439),
+  windowEndMinutes: z.number().int().min(1).max(1440),
+  alertKinds: z.array(z.enum(["delay", "cancellation"])).min(1).max(2),
+  minimumDelayMinutes: z.number().int().min(1).max(180),
+});
+const commuterInstallationStatusSchema = z.object({
+  status: z.literal("disabled"),
+});
+const commuterSubscriptionStatusSchema = z.object({
+  status: z.enum(["active", "paused"]),
+});
+const commuterSubscriptionIDSchema = z.string().uuid();
+
 const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
   url: z.string()
@@ -141,6 +163,7 @@ interface Dependencies {
   pushNotificationProvider?: PushNotificationProvider;
   invitationEmailSender?: InvitationEmailSender;
   calendarSources?: CalendarSourceModule;
+  commuter?: CommuterModule;
   scheduleDraftExtractor?: ScheduleDraftExtractor;
   readinessCheck?: () => Promise<void>;
   rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts", RouteRateLimit>>;
@@ -156,6 +179,7 @@ export function buildApp({
   pushNotificationProvider = new NoopPushNotificationProvider(),
   invitationEmailSender = new NoopInvitationEmailSender(),
   calendarSources,
+  commuter,
   scheduleDraftExtractor = new UnavailableScheduleDraftExtractor(),
   readinessCheck = async () => {},
   rateLimits = {},
@@ -545,6 +569,97 @@ export function buildApp({
     }
   });
 
+  app.get("/v1/modules/commuter", async (request, reply) => {
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    return clientCommuterState(await commuter.state(requiredAccount(request)));
+  });
+
+  app.put("/v1/modules/commuter", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const installation = await commuter.enable(account);
+    await repository.markFamilyChanged(account.familyID);
+    return clientCommuterInstallation(installation);
+  });
+
+  app.patch("/v1/modules/commuter", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterInstallationStatusSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_commuter_status" });
+    await commuter.disable(account);
+    await repository.markFamilyChanged(account.familyID);
+    return reply.code(204).send();
+  });
+
+  app.delete("/v1/modules/commuter", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    await commuter.remove(account);
+    await repository.markFamilyChanged(account.familyID);
+    return reply.code(204).send();
+  });
+
+  app.post("/v1/modules/commuter/subscriptions", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterSubscriptionSchema.safeParse(request.body);
+    if (!parsed.success || parsed.data.originStopID === parsed.data.destinationStopID
+      || parsed.data.windowEndMinutes <= parsed.data.windowStartMinutes) {
+      return reply.code(400).send({ error: "invalid_commuter_subscription" });
+    }
+    try {
+      const subscription = await commuter.createSubscription(account, parsed.data);
+      if (subscription.visibility === "family") await repository.markFamilyChanged(account.familyID);
+      return reply.code(201).send(clientCommuteSubscription(subscription));
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
+  app.patch("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterSubscriptionStatusSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_commuter_subscription_status" });
+    const parsedID = commuterSubscriptionIDSchema.safeParse((request.params as { id: string }).id);
+    if (!parsedID.success) return reply.code(400).send({ error: "invalid_commuter_subscription_id" });
+    try {
+      const subscription = await commuter.setSubscriptionStatus(
+        account,
+        parsedID.data,
+        parsed.data.status,
+      );
+      if (subscription.visibility === "family") await repository.markFamilyChanged(account.familyID);
+      return clientCommuteSubscription(subscription);
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
+  app.delete("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsedID = commuterSubscriptionIDSchema.safeParse((request.params as { id: string }).id);
+    if (!parsedID.success) return reply.code(400).send({ error: "invalid_commuter_subscription_id" });
+    const subscriptionID = parsedID.data;
+    const existing = (await commuter.state(account)).subscriptions
+      .find((subscription) => subscription.id === subscriptionID);
+    try {
+      await commuter.removeSubscription(account, subscriptionID);
+      if (existing?.visibility === "family") await repository.markFamilyChanged(account.familyID);
+      return reply.code(204).send();
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
   app.get("/v1/reminders", async (request) => {
     const account = requiredAccount(request);
     const reminders = await repository.remindersForFamily(account.familyID);
@@ -841,6 +956,22 @@ async function requireParent(request: FastifyRequest, reply: FastifyReply): Prom
   return account;
 }
 
+function commuterErrorReply(error: unknown, reply: FastifyReply) {
+  if (!(error instanceof CommuterModuleError)) throw error;
+  switch (error.reason) {
+  case "parent_required":
+    return reply.code(403).send({ error: "parent_role_required" });
+  case "module_not_enabled":
+    return reply.code(409).send({ error: "commuter_not_enabled" });
+  case "invalid_subscription":
+    return reply.code(400).send({ error: "invalid_commuter_subscription" });
+  case "subscription_not_found":
+    return reply.code(404).send({ error: "commuter_subscription_not_found" });
+  case "subscription_limit_reached":
+    return reply.code(409).send({ error: "commuter_subscription_limit_reached" });
+  }
+}
+
 function mutationIdempotencyKey(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -853,6 +984,27 @@ function mutationIdempotencyKey(
     return null;
   }
   return parsed.data;
+}
+
+function clientCommuterState(state: Awaited<ReturnType<CommuterModule["state"]>>) {
+  return {
+    installation: state.installation
+      ? clientCommuterInstallation(state.installation)
+      : null,
+    subscriptions: state.subscriptions.map(clientCommuteSubscription),
+  };
+}
+
+function clientCommuterInstallation<Installation extends { familyID: string }>(
+  { familyID: _familyID, ...installation }: Installation,
+) {
+  return installation;
+}
+
+function clientCommuteSubscription<Subscription extends { familyID: string }>(
+  { familyID: _familyID, ...subscription }: Subscription,
+) {
+  return subscription;
 }
 
 function clientEvent({ familyID: _familyID, ...event }: FamilyEvent) {
