@@ -9,6 +9,10 @@ import type {
   FamilyMember,
   FamilyReminder,
 } from "./domain.js";
+import type {
+  ClaimedCommuteAlert,
+  CommuterAlertDeliveryRepository,
+} from "./commuter-alert-dispatcher.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type {
   ClaimedScheduleUpdateNotification,
@@ -40,7 +44,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -740,10 +744,18 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       for (const { alert, digest, details } of prepared) {
         const result = await client.query(
           `INSERT INTO commuter_alert_outbox
-             (id, family_id, subscription_id, condition_digest, kind, details_ciphertext)
-           VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6)
+             (id, family_id, subscription_id, condition_digest, kind, details_ciphertext, expires_at)
+           VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7)
            ON CONFLICT (family_id, subscription_id, condition_digest, kind) DO NOTHING`,
-          [alert.id, alert.familyID, alert.subscriptionID, digest, alert.kind, details],
+          [
+            alert.id,
+            alert.familyID,
+            alert.subscriptionID,
+            digest,
+            alert.kind,
+            details,
+            alert.expiresAt,
+          ],
         );
         if ((result.rowCount ?? 0) === 1) claimed.push(alert);
       }
@@ -755,6 +767,104 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     } finally {
       client.release();
     }
+  }
+
+  async claimDueCommuteAlerts(now: Date, limit: number): Promise<ClaimedCommuteAlert[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `WITH invalidated AS (
+           SELECT alert.id
+           FROM commuter_alert_outbox AS alert
+           JOIN commuter_subscriptions AS subscription ON subscription.id = alert.subscription_id
+           JOIN commuter_installations AS installation ON installation.family_id = alert.family_id
+           WHERE alert.status IN ('pending', 'sending')
+             AND (alert.expires_at < $1 OR subscription.status <> 'active' OR installation.status <> 'enabled')
+           ORDER BY alert.created_at
+           FOR UPDATE OF alert SKIP LOCKED
+           LIMIT 1000
+         )
+         UPDATE commuter_alert_outbox AS alert
+         SET status = 'failed', claimed_at = NULL
+         FROM invalidated
+         WHERE alert.id = invalidated.id`,
+        [now.toISOString()],
+      );
+      const result = await client.query<CommuteAlertOutboxRow>(
+        `WITH candidates AS (
+           SELECT id FROM commuter_alert_outbox
+           WHERE attempt_count < 8
+             AND (
+               (status = 'pending' AND next_attempt_at <= $1)
+               OR (status = 'sending' AND claimed_at < $1::timestamptz - interval '5 minutes')
+             )
+           ORDER BY next_attempt_at, created_at
+           FOR UPDATE SKIP LOCKED
+           LIMIT $2
+         )
+         UPDATE commuter_alert_outbox AS alert
+         SET status = 'sending', claimed_at = $1, attempt_count = attempt_count + 1
+         FROM candidates
+         WHERE alert.id = candidates.id
+         RETURNING alert.id::text, alert.family_id, alert.subscription_id::text,
+                   alert.kind, alert.details_ciphertext, alert.attempt_count, alert.claimed_at`,
+        [now.toISOString(), limit],
+      );
+      const alerts = await Promise.all(result.rows.map(async (row) => {
+        const plaintext = await this.familyDataProtector.reveal(
+          row.family_id,
+          `commuter_alert_outbox/${row.id}/details`,
+          row.details_ciphertext,
+        );
+        const details = parseCommuteAlertDetails(plaintext);
+        return {
+          id: row.id,
+          familyID: row.family_id,
+          subscriptionID: row.subscription_id,
+          kind: row.kind,
+          delayMinutes: details.delayMinutes,
+          audience: details.audience,
+          attemptCount: row.attempt_count,
+          claimedAt: new Date(row.claimed_at),
+        };
+      }));
+      await client.query("COMMIT");
+      return alerts;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markCommuteAlertDelivered(alert: ClaimedCommuteAlert, deliveredAt: Date): Promise<void> {
+    await this.pool.query(
+      `UPDATE commuter_alert_outbox
+       SET status = 'delivered', delivered_at = $3, claimed_at = NULL
+       WHERE id = $1::uuid AND status = 'sending' AND claimed_at = $2`,
+      [alert.id, alert.claimedAt.toISOString(), deliveredAt.toISOString()],
+    );
+  }
+
+  async releaseCommuteAlertClaim(alert: ClaimedCommuteAlert, releasedAt: Date): Promise<void> {
+    const failed = alert.attemptCount >= 8;
+    const retryDelaySeconds = Math.min(3_600, 30 * (2 ** Math.max(0, alert.attemptCount - 1)));
+    await this.pool.query(
+      `UPDATE commuter_alert_outbox
+       SET status = $3, claimed_at = NULL,
+           next_attempt_at = CASE WHEN $3 = 'failed' THEN next_attempt_at
+                                  ELSE $4::timestamptz + ($5 * interval '1 second') END
+       WHERE id = $1::uuid AND status = 'sending' AND claimed_at = $2`,
+      [
+        alert.id,
+        alert.claimedAt.toISOString(),
+        failed ? "failed" : "pending",
+        releasedAt.toISOString(),
+        retryDelaySeconds,
+      ],
+    );
   }
 
   async accountForIdentity(subject: string): Promise<Account | null> {
@@ -2132,6 +2242,42 @@ interface CommuterSubscriptionRow {
   visibility: CommuteSubscription["visibility"];
   status: CommuteSubscription["status"];
   details_ciphertext: string;
+}
+
+function parseCommuteAlertDetails(plaintext: string): Pick<ClaimedCommuteAlert, "delayMinutes" | "audience"> {
+  const value: unknown = JSON.parse(plaintext);
+  if (!value || typeof value !== "object") throw new Error("Invalid protected commute alert");
+  const details = value as Record<string, unknown>;
+  const delayMinutes = details.delayMinutes;
+  const audience = details.audience;
+  if (typeof delayMinutes !== "number" || !Number.isInteger(delayMinutes) || delayMinutes < 0 || delayMinutes > 1_440
+    || !audience || typeof audience !== "object") {
+    throw new Error("Invalid protected commute alert");
+  }
+  const recipient = audience as Record<string, unknown>;
+  if (recipient.kind === "family") {
+    return { delayMinutes: Number(delayMinutes), audience: { kind: "family" } };
+  }
+  if (recipient.kind === "member"
+    && typeof recipient.memberID === "string"
+    && recipient.memberID.length > 0
+    && recipient.memberID.length <= 300) {
+    return {
+      delayMinutes: Number(delayMinutes),
+      audience: { kind: "member", memberID: recipient.memberID },
+    };
+  }
+  throw new Error("Invalid protected commute alert");
+}
+
+interface CommuteAlertOutboxRow {
+  id: string;
+  family_id: string;
+  subscription_id: string;
+  kind: CommuteAlertIntent["kind"];
+  details_ciphertext: string;
+  attempt_count: number;
+  claimed_at: Date | string;
 }
 
 interface InvitationRow {

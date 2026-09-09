@@ -161,7 +161,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       kind: "delay" as const,
       delayMinutes: 20,
       observedAt: "2026-09-09T14:59:00Z",
-      validUntil: "2026-09-09T15:02:00Z",
+      validUntil: "2026-09-10T15:02:00Z",
     };
     expect(await writer.processTransitConditions(
       [condition],
@@ -176,6 +176,83 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(storedAlert.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
     expect(storedAlert.rows[0]?.details_ciphertext).not.toContain(condition.id);
     expect(storedAlert.rows[0]?.status).toBe("pending");
+
+    const dispatchAt = new Date(Date.now() + 60_000);
+    const expiredAlertID = randomUUID();
+    await writerRepository.saveAlertsIfAbsent([{
+      id: expiredAlertID,
+      subscriptionID: subscription.id,
+      familyID: account!.familyID,
+      conditionID: "expired-condition",
+      kind: "cancellation",
+      delayMinutes: 0,
+      expiresAt: new Date(dispatchAt.getTime() - 1).toISOString(),
+      audience: { kind: "member", memberID: account!.memberID },
+    }]);
+    const claimed = await readerRepository.claimDueCommuteAlerts(dispatchAt, 10);
+    expect(claimed).toHaveLength(1);
+    const [claimedAlert] = claimed;
+    expect(claimedAlert).toMatchObject({
+      subscriptionID: subscription.id,
+      familyID: account!.familyID,
+      kind: "delay",
+      delayMinutes: 20,
+      audience: { kind: "member", memberID: account!.memberID },
+      attemptCount: 1,
+      claimedAt: dispatchAt,
+    });
+    const expiredPool = new Pool({ connectionString: databaseURL });
+    const expired = await expiredPool.query<{ status: string }>(
+      "SELECT status FROM commuter_alert_outbox WHERE id = $1",
+      [expiredAlertID],
+    );
+    await expiredPool.end();
+    expect(expired.rows[0]?.status).toBe("failed");
+
+    await readerRepository.releaseCommuteAlertClaim(claimedAlert!, dispatchAt);
+    expect(await readerRepository.claimDueCommuteAlerts(new Date(dispatchAt.getTime() + 29_000), 10)).toEqual([]);
+    const [retriedAlert] = await readerRepository.claimDueCommuteAlerts(
+      new Date(dispatchAt.getTime() + 30_000),
+      10,
+    );
+    expect(retriedAlert).toMatchObject({ id: claimedAlert!.id, attemptCount: 2 });
+    await readerRepository.markCommuteAlertDelivered(
+      retriedAlert!,
+      new Date(dispatchAt.getTime() + 31_000),
+    );
+    const deliveryPool = new Pool({ connectionString: databaseURL });
+    const delivery = await deliveryPool.query<{ status: string; claimed_at: Date | null }>(
+      "SELECT status, claimed_at FROM commuter_alert_outbox WHERE id = $1",
+      [claimedAlert!.id],
+    );
+    await deliveryPool.end();
+    expect(delivery.rows[0]).toMatchObject({ status: "delivered", claimed_at: null });
+
+    const retryLimitPool = new Pool({ connectionString: databaseURL });
+    await retryLimitPool.query(
+      `UPDATE commuter_alert_outbox
+       SET status = 'pending', attempt_count = 7, next_attempt_at = $2, delivered_at = NULL
+       WHERE id = $1`,
+      [claimedAlert!.id, dispatchAt.toISOString()],
+    );
+    await retryLimitPool.end();
+    const [lastAttempt] = await readerRepository.claimDueCommuteAlerts(
+      new Date(dispatchAt.getTime() + 60_000),
+      10,
+    );
+    expect(lastAttempt).toMatchObject({ attemptCount: 8 });
+    await readerRepository.releaseCommuteAlertClaim(
+      lastAttempt!,
+      new Date(dispatchAt.getTime() + 60_000),
+    );
+    const failedPool = new Pool({ connectionString: databaseURL });
+    const failed = await failedPool.query<{ status: string }>(
+      "SELECT status FROM commuter_alert_outbox WHERE id = $1",
+      [claimedAlert!.id],
+    );
+    await failedPool.end();
+    expect(failed.rows[0]?.status).toBe("failed");
+
     expect(await reader.processTransitConditions(
       [condition],
       new Date("2026-09-09T15:01:00Z"),

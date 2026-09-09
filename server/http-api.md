@@ -140,8 +140,12 @@ independent success, attempt, degraded, and stale state. Trip Updates and Servic
 with bounded GTFS-Realtime schemas, rejected when stale, and normalized without
 requiring optional Trip Update `start_date` values. Real-time conditions are fanned
 out across active subscriptions, must be fresh and route/window-matched, and enter
-an encrypted PostgreSQL outbox idempotently. Provider polling is not activated until Rallyroo has
-an approved production quota and written backend-fan-out confirmation.
+an encrypted PostgreSQL outbox idempotently. The notification dispatcher recovers
+stale claims, targets personal alerts only to the owning member and Family alerts to
+Family devices, uses privacy-safe generic copy, times out stalled APNs requests, and
+retries with bounded exponential backoff. Alerts with no registered devices complete
+without an APNs call. Provider polling is not activated until Rallyroo has an approved
+production quota and written backend-fan-out confirmation.
 
 Live transit data never automatically creates Events or Reminders.
 
