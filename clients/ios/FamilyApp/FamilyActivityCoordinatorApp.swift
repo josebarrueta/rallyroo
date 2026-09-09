@@ -20,6 +20,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let changeMonitor: (any FamilyChangeMonitor)?
     private let deviceRegistrationStore: (any DeviceRegistrationStore)?
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
+    private let commuterStore: (any CommuterStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -47,6 +48,7 @@ struct FamilyActivityCoordinatorApp: App {
             changeMonitor = nil
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
+            commuterStore = nil
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -88,6 +90,10 @@ struct FamilyActivityCoordinatorApp: App {
                 transport: authenticatedTransport
             )
             scheduleDraftExtractor = RemoteScheduleDraftExtractor(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
+            commuterStore = RemoteCommuterStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
@@ -137,6 +143,7 @@ struct FamilyActivityCoordinatorApp: App {
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
+                        commuterStore: session.role == .parent ? commuterStore : nil,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )

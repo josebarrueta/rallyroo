@@ -8,6 +8,7 @@ struct SettingsView: View {
     private let currentMemberID: String?
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let memberStore: (any FamilyMemberStore)?
+    private let commuterStore: (any CommuterStore)?
     private let preferences = ConflictAlertPreferences()
 
     init(
@@ -15,6 +16,7 @@ struct SettingsView: View {
         currentMemberID: String? = nil,
         calendarSourceStore: (any CalendarSourceStore)? = nil,
         memberStore: (any FamilyMemberStore)? = nil,
+        commuterStore: (any CommuterStore)? = nil,
         onSignOut: SignOutAction = SignOutAction({}),
         onDeleteAccount: DeleteAccountAction = DeleteAccountAction({})
     ) {
@@ -22,6 +24,7 @@ struct SettingsView: View {
         self.currentMemberID = currentMemberID
         self.calendarSourceStore = calendarSourceStore
         self.memberStore = memberStore
+        self.commuterStore = commuterStore
         self.onSignOut = onSignOut
         self.onDeleteAccount = onDeleteAccount
     }
@@ -54,6 +57,17 @@ struct SettingsView: View {
                             )
                         }
                         Text("Add TeamSnap, school, sports, or other iCalendar subscription links.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let commuterStore {
+                    Section("Transit") {
+                        NavigationLink("Commuter module") {
+                            CommuterSettingsView(store: commuterStore)
+                        }
+                        Text("Get alerts for Caltrain delays and cancellations.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
