@@ -17,6 +17,11 @@ import type {
   EventMutationSnapshot,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
+import {
+  FamilyDataProtector,
+  type FamilyDataKeyStore,
+  type WrappedFamilyDataKey,
+} from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 import type {
   CalendarSource,
@@ -25,14 +30,327 @@ import type {
 } from "./calendar-source-module.js";
 
 export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository {
-  constructor(private readonly pool: Pool) {}
+  private constructor(
+    private readonly pool: Pool,
+    private readonly familyDataProtector: FamilyDataProtector,
+  ) {}
 
-  static fromConfiguration(config: PoolConfig): PostgresRallyrooRepository {
-    return new PostgresRallyrooRepository(new Pool(config));
+  static fromConfiguration(
+    config: PoolConfig,
+    familyDataEncryptionKey: string,
+  ): PostgresRallyrooRepository {
+    const pool = new Pool(config);
+    const familyDataProtector = FamilyDataProtector.fromEncodedMasterKey(
+      familyDataEncryptionKey,
+      new PostgresFamilyDataKeyStore(pool),
+    );
+    return new PostgresRallyrooRepository(pool, familyDataProtector);
   }
 
-  static fromConnectionString(connectionString: string): PostgresRallyrooRepository {
-    return PostgresRallyrooRepository.fromConfiguration({ connectionString, max: 20 });
+  static fromConnectionString(
+    connectionString: string,
+    familyDataEncryptionKey: string,
+  ): PostgresRallyrooRepository {
+    return PostgresRallyrooRepository.fromConfiguration(
+      { connectionString, max: 20 },
+      familyDataEncryptionKey,
+    );
+  }
+
+  async validateFamilyDataEncryption(): Promise<void> {
+    const result = await this.pool.query<{ family_id: string }>(
+      `SELECT family_id FROM family_data_keys WHERE active
+       ORDER BY family_id LIMIT 1`,
+    );
+    const familyID = result.rows[0]?.family_id;
+    if (familyID) await this.familyDataProtector.validateActiveFamilyKey(familyID);
+  }
+
+  async rotateFamilyDataKey(familyID: string): Promise<void> {
+    await this.familyDataProtector.rotateFamilyKey(familyID);
+  }
+
+  async protectLegacyFamilyData(batchSize = 100): Promise<number> {
+    if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 1_000) {
+      throw new Error("Family data protection batch size must be between 1 and 1000");
+    }
+    const client = await this.pool.connect();
+    let protectedCount = 0;
+    const remaining = (): number => batchSize - protectedCount;
+    try {
+      await client.query("BEGIN");
+
+      if (remaining() > 0) {
+        const members = await client.query<MemberRow>(
+          `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+           FROM family_members
+           WHERE name NOT LIKE 'rr1.%'
+              OR (grade_or_birth_year IS NOT NULL AND grade_or_birth_year NOT LIKE 'rr1.%')
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of members.rows) {
+          if (!this.familyDataProtector.isProtected(row.name) && remaining() > 0) {
+            const value = await this.familyDataProtector.protect(
+              row.family_id,
+              `family_members/${row.id}/name`,
+              row.name,
+            );
+            await client.query(
+              "UPDATE family_members SET name = $3 WHERE family_id = $1 AND id = $2",
+              [row.family_id, row.id, value],
+            );
+            protectedCount += 1;
+          }
+          if (
+            row.grade_or_birth_year !== null
+            && !this.familyDataProtector.isProtected(row.grade_or_birth_year)
+            && remaining() > 0
+          ) {
+            const value = await this.familyDataProtector.protect(
+              row.family_id,
+              `family_members/${row.id}/grade_or_birth_year`,
+              row.grade_or_birth_year,
+            );
+            await client.query(
+              `UPDATE family_members SET grade_or_birth_year = $3
+               WHERE family_id = $1 AND id = $2`,
+              [row.family_id, row.id, value],
+            );
+            protectedCount += 1;
+          }
+        }
+      }
+
+      if (remaining() > 0) {
+        const events = await client.query<EventRow>(
+          `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
+                  end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+           FROM events
+           WHERE title NOT LIKE 'rr1.%'
+              OR (location IS NOT NULL AND location NOT LIKE 'rr1.%')
+              OR (driver IS NOT NULL AND driver NOT LIKE 'rr1.%')
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of events.rows) {
+          for (const [column, value] of [
+            ["title", row.title],
+            ["location", row.location],
+            ["driver", row.driver],
+          ] as const) {
+            if (value === null || this.familyDataProtector.isProtected(value) || remaining() < 1) {
+              continue;
+            }
+            const protectedValue = await this.familyDataProtector.protect(
+              row.family_id,
+              `events/${row.id}/${column}`,
+              value,
+            );
+            await client.query(
+              `UPDATE events SET ${column} = $3 WHERE family_id = $1 AND id = $2`,
+              [row.family_id, row.id, protectedValue],
+            );
+            protectedCount += 1;
+          }
+        }
+      }
+
+      if (remaining() > 0) {
+        const reminders = await client.query<ReminderRow>(
+          `SELECT family_id, id::text, title, assignee_ids, due_at, status,
+                  completed_at, completed_by_member_id, alert_lead_time_minutes,
+                  created_by_member_id
+           FROM family_reminders WHERE title NOT LIKE 'rr1.%'
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of reminders.rows) {
+          const value = await this.familyDataProtector.protect(
+            row.family_id,
+            `family_reminders/${row.id}/title`,
+            row.title,
+          );
+          await client.query(
+            "UPDATE family_reminders SET title = $3 WHERE family_id = $1 AND id = $2",
+            [row.family_id, row.id, value],
+          );
+          protectedCount += 1;
+        }
+      }
+
+      if (remaining() > 0) {
+        const invitations = await client.query<InvitationRecordRow>(
+          `SELECT id::text, code_hash, family_id, recipient_email, role, expires_at
+           FROM family_invitations
+           WHERE recipient_email IS NOT NULL AND recipient_email NOT LIKE 'rr1.%'
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of invitations.rows) {
+          const value = await this.familyDataProtector.protect(
+            row.family_id,
+            `family_invitations/${row.id}/recipient_email`,
+            row.recipient_email!,
+          );
+          await client.query(
+            "UPDATE family_invitations SET recipient_email = $2 WHERE id = $1",
+            [row.id, value],
+          );
+          protectedCount += 1;
+        }
+      }
+
+      if (remaining() > 0) {
+        const sources = await client.query<CalendarSourceRow>(
+          `SELECT family_id, id::text, owner_member_id, visibility, name,
+                  feed_url_ciphertext, participant_ids, status, last_synced_at,
+                  last_error, etag, last_modified
+           FROM calendar_sources
+           WHERE name NOT LIKE 'rr1.%'
+              OR feed_url_ciphertext NOT LIKE 'rr1.%'
+              OR (last_error IS NOT NULL AND last_error NOT LIKE 'rr1.%')
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of sources.rows) {
+          for (const [column, value] of [
+            ["name", row.name],
+            ["feed_url_ciphertext", row.feed_url_ciphertext],
+            ["last_error", row.last_error],
+          ] as const) {
+            if (value === null || this.familyDataProtector.isProtected(value) || remaining() < 1) {
+              continue;
+            }
+            const protectedValue = await this.familyDataProtector.protect(
+              row.family_id,
+              `calendar_sources/${row.id}/${column}`,
+              value,
+            );
+            await client.query(
+              `UPDATE calendar_sources SET ${column} = $3 WHERE family_id = $1 AND id = $2`,
+              [row.family_id, row.id, protectedValue],
+            );
+            protectedCount += 1;
+          }
+        }
+      }
+
+      if (remaining() > 0) {
+        const importedEvents = await client.query<ImportedCalendarEventRow>(
+          `SELECT event.family_id, event.source_id::text,
+                  ''::text AS source_name, ''::text AS source_owner_member_id,
+                  'family'::text AS source_visibility, event.external_uid,
+                  event.title, event.start_time, event.end_time, event.location,
+                  event.participant_ids, event.fingerprint
+           FROM imported_calendar_events event
+           WHERE event.external_uid NOT LIKE 'rr1.%'
+              OR event.title NOT LIKE 'rr1.%'
+              OR (event.location IS NOT NULL AND event.location NOT LIKE 'rr1.%')
+           ORDER BY event.family_id, event.source_id, event.external_uid
+           FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of importedEvents.rows) {
+          for (const [column, value] of [
+            ["title", row.title],
+            ["location", row.location],
+          ] as const) {
+            if (value === null || this.familyDataProtector.isProtected(value) || remaining() < 1) {
+              continue;
+            }
+            const protectedValue = await this.familyDataProtector.protect(
+              row.family_id,
+              `imported_calendar_events/${row.source_id}/${row.external_uid}/${column}`,
+              value,
+            );
+            await client.query(
+              `UPDATE imported_calendar_events SET ${column} = $4
+               WHERE family_id = $1 AND source_id = $2 AND external_uid = $3`,
+              [row.family_id, row.source_id, row.external_uid, protectedValue],
+            );
+            protectedCount += 1;
+          }
+          if (!this.familyDataProtector.isProtected(row.external_uid) && remaining() > 0) {
+            const protectedExternalUID = await this.familyDataProtector.protect(
+              row.family_id,
+              `imported_calendar_events/${row.source_id}/${row.fingerprint}/external_uid`,
+              row.external_uid,
+            );
+            await client.query(
+              `UPDATE imported_calendar_events SET external_uid = $4
+               WHERE family_id = $1 AND source_id = $2 AND external_uid = $3`,
+              [row.family_id, row.source_id, row.external_uid, protectedExternalUID],
+            );
+            protectedCount += 1;
+          }
+        }
+      }
+
+      if (remaining() > 0) {
+        const mutationResults = await client.query<{
+          family_id: string;
+          idempotency_key: string;
+          result: StoredEventMutationResult;
+        }>(
+          `SELECT family_id, idempotency_key::text, result
+           FROM event_mutation_results WHERE result IS NOT NULL
+           ORDER BY family_id, idempotency_key FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of mutationResults.rows) {
+          const value = await this.familyDataProtector.protect(
+            row.family_id,
+            `event_mutation_results/${row.idempotency_key}/result`,
+            JSON.stringify(row.result),
+          );
+          await client.query(
+            `UPDATE event_mutation_results
+             SET result = NULL, result_ciphertext = $3, updated_at = now()
+             WHERE family_id = $1 AND idempotency_key = $2`,
+            [row.family_id, row.idempotency_key, value],
+          );
+          protectedCount += 1;
+        }
+      }
+
+      if (remaining() > 0) {
+        const notifications = await client.query<ScheduleUpdateNotificationRow>(
+          `SELECT id::text, family_id, event_id::text, idempotency_key::text,
+                  title, body, participant_ids, claimed_at
+           FROM schedule_update_notifications
+           WHERE title NOT LIKE 'rr1.%' OR body NOT LIKE 'rr1.%'
+           ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
+          [remaining()],
+        );
+        for (const row of notifications.rows) {
+          for (const [column, value] of [
+            ["title", row.title],
+            ["body", row.body],
+          ] as const) {
+            if (this.familyDataProtector.isProtected(value) || remaining() < 1) continue;
+            const protectedValue = await this.familyDataProtector.protect(
+              row.family_id,
+              `schedule_update_notifications/${row.id}/${column}`,
+              value,
+            );
+            await client.query(
+              `UPDATE schedule_update_notifications SET ${column} = $2 WHERE id = $1`,
+              [row.id, protectedValue],
+            );
+            protectedCount += 1;
+          }
+        }
+      }
+
+      await client.query("COMMIT");
+      return protectedCount;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async checkReadiness(): Promise<void> {
@@ -71,10 +389,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
 
       const familyID = `family-${randomUUID()}`;
       const memberID = `parent-${randomUUID()}`;
+      const protectedDisplayName = await this.familyDataProtector.protect(
+        familyID,
+        `family_members/${memberID}/name`,
+        displayName,
+      );
       await client.query(
         `INSERT INTO family_members (family_id, id, name, role, color_tag)
          VALUES ($1, $2, $3, 'parent', 'blue')`,
-        [familyID, memberID, displayName],
+        [familyID, memberID, protectedDisplayName],
       );
       await client.query(
         `INSERT INTO accounts (identity_subject, family_id, member_id, role)
@@ -119,6 +442,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query("DELETE FROM family_change_versions WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM accounts WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM family_members WHERE family_id = $1", [row.family_id]);
+        await client.query("DELETE FROM family_data_keys WHERE family_id = $1", [row.family_id]);
       } else {
         await client.query(
           `DELETE FROM calendar_sources
@@ -197,6 +521,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 
   async saveInvitation(invitation: FamilyInvitation): Promise<void> {
+    const protectedRecipientEmail = invitation.recipientEmail === null
+      ? null
+      : await this.familyDataProtector.protect(
+        invitation.familyID,
+        `family_invitations/${invitation.id}/recipient_email`,
+        invitation.recipientEmail,
+      );
     await this.pool.query(
       `INSERT INTO family_invitations (
          id, code_hash, family_id, recipient_email, role, expires_at,
@@ -206,7 +537,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         invitation.id,
         invitation.codeHash,
         invitation.familyID,
-        invitation.recipientEmail,
+        protectedRecipientEmail,
         invitation.role,
         invitation.expiresAt,
         invitation.guardianConsentAt ?? null,
@@ -223,14 +554,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        ORDER BY expires_at`,
       [familyID],
     );
-    return result.rows.map((row) => ({
-      id: row.id,
-      codeHash: row.code_hash,
-      familyID: row.family_id,
-      recipientEmail: row.recipient_email,
-      role: row.role,
-      expiresAt: row.expires_at.toISOString(),
-    }));
+    return Promise.all(result.rows.map((row) => this.invitationFromRow(row)));
   }
 
   async cancelInvitation(familyID: string, invitationID: string): Promise<boolean> {
@@ -256,14 +580,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       [invitationID, familyID, codeHash, expiresAt],
     );
     const row = result.rows[0];
-    return row ? {
-      id: row.id,
-      codeHash: row.code_hash,
-      familyID: row.family_id,
-      recipientEmail: row.recipient_email,
-      role: row.role,
-      expiresAt: row.expires_at.toISOString(),
-    } : null;
+    return row ? this.invitationFromRow(row) : null;
   }
 
   async consumeInvitation(
@@ -315,6 +632,11 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       }
 
       const memberID = `${invitation.role}-${randomUUID()}`;
+      const protectedDisplayName = await this.familyDataProtector.protect(
+        invitation.family_id,
+        `family_members/${memberID}/name`,
+        displayName,
+      );
       if (existingRow) {
         const disposableResult = await client.query<{ disposable: boolean }>(
           `SELECT
@@ -337,7 +659,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query(
           `INSERT INTO family_members (family_id, id, name, role, color_tag)
            VALUES ($1, $2, $3, $4, 'blue')`,
-          [invitation.family_id, memberID, displayName, invitation.role],
+          [invitation.family_id, memberID, protectedDisplayName, invitation.role],
         );
         await client.query(
           `UPDATE accounts SET family_id = $1, member_id = $2, role = $3
@@ -354,11 +676,12 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           [existingRow.family_id, existingRow.member_id],
         );
         await client.query("DELETE FROM family_change_versions WHERE family_id = $1", [existingRow.family_id]);
+        await client.query("DELETE FROM family_data_keys WHERE family_id = $1", [existingRow.family_id]);
       } else {
         await client.query(
           `INSERT INTO family_members (family_id, id, name, role, color_tag)
            VALUES ($1, $2, $3, $4, 'blue')`,
-          [invitation.family_id, memberID, displayName, invitation.role],
+          [invitation.family_id, memberID, protectedDisplayName, invitation.role],
         );
         await client.query(
           `INSERT INTO accounts (identity_subject, family_id, member_id, role)
@@ -452,18 +775,20 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
-    return result.rows.map(eventFromRow);
+    return Promise.all(result.rows.map((row) => this.eventFromRow(row)));
   }
 
   async eventMutationResult(
     familyID: string,
     idempotencyKey: string,
   ): Promise<StoredEventMutationResult | null> {
-    const result = await this.pool.query<{ result: StoredEventMutationResult }>(
-      "SELECT result FROM event_mutation_results WHERE family_id = $1 AND idempotency_key = $2",
+    const result = await this.pool.query<EventMutationResultRow>(
+      `SELECT result, result_ciphertext FROM event_mutation_results
+       WHERE family_id = $1 AND idempotency_key = $2`,
       [familyID, idempotencyKey],
     );
-    return result.rows[0]?.result ?? null;
+    const row = result.rows[0];
+    return row ? this.eventMutationResultFromRow(familyID, idempotencyKey, row) : null;
   }
 
   async performEventMutation(
@@ -475,13 +800,19 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     try {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [familyID]);
-      const prior = await client.query<{ result: StoredEventMutationResult }>(
-        "SELECT result FROM event_mutation_results WHERE family_id = $1 AND idempotency_key = $2",
+      const prior = await client.query<EventMutationResultRow>(
+        `SELECT result, result_ciphertext FROM event_mutation_results
+         WHERE family_id = $1 AND idempotency_key = $2`,
         [familyID, idempotencyKey],
       );
       if (prior.rows[0]) {
+        const priorResult = await this.eventMutationResultFromRow(
+          familyID,
+          idempotencyKey,
+          prior.rows[0],
+        );
         await client.query("COMMIT");
-        return prior.rows[0].result;
+        return priorResult;
       }
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
@@ -495,11 +826,12 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         [familyID],
       );
       const plan = prepare({
-        events: events.rows.map(eventFromRow),
-        members: members.rows.map(memberFromRow),
+        events: await Promise.all(events.rows.map((row) => this.eventFromRow(row))),
+        members: await Promise.all(members.rows.map((row) => this.memberFromRow(row))),
       });
       if (plan.action.kind === "save") {
         const event = plan.action.event;
+        const protectedEvent = await this.protectEvent(event);
         await client.query(
           `INSERT INTO events (
              family_id, id, title, kid_id, participant_ids, start_time, end_time,
@@ -512,7 +844,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
              driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
              alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
              recurrence=EXCLUDED.recurrence`,
-          eventValues(event),
+          eventValues(protectedEvent),
         );
       } else {
         await client.query(
@@ -527,20 +859,36 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         [familyID],
       );
       if (plan.notification) {
+        const protectedTitle = await this.familyDataProtector.protect(
+          familyID,
+          `schedule_update_notifications/${plan.notification.id}/title`,
+          plan.notification.title,
+        );
+        const protectedBody = await this.familyDataProtector.protect(
+          familyID,
+          `schedule_update_notifications/${plan.notification.id}/body`,
+          plan.notification.body,
+        );
         await client.query(
           `INSERT INTO schedule_update_notifications (
              id, family_id, event_id, idempotency_key, title, body, participant_ids
            ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
           [
             plan.notification.id, familyID, plan.notification.eventID, idempotencyKey,
-            plan.notification.title, plan.notification.body, plan.notification.participantIDs,
+            protectedTitle, protectedBody, plan.notification.participantIDs,
           ],
         );
       }
+      const protectedResult = await this.familyDataProtector.protect(
+        familyID,
+        `event_mutation_results/${idempotencyKey}/result`,
+        JSON.stringify(plan.result),
+      );
       await client.query(
-        `INSERT INTO event_mutation_results (family_id, idempotency_key, result)
-         VALUES ($1, $2, $3::jsonb)`,
-        [familyID, idempotencyKey, JSON.stringify(plan.result)],
+        `INSERT INTO event_mutation_results (
+           family_id, idempotency_key, result, result_ciphertext
+         ) VALUES ($1, $2, NULL, $3)`,
+        [familyID, idempotencyKey, protectedResult],
       );
       await client.query("COMMIT");
       return plan.result;
@@ -575,16 +923,24 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
                  notification.participant_ids, notification.claimed_at`,
       [now.toISOString(), limit, notificationID ?? null],
     );
-    return result.rows.map((row) => ({
+    return Promise.all(result.rows.map(async (row) => ({
       id: row.id,
       familyID: row.family_id,
       eventID: row.event_id,
       idempotencyKey: row.idempotency_key,
-      title: row.title,
-      body: row.body,
+      title: await this.revealLegacyValue(
+        row.family_id,
+        `schedule_update_notifications/${row.id}/title`,
+        row.title,
+      ),
+      body: await this.revealLegacyValue(
+        row.family_id,
+        `schedule_update_notifications/${row.id}/body`,
+        row.body,
+      ),
       participantIDs: row.participant_ids,
       claimedAt: new Date(row.claimed_at),
-    }));
+    })));
   }
 
   async completeScheduleUpdateNotification(
@@ -603,12 +959,30 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         [notification.id, notification.claimedAt.toISOString(), completedAt.toISOString()],
       );
       if (completed.rows[0]) {
-        await client.query(
-          `UPDATE event_mutation_results
-           SET result = jsonb_set(result, '{notificationOutcome}', to_jsonb($3::text)), updated_at = now()
-           WHERE family_id = $1 AND idempotency_key = $2`,
-          [notification.familyID, notification.idempotencyKey, outcome],
+        const stored = await client.query<EventMutationResultRow>(
+          `SELECT result, result_ciphertext FROM event_mutation_results
+           WHERE family_id = $1 AND idempotency_key = $2 FOR UPDATE`,
+          [notification.familyID, notification.idempotencyKey],
         );
+        if (stored.rows[0]) {
+          const mutationResult = await this.eventMutationResultFromRow(
+            notification.familyID,
+            notification.idempotencyKey,
+            stored.rows[0],
+          );
+          mutationResult.notificationOutcome = outcome;
+          const protectedResult = await this.familyDataProtector.protect(
+            notification.familyID,
+            `event_mutation_results/${notification.idempotencyKey}/result`,
+            JSON.stringify(mutationResult),
+          );
+          await client.query(
+            `UPDATE event_mutation_results
+             SET result = NULL, result_ciphertext = $3, updated_at = now()
+             WHERE family_id = $1 AND idempotency_key = $2`,
+            [notification.familyID, notification.idempotencyKey, protectedResult],
+          );
+        }
       }
       await client.query("COMMIT");
     } catch (error) {
@@ -632,6 +1006,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 
   async saveEvent(event: FamilyEvent): Promise<void> {
+    const protectedEvent = await this.protectEvent(event);
     await this.pool.query(
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
@@ -644,7 +1019,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence`,
-      eventValues(event),
+      eventValues(protectedEvent),
     );
   }
 
@@ -670,8 +1045,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
            )`,
         [now.toISOString()],
       );
-      const due = events.rows.flatMap((row) => {
-        const event = eventFromRow(row);
+      const revealedEvents = await Promise.all(
+        events.rows.map((row) => this.eventFromRow(row)),
+      );
+      const due = revealedEvents.flatMap((event) => {
         const through = new Date(now.getTime() + event.alertLeadTimeMinutes! * 60 * 1_000);
         return eventOccurrenceStarts(event, through)
           .filter((start) => {
@@ -744,6 +1121,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 
   async saveCalendarSource(source: CalendarSource): Promise<void> {
+    const protectedSource = await this.protectCalendarSource(source);
     await this.pool.query(
       `INSERT INTO calendar_sources (
          family_id, id, owner_member_id, visibility, name, feed_url_ciphertext,
@@ -756,9 +1134,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          last_synced_at=EXCLUDED.last_synced_at, last_error=EXCLUDED.last_error,
          etag=EXCLUDED.etag, last_modified=EXCLUDED.last_modified`,
       [
-        source.familyID, source.id, source.ownerMemberID, source.visibility,
-        source.name, source.protectedURL, source.participantIDs, source.status,
-        source.lastSyncedAt, source.lastError, source.etag, source.lastModified,
+        protectedSource.familyID, protectedSource.id, protectedSource.ownerMemberID,
+        protectedSource.visibility, protectedSource.name, protectedSource.protectedURL,
+        protectedSource.participantIDs, protectedSource.status, protectedSource.lastSyncedAt,
+        protectedSource.lastError, protectedSource.etag, protectedSource.lastModified,
       ],
     );
   }
@@ -771,7 +1150,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        FROM calendar_sources WHERE family_id = $1 AND id = $2`,
       [familyID, sourceID],
     );
-    return result.rows[0] ? calendarSourceFromRow(result.rows[0]) : null;
+    return result.rows[0] ? this.calendarSourceFromRow(result.rows[0]) : null;
   }
 
   async calendarSourcesForFamily(familyID: string): Promise<CalendarSource[]> {
@@ -782,7 +1161,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        FROM calendar_sources WHERE family_id = $1 ORDER BY name, id`,
       [familyID],
     );
-    return result.rows.map(calendarSourceFromRow);
+    const sources = await Promise.all(result.rows.map((row) => this.calendarSourceFromRow(row)));
+    return sources.sort((left, right) => (
+      left.name.localeCompare(right.name) || left.id.localeCompare(right.id)
+    ));
   }
 
   async deleteCalendarSource(familyID: string, sourceID: string): Promise<boolean> {
@@ -807,18 +1189,20 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       if (!locked.rows[0]) throw new Error("Calendar source no longer exists");
       await client.query("DELETE FROM imported_calendar_events WHERE source_id = $1", [source.id]);
       for (const event of events) {
+        const protectedEvent = await this.protectImportedCalendarEvent(event);
         await client.query(
           `INSERT INTO imported_calendar_events (
              family_id, source_id, external_uid, title, start_time, end_time,
              location, participant_ids, fingerprint
            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [
-            event.familyID, event.sourceID, event.externalUID, event.title,
-            event.startTime, event.endTime, event.location, event.participantIDs,
-            event.fingerprint,
+            protectedEvent.familyID, protectedEvent.sourceID, protectedEvent.externalUID,
+            protectedEvent.title, protectedEvent.startTime, protectedEvent.endTime,
+            protectedEvent.location, protectedEvent.participantIDs, protectedEvent.fingerprint,
           ],
         );
       }
+      const protectedSource = await this.protectCalendarSource(source);
       await client.query(
         `UPDATE calendar_sources SET
            owner_member_id=$3, visibility=$4, name=$5, feed_url_ciphertext=$6,
@@ -826,9 +1210,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
            etag=$11, last_modified=$12
          WHERE family_id=$1 AND id=$2`,
         [
-          source.familyID, source.id, source.ownerMemberID, source.visibility,
-          source.name, source.protectedURL, source.participantIDs, source.status,
-          source.lastSyncedAt, source.lastError, source.etag, source.lastModified,
+          protectedSource.familyID, protectedSource.id, protectedSource.ownerMemberID,
+          protectedSource.visibility, protectedSource.name, protectedSource.protectedURL,
+          protectedSource.participantIDs, protectedSource.status, protectedSource.lastSyncedAt,
+          protectedSource.lastError, protectedSource.etag, protectedSource.lastModified,
         ],
       );
       await client.query("COMMIT");
@@ -853,19 +1238,40 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        WHERE event.family_id = $1 ORDER BY event.start_time, event.source_id`,
       [familyID],
     );
-    return result.rows.map((row) => ({
-      familyID: row.family_id,
-      sourceID: row.source_id,
-      sourceName: row.source_name,
-      sourceOwnerMemberID: row.source_owner_member_id,
-      sourceVisibility: row.source_visibility,
-      externalUID: row.external_uid,
-      title: row.title,
-      startTime: asISOString(row.start_time),
-      endTime: asISOString(row.end_time),
-      location: row.location,
-      participantIDs: row.participant_ids,
-      fingerprint: row.fingerprint,
+    return Promise.all(result.rows.map(async (row) => {
+      const externalUID = await this.revealLegacyValue(
+        row.family_id,
+        `imported_calendar_events/${row.source_id}/${row.fingerprint}/external_uid`,
+        row.external_uid,
+      );
+      return {
+        familyID: row.family_id,
+        sourceID: row.source_id,
+        sourceName: await this.revealLegacyValue(
+          row.family_id,
+          `calendar_sources/${row.source_id}/name`,
+          row.source_name,
+        ),
+        sourceOwnerMemberID: row.source_owner_member_id,
+        sourceVisibility: row.source_visibility,
+        externalUID,
+        title: await this.revealLegacyValue(
+          row.family_id,
+          `imported_calendar_events/${row.source_id}/${externalUID}/title`,
+          row.title,
+        ),
+        startTime: asISOString(row.start_time),
+        endTime: asISOString(row.end_time),
+        location: row.location === null
+          ? null
+          : await this.revealLegacyValue(
+            row.family_id,
+            `imported_calendar_events/${row.source_id}/${externalUID}/location`,
+            row.location,
+          ),
+        participantIDs: row.participant_ids,
+        fingerprint: row.fingerprint,
+      };
     }));
   }
 
@@ -877,10 +1283,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        FROM family_reminders WHERE family_id = $1 ORDER BY due_at`,
       [familyID],
     );
-    return result.rows.map(reminderFromRow);
+    return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
   }
 
   async saveReminder(reminder: FamilyReminder): Promise<void> {
+    const protectedTitle = await this.familyDataProtector.protect(
+      reminder.familyID,
+      `family_reminders/${reminder.id}/title`,
+      reminder.title,
+    );
     await this.pool.query(
       `INSERT INTO family_reminders (
          family_id, id, title, assignee_ids, due_at, status, completed_at,
@@ -894,7 +1305,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          notification_claimed_at=NULL, notification_sent_at=NULL, updated_at=now()`,
       [
-        reminder.familyID, reminder.id, reminder.title, reminder.assigneeIDs,
+        reminder.familyID, reminder.id, protectedTitle, reminder.assigneeIDs,
         reminder.dueAt, reminder.status, reminder.completedAt,
         reminder.completedByMemberID, reminder.alertLeadTimeMinutes,
         reminder.createdByMemberID,
@@ -934,7 +1345,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
                  reminder.alert_lead_time_minutes, reminder.created_by_member_id`,
       [now.toISOString(), limit],
     );
-    return result.rows.map(reminderFromRow);
+    return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
   }
 
   async markReminderNotificationSent(familyID: string, reminderID: string, sentAt: Date): Promise<void> {
@@ -961,17 +1372,23 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        FROM family_members WHERE family_id = $1 ORDER BY name`,
       [familyID],
     );
-    return result.rows.map((row) => ({
-      familyID: row.family_id,
-      id: row.id,
-      name: row.name,
-      role: row.role,
-      colorTag: row.color_tag,
-      ...(row.grade_or_birth_year !== null ? { gradeOrBirthYear: row.grade_or_birth_year } : {}),
-    }));
+    const members = await Promise.all(result.rows.map((row) => this.memberFromRow(row)));
+    return members.sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async saveMember(member: FamilyMember): Promise<void> {
+    const protectedName = await this.familyDataProtector.protect(
+      member.familyID,
+      `family_members/${member.id}/name`,
+      member.name,
+    );
+    const protectedGradeOrBirthYear = member.gradeOrBirthYear == null
+      ? null
+      : await this.familyDataProtector.protect(
+        member.familyID,
+        `family_members/${member.id}/grade_or_birth_year`,
+        member.gradeOrBirthYear,
+      );
     await this.pool.query(
       `INSERT INTO family_members (family_id, id, name, role, grade_or_birth_year, color_tag)
        VALUES ($1,$2,$3,$4,$5,$6)
@@ -980,8 +1397,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          grade_or_birth_year=EXCLUDED.grade_or_birth_year,
          color_tag=EXCLUDED.color_tag`,
       [
-        member.familyID, member.id, member.name, member.role,
-        member.gradeOrBirthYear ?? null, member.colorTag,
+        member.familyID, member.id, protectedName, member.role,
+        protectedGradeOrBirthYear, member.colorTag,
       ],
     );
   }
@@ -992,6 +1409,259 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       [familyID, memberID],
     );
   }
+
+  private async invitationFromRow(row: InvitationRecordRow): Promise<FamilyInvitation> {
+    return {
+      id: row.id,
+      codeHash: row.code_hash,
+      familyID: row.family_id,
+      recipientEmail: row.recipient_email === null
+        ? null
+        : await this.revealLegacyValue(
+          row.family_id,
+          `family_invitations/${row.id}/recipient_email`,
+          row.recipient_email,
+        ),
+      role: row.role,
+      expiresAt: row.expires_at.toISOString(),
+    };
+  }
+
+  private async protectCalendarSource(source: CalendarSource): Promise<CalendarSource> {
+    return {
+      ...source,
+      name: await this.familyDataProtector.protect(
+        source.familyID,
+        `calendar_sources/${source.id}/name`,
+        source.name,
+      ),
+      protectedURL: await this.familyDataProtector.protect(
+        source.familyID,
+        `calendar_sources/${source.id}/feed_url_ciphertext`,
+        source.protectedURL,
+      ),
+      lastError: source.lastError === null
+        ? null
+        : await this.familyDataProtector.protect(
+          source.familyID,
+          `calendar_sources/${source.id}/last_error`,
+          source.lastError,
+        ),
+    };
+  }
+
+  private async calendarSourceFromRow(row: CalendarSourceRow): Promise<CalendarSource> {
+    return {
+      ...calendarSourceFromRow(row),
+      name: await this.revealLegacyValue(
+        row.family_id,
+        `calendar_sources/${row.id}/name`,
+        row.name,
+      ),
+      protectedURL: await this.revealLegacyValue(
+        row.family_id,
+        `calendar_sources/${row.id}/feed_url_ciphertext`,
+        row.feed_url_ciphertext,
+      ),
+      lastError: row.last_error === null
+        ? null
+        : await this.revealLegacyValue(
+          row.family_id,
+          `calendar_sources/${row.id}/last_error`,
+          row.last_error,
+        ),
+    };
+  }
+
+  private async protectImportedCalendarEvent(
+    event: ImportedCalendarEvent,
+  ): Promise<ImportedCalendarEvent> {
+    return {
+      ...event,
+      externalUID: await this.familyDataProtector.protect(
+        event.familyID,
+        `imported_calendar_events/${event.sourceID}/${event.fingerprint}/external_uid`,
+        event.externalUID,
+      ),
+      title: await this.familyDataProtector.protect(
+        event.familyID,
+        `imported_calendar_events/${event.sourceID}/${event.externalUID}/title`,
+        event.title,
+      ),
+      location: event.location === null
+        ? null
+        : await this.familyDataProtector.protect(
+          event.familyID,
+          `imported_calendar_events/${event.sourceID}/${event.externalUID}/location`,
+          event.location,
+        ),
+    };
+  }
+
+  private async eventMutationResultFromRow(
+    familyID: string,
+    idempotencyKey: string,
+    row: EventMutationResultRow,
+  ): Promise<StoredEventMutationResult> {
+    if (row.result_ciphertext !== null) {
+      const plaintext = await this.familyDataProtector.reveal(
+        familyID,
+        `event_mutation_results/${idempotencyKey}/result`,
+        row.result_ciphertext,
+      );
+      return JSON.parse(plaintext) as StoredEventMutationResult;
+    }
+    if (row.result !== null) return row.result;
+    throw new Error("Event mutation result has no payload");
+  }
+
+  private async memberFromRow(row: MemberRow): Promise<FamilyMember> {
+    return {
+      ...memberFromRow(row),
+      name: await this.revealLegacyValue(
+        row.family_id,
+        `family_members/${row.id}/name`,
+        row.name,
+      ),
+      ...(row.grade_or_birth_year !== null ? {
+        gradeOrBirthYear: await this.revealLegacyValue(
+          row.family_id,
+          `family_members/${row.id}/grade_or_birth_year`,
+          row.grade_or_birth_year,
+        ),
+      } : {}),
+    };
+  }
+
+  private async reminderFromRow(row: ReminderRow): Promise<FamilyReminder> {
+    return {
+      ...reminderFromRow(row),
+      title: await this.revealLegacyValue(
+        row.family_id,
+        `family_reminders/${row.id}/title`,
+        row.title,
+      ),
+    };
+  }
+
+  private async protectEvent(event: FamilyEvent): Promise<FamilyEvent> {
+    return {
+      ...event,
+      title: await this.familyDataProtector.protect(
+        event.familyID,
+        `events/${event.id}/title`,
+        event.title,
+      ),
+      location: event.location === null ? null : await this.familyDataProtector.protect(
+        event.familyID,
+        `events/${event.id}/location`,
+        event.location,
+      ),
+      driver: event.driver === null ? null : await this.familyDataProtector.protect(
+        event.familyID,
+        `events/${event.id}/driver`,
+        event.driver,
+      ),
+    };
+  }
+
+  private async eventFromRow(row: EventRow): Promise<FamilyEvent> {
+    return {
+      ...eventFromRow(row),
+      title: await this.revealLegacyValue(row.family_id, `events/${row.id}/title`, row.title),
+      location: row.location === null
+        ? null
+        : await this.revealLegacyValue(row.family_id, `events/${row.id}/location`, row.location),
+      driver: row.driver === null
+        ? null
+        : await this.revealLegacyValue(row.family_id, `events/${row.id}/driver`, row.driver),
+    };
+  }
+
+  private async revealLegacyValue(
+    familyID: string,
+    purpose: string,
+    value: string,
+  ): Promise<string> {
+    return this.familyDataProtector.isProtected(value)
+      ? this.familyDataProtector.reveal(familyID, purpose, value)
+      : value;
+  }
+}
+
+class PostgresFamilyDataKeyStore implements FamilyDataKeyStore {
+  constructor(private readonly pool: Pool) {}
+
+  async activeKey(familyID: string): Promise<WrappedFamilyDataKey | null> {
+    const result = await this.pool.query<FamilyDataKeyRow>(
+      `SELECT family_id, version, wrapped_key
+       FROM family_data_keys WHERE family_id = $1 AND active`,
+      [familyID],
+    );
+    return result.rows[0] ? wrappedFamilyDataKeyFromRow(result.rows[0]) : null;
+  }
+
+  async key(familyID: string, version: number): Promise<WrappedFamilyDataKey | null> {
+    const result = await this.pool.query<FamilyDataKeyRow>(
+      `SELECT family_id, version, wrapped_key
+       FROM family_data_keys WHERE family_id = $1 AND version = $2`,
+      [familyID, version],
+    );
+    return result.rows[0] ? wrappedFamilyDataKeyFromRow(result.rows[0]) : null;
+  }
+
+  async saveKeyIfAbsent(key: WrappedFamilyDataKey): Promise<WrappedFamilyDataKey> {
+    const inserted = await this.pool.query<FamilyDataKeyRow>(
+      `INSERT INTO family_data_keys (family_id, version, wrapped_key, active)
+       VALUES ($1, $2, $3, true)
+       ON CONFLICT DO NOTHING
+       RETURNING family_id, version, wrapped_key`,
+      [key.familyID, key.version, key.wrappedKey],
+    );
+    const insertedRow = inserted.rows[0];
+    if (insertedRow) return wrappedFamilyDataKeyFromRow(insertedRow);
+    const existing = await this.activeKey(key.familyID);
+    if (!existing) throw new Error("Unable to create Family data key");
+    return existing;
+  }
+
+  async rotateKey(key: WrappedFamilyDataKey, priorVersion: number): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const retired = await client.query(
+        `UPDATE family_data_keys SET active = false, retired_at = now()
+         WHERE family_id = $1 AND version = $2 AND active`,
+        [key.familyID, priorVersion],
+      );
+      if (retired.rowCount !== 1) throw new Error("Family data key changed during rotation");
+      await client.query(
+        `INSERT INTO family_data_keys (family_id, version, wrapped_key, active)
+         VALUES ($1, $2, $3, true)`,
+        [key.familyID, key.version, key.wrappedKey],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+interface FamilyDataKeyRow {
+  family_id: string;
+  version: number;
+  wrapped_key: string;
+}
+
+function wrappedFamilyDataKeyFromRow(row: FamilyDataKeyRow): WrappedFamilyDataKey {
+  return {
+    familyID: row.family_id,
+    version: row.version,
+    wrappedKey: row.wrapped_key,
+  };
 }
 
 interface AccountRow {
@@ -1027,6 +1697,11 @@ interface EventRow {
   status: FamilyEvent["status"];
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
+}
+
+interface EventMutationResultRow {
+  result: StoredEventMutationResult | null;
+  result_ciphertext: string | null;
 }
 
 interface ScheduleUpdateNotificationRow {

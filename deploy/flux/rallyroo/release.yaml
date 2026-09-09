@@ -35,6 +35,7 @@ spec:
     providerSecrets:
       stytch: rallyroo-stytch
       calendarEncryption: rallyroo-calendar-encryption
+      familyDataEncryption: rallyroo-family-data-encryption
       googlePlaces: rallyroo-google-places
       resendInvitations: rallyroo-resend-invitations
       apns: rallyroo-apns
