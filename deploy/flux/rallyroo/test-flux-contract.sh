@@ -31,6 +31,10 @@ grep -q '^  name: rallyroo-resend-invitations$' "$FLUX_DIR/onepassword-items.yam
 grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-resend-invitations$' "$FLUX_DIR/onepassword-items.yaml"
 grep -q '^  name: rallyroo-apns$' "$FLUX_DIR/onepassword-items.yaml"
 grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-apns$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^  name: rallyroo-sf511$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-sf511$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^      sf511: rallyroo-sf511$' "$FLUX_DIR/release.yaml"
+grep -q '^        enabled: false$' "$FLUX_DIR/release.yaml"
 grep -q '^  name: rallyroo-observability$' "$FLUX_DIR/onepassword-items.yaml"
 grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-observability$' "$FLUX_DIR/onepassword-items.yaml"
 if grep -Eq '(token|address):[[:space:]]+[^[:space:]]' "$FLUX_DIR/onepassword-items.yaml"; then

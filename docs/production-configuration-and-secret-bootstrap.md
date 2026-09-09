@@ -59,6 +59,7 @@ Kubernetes Secret keys.
 | `rallyroo-google-places` | `GOOGLE_PLACES_API_KEY` | Google Cloud |
 | `rallyroo-resend-invitations` | `RESEND_API_KEY` | Resend, Sending access |
 | `rallyroo-apns` | `APNS_PRIVATE_KEY`, `APNS_KEY_ID` | Apple Developer |
+| `rallyroo-sf511` | `SF511_API_KEY` | 511 SF Bay Open Data |
 | `rallyroo-calendar-encryption` | `CALENDAR_SOURCE_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-family-data-encryption` | `FAMILY_DATA_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-observability` | `METRICS_BEARER_TOKEN` | Rallyroo-generated |
