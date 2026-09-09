@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { CalendarSourceModule } from "../src/calendar-source-module.js";
+import { CommuterModule } from "../src/commuter-module.js";
 import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 
@@ -101,6 +102,84 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
     await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await adminPool.end();
+  });
+
+  it("persists encrypted Commuter state and durable alert deduplication", async () => {
+    const writerRepository = repositoryForTest();
+    const app = buildApp({
+      identityProvider,
+      repository: writerRepository,
+      readinessCheck: () => writerRepository.checkReadiness(),
+    });
+    await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: {
+        oauthToken: "oauth-token",
+        codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq",
+      },
+    });
+    await app.close();
+    const account = await writerRepository.accountForIdentity("integration-parent");
+    expect(account).not.toBeNull();
+    const writer = new CommuterModule(writerRepository);
+    await writer.enable(account!);
+    const subscription = await writer.createSubscription(account!, {
+      visibility: "personal",
+      agencyID: "CT",
+      routeID: "caltrain-local",
+      directionID: "northbound",
+      originStopID: "70171",
+      destinationStopID: "70011",
+      serviceWeekdays: [1, 2, 3, 4, 5],
+      windowStartMinutes: 420,
+      windowEndMinutes: 540,
+      alertKinds: ["delay", "cancellation"],
+      minimumDelayMinutes: 15,
+    });
+
+    const rawPool = new Pool({ connectionString: databaseURL });
+    const stored = await rawPool.query<{ details_ciphertext: string }>(
+      "SELECT details_ciphertext FROM commuter_subscriptions WHERE id = $1",
+      [subscription.id],
+    );
+    await rawPool.end();
+    expect(stored.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
+    expect(stored.rows[0]?.details_ciphertext).not.toContain("70171");
+
+    const readerRepository = repositoryForTest();
+    const reader = new CommuterModule(readerRepository);
+    expect((await reader.state(account!)).subscriptions).toEqual([subscription]);
+    const condition = {
+      id: "trip-123:2026-09-09",
+      agencyID: "CT" as const,
+      routeID: "caltrain-local",
+      directionID: "northbound",
+      stopIDs: ["70171", "70011"],
+      serviceWeekday: 3,
+      scheduledMinutes: 480,
+      kind: "delay" as const,
+      delayMinutes: 20,
+      observedAt: "2026-09-09T14:59:00Z",
+      validUntil: "2026-09-09T15:02:00Z",
+    };
+    expect(await writer.processTransitConditions(
+      [condition],
+      new Date("2026-09-09T15:00:00Z"),
+    )).toHaveLength(1);
+    const alertPool = new Pool({ connectionString: databaseURL });
+    const storedAlert = await alertPool.query<{ details_ciphertext: string; status: string }>(
+      "SELECT details_ciphertext, status FROM commuter_alert_outbox WHERE subscription_id = $1",
+      [subscription.id],
+    );
+    await alertPool.end();
+    expect(storedAlert.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
+    expect(storedAlert.rows[0]?.details_ciphertext).not.toContain(condition.id);
+    expect(storedAlert.rows[0]?.status).toBe("pending");
+    expect(await reader.processTransitConditions(
+      [condition],
+      new Date("2026-09-09T15:01:00Z"),
+    )).toEqual([]);
   });
 
   it("persists an HTTP event across PostgreSQL repository instances", async () => {
@@ -635,6 +714,21 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       payload: { role: "parent", email: "recovery@example.com" },
     });
 
+    const accidentalCommuter = new CommuterModule(repository);
+    await accidentalCommuter.enable(oldAccount!);
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: {
+        oauthToken: "recovery-oauth-token",
+        codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq",
+        invitationCode: invitation.json().code,
+      },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json()).toMatchObject({ error: "invitation_account_conflict" });
+    await accidentalCommuter.remove(oldAccount!);
+
     const recovered = await app.inject({
       method: "POST",
       url: "/v1/sessions",
@@ -706,6 +800,35 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     });
     await connect("Personal", "personal");
     await connect("Shared", "family");
+    const ownerAccount = await data.accountForIdentity("deleting-calendar-owner");
+    const commuter = new CommuterModule(data);
+    await commuter.enable(ownerAccount!);
+    await commuter.createSubscription(ownerAccount!, {
+      visibility: "personal",
+      agencyID: "CT",
+      routeID: "personal-route",
+      directionID: "northbound",
+      originStopID: "70171",
+      destinationStopID: "70011",
+      serviceWeekdays: [1],
+      windowStartMinutes: 420,
+      windowEndMinutes: 540,
+      alertKinds: ["delay"],
+      minimumDelayMinutes: 15,
+    });
+    await commuter.createSubscription(ownerAccount!, {
+      visibility: "family",
+      agencyID: "CT",
+      routeID: "shared-route",
+      directionID: "northbound",
+      originStopID: "70171",
+      destinationStopID: "70011",
+      serviceWeekdays: [1],
+      windowStartMinutes: 420,
+      windowEndMinutes: 540,
+      alertKinds: ["delay"],
+      minimumDelayMinutes: 15,
+    });
 
     expect((await app.inject({
       method: "DELETE",
@@ -725,12 +848,35 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         ownerMemberID: successorSession.json().accountID,
       }),
     ]);
+    const successorAccount = await data.accountForIdentity("calendar-owner-successor");
+    expect((await commuter.state(successorAccount!)).subscriptions).toEqual([
+      expect.objectContaining({
+        routeID: "shared-route",
+        visibility: "family",
+        ownerMemberID: successorSession.json().accountID,
+      }),
+    ]);
     await app.close();
   });
 
   it("deletes the complete PostgreSQL family dataset for its last account", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("deletion-subject", "Delete Me");
+    const commuter = new CommuterModule(data);
+    await commuter.enable(account);
+    await commuter.createSubscription(account, {
+      visibility: "personal",
+      agencyID: "CT",
+      routeID: "delete-route",
+      directionID: "northbound",
+      originStopID: "70171",
+      destinationStopID: "70011",
+      serviceWeekdays: [1],
+      windowStartMinutes: 420,
+      windowEndMinutes: 540,
+      alertKinds: ["delay"],
+      minimumDelayMinutes: 15,
+    });
     await data.saveEvent({
       id: "00000000-0000-4000-8000-000000000199",
       familyID: account.familyID,
@@ -750,5 +896,6 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await data.accountForIdentity("deletion-subject")).toBeNull();
     expect(await data.membersForFamily(account.familyID)).toEqual([]);
     expect(await data.eventsForFamily(account.familyID)).toEqual([]);
+    expect(await commuter.state(account)).toEqual({ installation: null, subscriptions: [] });
   });
 });

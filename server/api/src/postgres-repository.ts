@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolConfig } from "pg";
 import type {
   Account,
@@ -28,8 +28,15 @@ import type {
   CalendarSourceRepository,
   ImportedCalendarEvent,
 } from "./calendar-source-module.js";
+import { parseCommuteSubscriptionDetails } from "./commuter-module.js";
+import type {
+  CommuterInstallation,
+  CommuterRepository,
+  CommuteAlertIntent,
+  CommuteSubscription,
+} from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -357,8 +364,263 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query("SELECT 1");
   }
 
+  private async protectedCommuteDetails(subscription: CommuteSubscription): Promise<string> {
+    return this.familyDataProtector.protect(
+      subscription.familyID,
+      `commuter_subscriptions/${subscription.id}/details`,
+      JSON.stringify({
+        agencyID: subscription.agencyID,
+        routeID: subscription.routeID,
+        directionID: subscription.directionID,
+        originStopID: subscription.originStopID,
+        destinationStopID: subscription.destinationStopID,
+        serviceWeekdays: subscription.serviceWeekdays,
+        windowStartMinutes: subscription.windowStartMinutes,
+        windowEndMinutes: subscription.windowEndMinutes,
+        alertKinds: subscription.alertKinds,
+        minimumDelayMinutes: subscription.minimumDelayMinutes,
+      }),
+    );
+  }
+
+  private async commuteSubscriptionFromRow(
+    row: CommuterSubscriptionRow,
+  ): Promise<CommuteSubscription> {
+    const plaintext = await this.familyDataProtector.reveal(
+      row.family_id,
+      `commuter_subscriptions/${row.id}/details`,
+      row.details_ciphertext,
+    );
+    const details = parseCommuteSubscriptionDetails(plaintext);
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      ownerMemberID: row.owner_member_id,
+      visibility: row.visibility,
+      status: row.status,
+      ...details,
+    };
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  async installation(familyID: string): Promise<CommuterInstallation | null> {
+    const result = await this.pool.query<CommuterInstallationRow>(
+      `SELECT family_id, enabled_by_member_id, status
+       FROM commuter_installations WHERE family_id = $1`,
+      [familyID],
+    );
+    const row = result.rows[0];
+    return row ? {
+      familyID: row.family_id,
+      enabledByMemberID: row.enabled_by_member_id,
+      status: row.status,
+    } : null;
+  }
+
+  async saveInstallationIfAbsent(
+    installation: CommuterInstallation,
+  ): Promise<CommuterInstallation> {
+    const result = await this.pool.query<CommuterInstallationRow>(
+      `INSERT INTO commuter_installations (family_id, enabled_by_member_id, status)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (family_id) DO UPDATE SET family_id = EXCLUDED.family_id
+       RETURNING family_id, enabled_by_member_id, status`,
+      [installation.familyID, installation.enabledByMemberID, installation.status],
+    );
+    const row = result.rows[0]!;
+    return {
+      familyID: row.family_id,
+      enabledByMemberID: row.enabled_by_member_id,
+      status: row.status,
+    };
+  }
+
+  async setInstallationStatus(
+    familyID: string,
+    status: CommuterInstallation["status"],
+  ): Promise<CommuterInstallation | null> {
+    const result = await this.pool.query<CommuterInstallationRow>(
+      `UPDATE commuter_installations SET status = $2
+       WHERE family_id = $1
+       RETURNING family_id, enabled_by_member_id, status`,
+      [familyID, status],
+    );
+    const row = result.rows[0];
+    return row ? {
+      familyID: row.family_id,
+      enabledByMemberID: row.enabled_by_member_id,
+      status: row.status,
+    } : null;
+  }
+
+  async removeInstallationAndState(familyID: string): Promise<void> {
+    await this.pool.query("DELETE FROM commuter_installations WHERE family_id = $1", [familyID]);
+  }
+
+  async subscriptionsForFamily(familyID: string): Promise<CommuteSubscription[]> {
+    const result = await this.pool.query<CommuterSubscriptionRow>(
+      `SELECT id::text, family_id, owner_member_id, visibility, status, details_ciphertext
+       FROM commuter_subscriptions WHERE family_id = $1 ORDER BY created_at, id`,
+      [familyID],
+    );
+    return Promise.all(result.rows.map((row) => this.commuteSubscriptionFromRow(row)));
+  }
+
+  async saveSubscription(subscription: CommuteSubscription): Promise<void> {
+    const details = await this.protectedCommuteDetails(subscription);
+    await this.pool.query(
+      `INSERT INTO commuter_subscriptions
+         (id, family_id, owner_member_id, visibility, status, details_ciphertext)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO UPDATE SET
+         visibility = EXCLUDED.visibility,
+         status = EXCLUDED.status,
+         details_ciphertext = EXCLUDED.details_ciphertext,
+         updated_at = now()
+       WHERE commuter_subscriptions.family_id = EXCLUDED.family_id
+         AND commuter_subscriptions.owner_member_id = EXCLUDED.owner_member_id`,
+      [
+        subscription.id,
+        subscription.familyID,
+        subscription.ownerMemberID,
+        subscription.visibility,
+        subscription.status,
+        details,
+      ],
+    );
+  }
+
+  async saveSubscriptionIfCapacity(
+    subscription: CommuteSubscription,
+    maximum: number,
+  ): Promise<boolean> {
+    const details = await this.protectedCommuteDetails(subscription);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+        [`commuter:${subscription.familyID}`],
+      );
+      const count = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM commuter_subscriptions WHERE family_id = $1",
+        [subscription.familyID],
+      );
+      if (Number(count.rows[0]?.count ?? maximum) >= maximum) {
+        await client.query("ROLLBACK");
+        return false;
+      }
+      await client.query(
+        `INSERT INTO commuter_subscriptions
+           (id, family_id, owner_member_id, visibility, status, details_ciphertext)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
+        [
+          subscription.id,
+          subscription.familyID,
+          subscription.ownerMemberID,
+          subscription.visibility,
+          subscription.status,
+          details,
+        ],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async subscription(
+    familyID: string,
+    subscriptionID: string,
+  ): Promise<CommuteSubscription | null> {
+    const result = await this.pool.query<CommuterSubscriptionRow>(
+      `SELECT id::text, family_id, owner_member_id, visibility, status, details_ciphertext
+       FROM commuter_subscriptions WHERE family_id = $1 AND id = $2::uuid`,
+      [familyID, subscriptionID],
+    );
+    const row = result.rows[0];
+    return row ? this.commuteSubscriptionFromRow(row) : null;
+  }
+
+  async removeSubscription(familyID: string, subscriptionID: string): Promise<void> {
+    await this.pool.query(
+      "DELETE FROM commuter_subscriptions WHERE family_id = $1 AND id = $2::uuid",
+      [familyID, subscriptionID],
+    );
+  }
+
+  async activeSubscriptionsForAgency(agencyID: "CT"): Promise<CommuteSubscription[]> {
+    if (agencyID !== "CT") return [];
+    const result = await this.pool.query<CommuterSubscriptionRow>(
+      `SELECT subscription.id::text, subscription.family_id,
+              subscription.owner_member_id, subscription.visibility,
+              subscription.status, subscription.details_ciphertext
+       FROM commuter_subscriptions subscription
+       JOIN commuter_installations installation ON installation.family_id = subscription.family_id
+       WHERE subscription.status = 'active' AND installation.status = 'enabled'
+       ORDER BY subscription.family_id, subscription.created_at, subscription.id
+       LIMIT 10001`,
+    );
+    if (result.rows.length > 10_000) {
+      throw new Error("Commuter active subscription processing limit exceeded");
+    }
+    const subscriptions = await Promise.all(
+      result.rows.map((row) => this.commuteSubscriptionFromRow(row)),
+    );
+    return subscriptions.filter((item) => item.agencyID === agencyID);
+  }
+
+  async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {
+    if (alerts.length === 0) return [];
+    const prepared: Array<{
+      alert: CommuteAlertIntent;
+      digest: string;
+      details: string;
+    }> = [];
+    for (const alert of alerts) {
+      prepared.push({
+        alert,
+        digest: createHash("sha256").update(alert.conditionID, "utf8").digest("hex"),
+        details: await this.familyDataProtector.protect(
+          alert.familyID,
+          `commuter_alert_outbox/${alert.id}/details`,
+          JSON.stringify({
+            conditionID: alert.conditionID,
+            delayMinutes: alert.delayMinutes,
+            audience: alert.audience,
+          }),
+        ),
+      });
+    }
+    const client = await this.pool.connect();
+    const claimed: CommuteAlertIntent[] = [];
+    try {
+      await client.query("BEGIN");
+      for (const { alert, digest, details } of prepared) {
+        const result = await client.query(
+          `INSERT INTO commuter_alert_outbox
+             (id, family_id, subscription_id, condition_digest, kind, details_ciphertext)
+           VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6)
+           ON CONFLICT (family_id, subscription_id, condition_digest, kind) DO NOTHING`,
+          [alert.id, alert.familyID, alert.subscriptionID, digest, alert.kind, details],
+        );
+        if ((result.rowCount ?? 0) === 1) claimed.push(alert);
+      }
+      await client.query("COMMIT");
+      return claimed;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async accountForIdentity(subject: string): Promise<Account | null> {
@@ -434,6 +696,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM commuter_installations WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM calendar_sources WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM device_tokens WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM family_invitations WHERE family_id = $1", [row.family_id]);
@@ -444,6 +707,37 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query("DELETE FROM family_members WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM family_data_keys WHERE family_id = $1", [row.family_id]);
       } else {
+        await client.query(
+          `DELETE FROM commuter_subscriptions
+           WHERE family_id = $1 AND owner_member_id = $2 AND visibility = 'personal'`,
+          [row.family_id, row.member_id],
+        );
+        await client.query(
+          `UPDATE commuter_subscriptions
+           SET owner_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           ), updated_at = now()
+           WHERE family_id = $1 AND owner_member_id = $2 AND visibility = 'family'`,
+          [row.family_id, row.member_id, subject],
+        );
+        await client.query(
+          `UPDATE commuter_installations
+           SET enabled_by_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           )
+           WHERE family_id = $1 AND enabled_by_member_id = $2`,
+          [row.family_id, row.member_id, subject],
+        );
         await client.query(
           `DELETE FROM calendar_sources
            WHERE family_id = $1 AND owner_member_id = $2 AND visibility = 'personal'`,
@@ -646,6 +940,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
              NOT EXISTS (SELECT 1 FROM family_reminders WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM family_invitations WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM calendar_sources WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM commuter_installations WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM event_mutation_results WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM schedule_update_notifications WHERE family_id = $1)
              AS disposable`,
@@ -1669,6 +1964,21 @@ interface AccountRow {
   family_id: string;
   member_id: string;
   role: AccountRole;
+}
+
+interface CommuterInstallationRow {
+  family_id: string;
+  enabled_by_member_id: string;
+  status: CommuterInstallation["status"];
+}
+
+interface CommuterSubscriptionRow {
+  id: string;
+  family_id: string;
+  owner_member_id: string;
+  visibility: CommuteSubscription["visibility"];
+  status: CommuteSubscription["status"];
+  details_ciphertext: string;
 }
 
 interface InvitationRow {

@@ -109,6 +109,35 @@ Requests are rate-limited and draft member identifiers are restricted to the cal
 The endpoint returns `503` when no extraction adapter is configured and `502` when the
 configured adapter fails or produces invalid output.
 
+## Commuter module
+
+Commuter is a parent-enabled Family capability. A single Family installation owns
+personal and Family-visible commute subscriptions:
+
+- `GET /v1/modules/commuter` returns the installation and only subscriptions visible
+  to the authenticated member.
+- `PUT /v1/modules/commuter` enables the module. Parents only.
+- `PATCH /v1/modules/commuter` with `{ "status": "disabled" }` stops provider fan-out
+  while preserving configuration. `PUT` enables it again.
+- `DELETE /v1/modules/commuter` removes module-owned subscriptions and alert outbox
+  records. Native Events previously created through explicit parent action remain
+  independent.
+- `POST /v1/modules/commuter/subscriptions` creates a personal or Family subscription.
+  Parents only.
+- `PATCH /v1/modules/commuter/subscriptions/{id}` accepts an `active` or `paused`
+  status. Any parent may manage Family subscriptions; personal subscriptions remain
+  owner-only.
+- `DELETE /v1/modules/commuter/subscriptions/{id}` follows the same ownership rules.
+
+The initial typed model is Caltrain-only (`agencyID: "CT"`) and bounds route,
+direction, stop pair, weekday, service-window, alert-kind, and minimum-delay fields.
+Commute details are encrypted per Family in PostgreSQL. Real-time conditions are
+fanned out once across active subscriptions, must be fresh and route/window-matched,
+and enter an encrypted PostgreSQL outbox idempotently. Provider polling is not activated until Rallyroo has
+an approved production quota and written backend-fan-out confirmation.
+
+Live transit data never automatically creates Events or Reminders.
+
 ## Calendar subscriptions
 
 Authenticated parents can manage read-only iCalendar subscriptions:

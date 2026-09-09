@@ -3,6 +3,7 @@ import { APNSPushNotificationProvider } from "./apns-push-notification-provider.
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
+import { CommuterModule } from "./commuter-module.js";
 import { databasePoolConfiguration } from "./database-configuration.js";
 import { InMemoryCache, type Cache } from "./cache.js";
 import { CachedIdentityProvider } from "./cached-identity-provider.js";
@@ -91,9 +92,11 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
     from: process.env.INVITATION_EMAIL_FROM,
   })
   : new UnavailableInvitationEmailSender();
+const commuter = new CommuterModule(repository);
 const app = buildApp({
   identityProvider,
   repository,
+  commuter,
   invitationEmailSender,
   ...(calendarSources ? { calendarSources } : {}),
   ...(scheduleDraftExtractor ? { scheduleDraftExtractor } : {}),
