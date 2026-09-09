@@ -1,4 +1,5 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
+import { gtfsEpochSeconds, safeGTFSInteger } from "./gtfs-realtime-values.js";
 
 const { transit_realtime: gtfs } = GtfsRealtimeBindings;
 
@@ -30,9 +31,9 @@ export function decodeCaltrainTripUpdates(body: Uint8Array): CaltrainTripUpdates
   try {
     if (body.byteLength < 1) throw new Error("empty feed");
     const feed = gtfs.FeedMessage.decode(body);
-    const timestamp = safeInteger(feed.header.timestamp);
+    const timestamp = safeGTFSInteger(feed.header.timestamp);
     if (timestamp < 1 || feed.entity.length > 500) throw new Error("invalid header");
-    const observedAt = epochSeconds(timestamp);
+    const observedAt = gtfsEpochSeconds(timestamp);
     const trips: CaltrainRealtimeTrip[] = [];
     for (const entity of feed.entity) {
       if (entity.isDeleted || !entity.tripUpdate) continue;
@@ -56,12 +57,12 @@ export function decodeCaltrainTripUpdates(body: Uint8Array): CaltrainTripUpdates
         if (!Number.isSafeInteger(delaySeconds) || Math.abs(delaySeconds) > 24 * 60 * 60) {
           throw new Error("invalid delay");
         }
-        const eventSeconds = event ? safeInteger(event.time) : 0;
+        const eventSeconds = event ? safeGTFSInteger(event.time) : 0;
         return {
           stopID: stop.stopId,
           stopSequence,
           delaySeconds,
-          eventTime: eventSeconds > 0 ? epochSeconds(eventSeconds) : null,
+          eventTime: eventSeconds > 0 ? gtfsEpochSeconds(eventSeconds) : null,
         };
       }).sort((left, right) => left.stopSequence - right.stopSequence);
       trips.push({
@@ -82,28 +83,10 @@ export function decodeCaltrainTripUpdates(body: Uint8Array): CaltrainTripUpdates
     }
     return {
       observedAt,
-      validUntil: epochSeconds(timestamp + 3 * 60),
+      validUntil: gtfsEpochSeconds(timestamp + 3 * 60),
       trips,
     };
   } catch {
     throw new Error("Invalid Caltrain Trip Updates feed");
   }
-}
-
-function safeInteger(value: unknown): number {
-  const number = Number(
-    typeof value === "object" && value !== null && "toString" in value
-      ? value.toString()
-      : value,
-  );
-  if (!Number.isSafeInteger(number)) throw new Error("invalid integer");
-  return number;
-}
-
-function epochSeconds(value: number): string {
-  const milliseconds = value * 1_000;
-  if (!Number.isSafeInteger(milliseconds)) throw new Error("invalid timestamp");
-  const date = new Date(milliseconds);
-  if (!Number.isFinite(date.getTime())) throw new Error("invalid timestamp");
-  return date.toISOString();
 }

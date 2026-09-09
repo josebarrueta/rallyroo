@@ -17,6 +17,7 @@ const subscriptionDetailsSchema = z.object({
   .refine((value) => value.windowEndMinutes > value.windowStartMinutes);
 
 const transitConditionSchema = z.object({
+  scope: z.enum(["trip", "disruption"]).optional(),
   id: z.string().min(1).max(300),
   agencyID: z.literal("CT"),
   routeID: z.string().min(1).max(200),
@@ -73,6 +74,7 @@ export interface NewCommuteSubscription {
 }
 
 export interface TransitCondition {
+  scope?: "trip" | "disruption";
   id: string;
   agencyID: "CT";
   routeID: string;
@@ -414,14 +416,21 @@ function isFresh(condition: TransitCondition, now: Date): boolean {
 function matches(subscription: CommuteSubscription, condition: TransitCondition): boolean {
   const originIndex = condition.stopIDs.indexOf(subscription.originStopID);
   const destinationIndex = condition.stopIDs.indexOf(subscription.destinationStopID);
+  const disruption = condition.scope === "disruption";
+  const stopsMatch = disruption
+    ? condition.stopIDs.length === 0
+      || condition.stopIDs.includes(subscription.originStopID)
+      || condition.stopIDs.includes(subscription.destinationStopID)
+    : condition.stopIDs.length === 0 || (originIndex >= 0 && destinationIndex > originIndex);
   return subscription.status === "active"
     && subscription.agencyID === condition.agencyID
-    && subscription.routeID === condition.routeID
-    && subscription.directionID === condition.directionID
+    && (condition.routeID === "*" || subscription.routeID === condition.routeID)
+    && (condition.directionID === "*" || subscription.directionID === condition.directionID)
     && subscription.serviceWeekdays.includes(condition.serviceWeekday)
     && condition.scheduledMinutes >= subscription.windowStartMinutes
     && condition.scheduledMinutes <= subscription.windowEndMinutes
     && subscription.alertKinds.includes(condition.kind)
-    && (condition.kind !== "delay" || condition.delayMinutes >= subscription.minimumDelayMinutes)
-    && (condition.stopIDs.length === 0 || (originIndex >= 0 && destinationIndex > originIndex));
+    && (condition.kind !== "delay" || disruption
+      || condition.delayMinutes >= subscription.minimumDelayMinutes)
+    && stopsMatch;
 }

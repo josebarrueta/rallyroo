@@ -98,7 +98,9 @@ A follow-up **15-minute bounded soak probe** ran from 03:01–03:15 UTC on Septe
 - Trip Updates latency ranged from 115–2,399 ms (387 ms average); Service Alerts ranged from 114–2,991 ms (378 ms average);
 - no transport or parse failures occurred.
 
-This short soak establishes healthy minute-level Caltrain updates at that time, not long-term reliability. Longer observation is still needed for cancellation samples, actual service-alert records, outages, ID changes, and daily/static feed transitions.
+A follow-up credential-safe sample on **September 9, 2026** observed one valid nonempty Service Alert entity affecting one stop and one trip. The new bounded decoder normalized it as an advisory without logging its text, credential, or request URL. This confirms nonempty protobuf alerts occur, but does not yet validate cancellation or significant-delay effects.
+
+This short soak establishes healthy minute-level Caltrain updates at that time, not long-term reliability. Longer observation is still needed for cancellation samples, outages, ID changes, and daily/static feed transitions.
 
 ### Traffic path
 
