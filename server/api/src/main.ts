@@ -3,6 +3,7 @@ import { APNSPushNotificationProvider } from "./apns-push-notification-provider.
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
+import { CommuterAlertDispatcher } from "./commuter-alert-dispatcher.js";
 import { CommuterModule } from "./commuter-module.js";
 import { databasePoolConfiguration } from "./database-configuration.js";
 import { InMemoryCache, type Cache } from "./cache.js";
@@ -56,7 +57,8 @@ const repository = PostgresRallyrooRepository.fromConfiguration(
   familyDataEncryptionKey,
 );
 await repository.validateFamilyDataEncryption();
-const pushNotificationProvider = APNSPushNotificationProvider.fromEnvironment()
+const apnsPushNotificationProvider = APNSPushNotificationProvider.fromEnvironment();
+const pushNotificationProvider = apnsPushNotificationProvider
   ?? new NoopPushNotificationProvider();
 const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
   repository,
@@ -71,6 +73,12 @@ const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispa
   recipients: repository,
   pushNotificationProvider,
 });
+const commuterAlertDispatcher = apnsPushNotificationProvider
+  ? new CommuterAlertDispatcher({
+    repository,
+    pushNotificationProvider: apnsPushNotificationProvider,
+  })
+  : undefined;
 const calendarEncryptionKey = configuredSecret("CALENDAR_SOURCE_ENCRYPTION_KEY");
 const calendarSources = calendarEncryptionKey
   ? new CalendarSourceModule({
@@ -151,20 +159,20 @@ const notificationDispatchInterval = setInterval(async () => {
   if (notificationDispatchIsRunning) return;
   notificationDispatchIsRunning = true;
   try {
-    const results = await Promise.allSettled([
-      reminderNotificationDispatcher.dispatchDue(),
-      eventNotificationDispatcher.dispatchDue(),
-      scheduleUpdateNotificationDispatcher.dispatchDue(),
-    ]);
-    if (results[0]?.status === "rejected") {
-      app.log.error({ error: results[0].reason }, "Reminder notification dispatch failed");
-    }
-    if (results[1]?.status === "rejected") {
-      app.log.error({ error: results[1].reason }, "Event notification dispatch failed");
-    }
-    if (results[2]?.status === "rejected") {
-      app.log.error({ error: results[2].reason }, "Schedule update notification dispatch failed");
-    }
+    const dispatches = [
+      { name: "Reminder notification", operation: reminderNotificationDispatcher.dispatchDue() },
+      { name: "Event notification", operation: eventNotificationDispatcher.dispatchDue() },
+      { name: "Schedule update notification", operation: scheduleUpdateNotificationDispatcher.dispatchDue() },
+      ...(commuterAlertDispatcher
+        ? [{ name: "Commuter alert", operation: commuterAlertDispatcher.dispatchDue() }]
+        : []),
+    ];
+    const results = await Promise.allSettled(dispatches.map((dispatch) => dispatch.operation));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        app.log.error({ error: result.reason }, `${dispatches[index]!.name} dispatch failed`);
+      }
+    });
   } finally {
     notificationDispatchIsRunning = false;
   }
@@ -188,3 +196,8 @@ void eventNotificationDispatcher.dispatchDue().catch((error) => {
 void scheduleUpdateNotificationDispatcher.dispatchDue().catch((error) => {
   app.log.error({ error }, "Initial schedule update notification dispatch failed");
 });
+if (commuterAlertDispatcher) {
+  void commuterAlertDispatcher.dispatchDue().catch((error) => {
+    app.log.error({ error }, "Initial Commuter alert dispatch failed");
+  });
+}

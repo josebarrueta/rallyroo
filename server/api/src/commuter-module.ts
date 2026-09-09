@@ -95,6 +95,7 @@ export interface CommuteAlertIntent {
   conditionID: string;
   kind: CommuteAlertKind;
   delayMinutes: number;
+  expiresAt: string;
   audience: { kind: "member"; memberID: string } | { kind: "family" };
 }
 
@@ -330,6 +331,7 @@ export class CommuterModule {
           conditionID: condition.id,
           kind: condition.kind,
           delayMinutes: condition.delayMinutes,
+          expiresAt: condition.validUntil,
           audience: subscription.visibility === "personal"
             ? { kind: "member", memberID: subscription.ownerMemberID }
             : { kind: "family" },
