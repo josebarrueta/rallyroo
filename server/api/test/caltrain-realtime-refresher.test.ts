@@ -14,10 +14,16 @@ describe("CaltrainRealtimeRefresher", () => {
   it("treats an empty valid feed as healthy and malformed data as degraded", async () => {
     const commuter = new CommuterModule(new InMemoryCommuterRepository());
     let body = emptyHealthyFeed;
-    const refresher = new CaltrainRealtimeRefresher({ tripUpdates: async () => body }, commuter);
+    const refresher = new CaltrainRealtimeRefresher({
+      tripUpdates: async () => body,
+      serviceAlerts: async () => emptyHealthyFeed,
+    }, commuter);
 
     await expect(refresher.refresh(new Date("2026-09-09T15:00:01Z")))
-      .resolves.toMatchObject({ trips: [] });
+      .resolves.toMatchObject({
+        tripUpdates: { trips: [] },
+        serviceAlerts: { alerts: [] },
+      });
     expect((await commuter.providerStatus(new Date("2026-09-09T15:00:01Z"))).realtime.state)
       .toBe("healthy");
 

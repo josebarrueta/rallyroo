@@ -136,9 +136,11 @@ direction, stop pair, weekday, service-window, alert-kind, and minimum-delay fie
 Commute details are encrypted per Family in PostgreSQL. Caltrain's public stop
 catalog is normalized behind the provider adapter, replaced atomically, bounded to
 500 stops, and retained when refresh fails. Catalog and real-time health have
-independent success, attempt, degraded, and stale state. Real-time conditions are
-fanned out once across active subscriptions, must be fresh and route/window-matched,
-and enter an encrypted PostgreSQL outbox idempotently. Provider polling is not activated until Rallyroo has
+independent success, attempt, degraded, and stale state. Trip Updates and Service Alerts are fetched once per Caltrain polling cycle, decoded
+with bounded GTFS-Realtime schemas, rejected when stale, and normalized without
+requiring optional Trip Update `start_date` values. Real-time conditions are fanned
+out across active subscriptions, must be fresh and route/window-matched, and enter
+an encrypted PostgreSQL outbox idempotently. Provider polling is not activated until Rallyroo has
 an approved production quota and written backend-fan-out confirmation.
 
 Live transit data never automatically creates Events or Reminders.

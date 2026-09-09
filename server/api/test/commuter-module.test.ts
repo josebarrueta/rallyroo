@@ -233,6 +233,33 @@ describe("CommuterModule", () => {
       .rejects.toThrow("Invalid Commuter provider snapshot");
   });
 
+  it("matches scoped service disruptions without inventing delay minutes", async () => {
+    const module = new CommuterModule(new InMemoryCommuterRepository());
+    await module.enable(parent);
+    await module.createSubscription(parent, {
+      ...commute,
+      minimumDelayMinutes: 30,
+      visibility: "family",
+    });
+
+    const alerts = await module.processTransitConditions([{
+      scope: "disruption",
+      id: "alert:fixture",
+      agencyID: "CT",
+      routeID: "*",
+      directionID: "*",
+      stopIDs: [commute.originStopID],
+      serviceWeekday: 3,
+      scheduledMinutes: 480,
+      kind: "delay",
+      delayMinutes: 0,
+      observedAt: "2026-09-09T14:59:00Z",
+      validUntil: "2026-09-09T15:02:00Z",
+    }], new Date("2026-09-09T15:00:00Z"));
+
+    expect(alerts).toHaveLength(1);
+  });
+
   it("suppresses paused, stale, below-threshold, and out-of-window conditions", async () => {
     const module = new CommuterModule(new InMemoryCommuterRepository());
     await module.enable(parent);
