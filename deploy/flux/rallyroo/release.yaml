@@ -60,7 +60,7 @@ spec:
         bundleID: dev.rallyroo.app
         environment: production
       caltrainPolling:
-        enabled: false
+        enabled: true
         intervalSeconds: 120
         maximumBackoffSeconds: 3600
     postgres:
