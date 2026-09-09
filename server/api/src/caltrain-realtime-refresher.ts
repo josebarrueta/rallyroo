@@ -41,9 +41,9 @@ export class CaltrainRealtimeRefresher {
       }
       await this.commuter.recordProviderSuccess("realtime", attemptedAt);
       return snapshot;
-    } catch {
+    } catch (error) {
       await this.commuter.recordProviderFailure("realtime", attemptedAt);
-      throw new Error("Caltrain real-time refresh failed");
+      throw new Error("Caltrain real-time refresh failed", { cause: error });
     }
   }
 }

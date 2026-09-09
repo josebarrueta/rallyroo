@@ -21,6 +21,7 @@ providerSecrets:
   googlePlaces: ""
   resendInvitations: ""
   apns: ""
+  sf511: ""
   observability: ""
 
 runtimeConfig:
@@ -43,6 +44,10 @@ runtimeConfig:
     teamID: ""
     bundleID: dev.rallyroo.app
     environment: sandbox
+  caltrainPolling:
+    enabled: false
+    intervalSeconds: 120
+    maximumBackoffSeconds: 3600
 
 migrations:
   # The init container handles first install because PostgreSQL is created by

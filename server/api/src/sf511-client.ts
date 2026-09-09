@@ -12,6 +12,7 @@ export class SF511ProviderError extends Error {
   constructor(
     public readonly reason: SF511ProviderErrorReason,
     public readonly statusCode?: number,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(statusCode === undefined ? reason : `${reason}:${statusCode}`);
     this.name = "SF511ProviderError";
@@ -62,7 +63,13 @@ export class SF511Client {
           "user-agent": "Rallyroo-Commuter/1.0",
         },
       });
-      if (!response.ok) throw new SF511ProviderError("http_error", response.status);
+      if (!response.ok) {
+        throw new SF511ProviderError(
+          "http_error",
+          response.status,
+          response.status === 429 ? retryAfterSeconds(response.headers.get("retry-after")) : undefined,
+        );
+      }
       const declaredLength = Number(response.headers.get("content-length") ?? 0);
       if (declaredLength > maximumResponseBytes) {
         throw new SF511ProviderError("response_too_large");
@@ -75,6 +82,19 @@ export class SF511Client {
       clearTimeout(timeout);
     }
   }
+}
+
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  if (/^[0-9]+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) && seconds >= 1
+      ? Math.min(seconds, 21_600)
+      : undefined;
+  }
+  const date = Date.parse(value);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.min(Math.max(Math.ceil((date - Date.now()) / 1_000), 1), 21_600);
 }
 
 async function readBoundedBody(response: Response): Promise<Uint8Array> {

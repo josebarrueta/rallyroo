@@ -16,9 +16,9 @@ export class CaltrainCatalogRefresher {
       const body = new TextDecoder("utf-8", { fatal: true }).decode(await this.client.stops());
       const snapshot = parseCaltrainStops(body);
       await this.commuter.replaceCatalog(snapshot, attemptedAt);
-    } catch {
+    } catch (error) {
       await this.commuter.recordProviderFailure("catalog", attemptedAt);
-      throw new Error("Caltrain catalog refresh failed");
+      throw new Error("Caltrain catalog refresh failed", { cause: error });
     }
   }
 }

@@ -3,6 +3,9 @@ import { APNSPushNotificationProvider } from "./apns-push-notification-provider.
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
+import { CaltrainCatalogRefresher } from "./caltrain-catalog-refresher.js";
+import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
+import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
 import { CommuterAlertDispatcher } from "./commuter-alert-dispatcher.js";
 import { CommuterModule } from "./commuter-module.js";
 import { databasePoolConfiguration } from "./database-configuration.js";
@@ -27,7 +30,11 @@ import { ReminderNotificationDispatcher } from "./reminder-notification-dispatch
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import { RedisCache } from "./redis-cache.js";
 import { ResendInvitationEmailSender } from "./resend-invitation-email-sender.js";
-import { configuredSecret } from "./runtime-configuration.js";
+import {
+  caltrainPollingConfiguration,
+  configuredSecret,
+} from "./runtime-configuration.js";
+import { SF511Client } from "./sf511-client.js";
 import { StytchIdentityProvider } from "./stytch-identity-provider.js";
 
 const databaseConfiguration = await databasePoolConfiguration();
@@ -101,6 +108,11 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
   })
   : new UnavailableInvitationEmailSender();
 const commuter = new CommuterModule(repository);
+const caltrainPolling = caltrainPollingConfiguration();
+const sf511APIKey = caltrainPolling.enabled ? configuredSecret("SF511_API_KEY") : undefined;
+if (caltrainPolling.enabled && !sf511APIKey) {
+  throw new Error("SF511_API_KEY is required when Caltrain polling is enabled");
+}
 const app = buildApp({
   identityProvider,
   repository,
@@ -179,9 +191,56 @@ const notificationDispatchInterval = setInterval(async () => {
 }, 30_000);
 notificationDispatchInterval.unref();
 
+const caltrainPollingAbort = new AbortController();
+let caltrainPollingTask: Promise<void> | undefined;
+if (caltrainPolling.enabled && sf511APIKey) {
+  const client = new SF511Client(sf511APIKey);
+  const catalogRefresher = new CaltrainCatalogRefresher(client, commuter);
+  const commutePoller = new CaltrainCommutePoller(client, commuter);
+  let nextCatalogRefreshAtMilliseconds: number | undefined;
+  const scheduler = new CaltrainPollingScheduler({
+    intervalMilliseconds: caltrainPolling.intervalMilliseconds,
+    maximumBackoffMilliseconds: caltrainPolling.maximumBackoffMilliseconds,
+    poll: async (attemptedAt) => {
+      if (nextCatalogRefreshAtMilliseconds === undefined) {
+        const observedAt = (await commuter.catalog(attemptedAt)).observedAt;
+        nextCatalogRefreshAtMilliseconds = observedAt
+          ? new Date(observedAt).getTime() + 24 * 60 * 60 * 1_000
+          : 0;
+      }
+      const catalogIsDue = attemptedAt.getTime() >= nextCatalogRefreshAtMilliseconds;
+      if (catalogIsDue) {
+        // Advance before attempting so catalog failures do not starve real-time fan-out.
+        nextCatalogRefreshAtMilliseconds = attemptedAt.getTime() + 24 * 60 * 60 * 1_000;
+      }
+      const startedAt = performance.now();
+      const operation = catalogIsDue
+        ? { name: "sf511_caltrain_catalog", run: () => catalogRefresher.refresh(attemptedAt) }
+        : { name: "sf511_caltrain_realtime", run: () => commutePoller.poll(attemptedAt) };
+      try {
+        await operation.run();
+        metrics.observeProvider(operation.name, "success", (performance.now() - startedAt) / 1_000);
+      } catch (error) {
+        metrics.observeProvider(operation.name, "failure", (performance.now() - startedAt) / 1_000);
+        throw error;
+      }
+    },
+    onFailure: ({ throttled, nextAttemptInSeconds }) => {
+      app.log.warn({ throttled, nextAttemptInSeconds }, "Caltrain polling deferred");
+    },
+  });
+  caltrainPollingTask = scheduler.run(caltrainPollingAbort.signal).catch((error) => {
+    if (!caltrainPollingAbort.signal.aborted) {
+      app.log.error({ error }, "Caltrain polling scheduler stopped");
+    }
+  });
+}
+
 app.addHook("onClose", async () => {
   clearInterval(familyDataProtectionInterval);
   clearInterval(notificationDispatchInterval);
+  caltrainPollingAbort.abort();
+  await caltrainPollingTask;
   await Promise.all([cache.close?.(), repository.close()]);
 });
 

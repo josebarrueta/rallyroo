@@ -20,4 +20,7 @@ data:
   APNS_TEAM_ID: {{ required "runtimeConfig.apns.teamID is required when runtimeConfig is enabled" .Values.runtimeConfig.apns.teamID | quote }}
   APNS_BUNDLE_ID: {{ required "runtimeConfig.apns.bundleID is required when runtimeConfig is enabled" .Values.runtimeConfig.apns.bundleID | quote }}
   APNS_ENV: {{ required "runtimeConfig.apns.environment is required when runtimeConfig is enabled" .Values.runtimeConfig.apns.environment | quote }}
+  CALTRAIN_POLLING_ENABLED: {{ .Values.runtimeConfig.caltrainPolling.enabled | quote }}
+  CALTRAIN_POLL_INTERVAL_SECONDS: {{ .Values.runtimeConfig.caltrainPolling.intervalSeconds | quote }}
+  CALTRAIN_POLL_MAX_BACKOFF_SECONDS: {{ .Values.runtimeConfig.caltrainPolling.maximumBackoffSeconds | quote }}
 {{- end }}

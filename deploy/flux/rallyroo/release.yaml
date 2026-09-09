@@ -58,6 +58,10 @@ spec:
         teamID: 5LS29Z8553
         bundleID: dev.rallyroo.app
         environment: production
+      caltrainPolling:
+        enabled: false
+        intervalSeconds: 120
+        maximumBackoffSeconds: 3600
     postgres:
       credentialsSecret: rallyroo-postgres
       persistence:

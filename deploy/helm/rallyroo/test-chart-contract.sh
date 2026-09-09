@@ -23,6 +23,9 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set runtimeConfig.apns.teamID=5LS29Z8553 \
   --set runtimeConfig.apns.bundleID=dev.rallyroo.app \
   --set runtimeConfig.apns.environment=production \
+  --set runtimeConfig.caltrainPolling.enabled=false \
+  --set runtimeConfig.caltrainPolling.intervalSeconds=120 \
+  --set runtimeConfig.caltrainPolling.maximumBackoffSeconds=3600 \
   --set postgres.credentialsSecret=rallyroo-postgres \
   --set providerSecrets.stytch=rallyroo-stytch \
   --set providerSecrets.calendarEncryption=rallyroo-calendar-encryption \
@@ -30,6 +33,7 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set providerSecrets.googlePlaces=rallyroo-google-places \
   --set providerSecrets.resendInvitations=rallyroo-resend-invitations \
   --set providerSecrets.apns=rallyroo-apns \
+  --set providerSecrets.sf511=rallyroo-sf511 \
   --set providerSecrets.observability=rallyroo-observability >"$rendered"
 helm package "$CHART" --destination "$tmp" --version "0.1.1+deadbeef" >/dev/null
 helm template rallyroo "$tmp/rallyroo-0.1.1+deadbeef.tgz" \
@@ -61,6 +65,9 @@ grep -q 'OLLAMA_MODEL: "qwen3.8:27b-mlx"' "$rendered"
 grep -q 'APNS_TEAM_ID: "5LS29Z8553"' "$rendered"
 grep -q 'APNS_BUNDLE_ID: "dev.rallyroo.app"' "$rendered"
 grep -q 'APNS_ENV: "production"' "$rendered"
+grep -q 'CALTRAIN_POLLING_ENABLED: "false"' "$rendered"
+grep -q 'CALTRAIN_POLL_INTERVAL_SECONDS: "120"' "$rendered"
+grep -q 'CALTRAIN_POLL_MAX_BACKOFF_SECONDS: "3600"' "$rendered"
 grep -q 'checksum/runtime-config:' "$rendered"
 grep -A2 'configMapRef:' "$rendered" | grep -q 'name: rallyroo-runtime-config'
 grep -q 'name: POSTGRES_PASSWORD_FILE' "$rendered"
@@ -88,6 +95,9 @@ grep -q 'value: /run/secrets/apns/key-id' "$rendered"
 grep -q 'name: APNS_PRIVATE_KEY_FILE' "$rendered"
 grep -q 'value: /run/secrets/apns/private-key' "$rendered"
 grep -q 'secretName: rallyroo-apns' "$rendered"
+grep -q 'name: SF511_API_KEY_FILE' "$rendered"
+grep -q 'value: /run/secrets/sf511/api-key' "$rendered"
+grep -q 'secretName: rallyroo-sf511' "$rendered"
 grep -q 'name: METRICS_BEARER_TOKEN_FILE' "$rendered"
 grep -q 'value: /run/secrets/observability/metrics-token' "$rendered"
 grep -q 'secretName: rallyroo-observability' "$rendered"

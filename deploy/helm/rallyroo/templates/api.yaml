@@ -35,7 +35,7 @@ spec:
         checksum/runtime-config: {{ include (print $.Template.BasePath "/runtime-config.yaml") . | sha256sum }}
       {{- end }}
     spec:
-      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.observability }}
+      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
       securityContext:
         fsGroup: 1000
       {{- end }}
@@ -118,6 +118,10 @@ spec:
             - name: APNS_PRIVATE_KEY_FILE
               value: /run/secrets/apns/private-key
             {{- end }}
+            {{- if .Values.providerSecrets.sf511 }}
+            - name: SF511_API_KEY_FILE
+              value: /run/secrets/sf511/api-key
+            {{- end }}
             {{- if .Values.providerSecrets.observability }}
             - name: METRICS_BEARER_TOKEN_FILE
               value: /run/secrets/observability/metrics-token
@@ -139,7 +143,7 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
-          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.observability }}
+          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
           volumeMounts:
             {{- if .Values.postgres.credentialsSecret }}
             {{- include "rallyroo.postgresPasswordVolumeMount" . | nindent 12 }}
@@ -174,13 +178,18 @@ spec:
               mountPath: /run/secrets/apns
               readOnly: true
             {{- end }}
+            {{- if .Values.providerSecrets.sf511 }}
+            - name: sf511-credentials
+              mountPath: /run/secrets/sf511
+              readOnly: true
+            {{- end }}
             {{- if .Values.providerSecrets.observability }}
             - name: observability-credentials
               mountPath: /run/secrets/observability
               readOnly: true
             {{- end }}
           {{- end }}
-      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.observability }}
+      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
       volumes:
         {{- if .Values.postgres.credentialsSecret }}
         {{- include "rallyroo.postgresPasswordVolume" . | nindent 8 }}
@@ -240,6 +249,15 @@ spec:
                 path: key-id
               - key: APNS_PRIVATE_KEY
                 path: private-key
+        {{- end }}
+        {{- if .Values.providerSecrets.sf511 }}
+        - name: sf511-credentials
+          secret:
+            secretName: {{ .Values.providerSecrets.sf511 }}
+            defaultMode: 288
+            items:
+              - key: SF511_API_KEY
+                path: api-key
         {{- end }}
         {{- if .Values.providerSecrets.observability }}
         - name: observability-credentials

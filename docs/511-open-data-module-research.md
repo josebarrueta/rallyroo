@@ -130,7 +130,7 @@ There is only one provider adapter today, so a public multi-provider seam would 
 5. Do not require Vehicle Positions for the initial alert-only release.
 6. Preserve the last-good static catalog during outages. Mark expired real-time data stale and never turn missing/stale data into an “on time” assertion.
 
-This keeps provider request volume proportional to agencies/feeds rather than Family or subscription count.
+This keeps provider request volume proportional to agencies/feeds rather than Family or subscription count. The selected current-quota profile is one combined two-feed cycle every 120 seconds. That is at most 60 real-time requests per hour before positive jitter; a due daily catalog refresh replaces one combined cycle rather than adding a request. Throttling never causes an immediate retry.
 
 ### Credential and logging policy
 
