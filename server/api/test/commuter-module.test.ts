@@ -233,6 +233,32 @@ describe("CommuterModule", () => {
       .rejects.toThrow("Invalid Commuter provider snapshot");
   });
 
+  it("matches an all-service subscription against a specific Caltrain route", async () => {
+    const module = new CommuterModule(new InMemoryCommuterRepository());
+    await module.enable(parent);
+    await module.createSubscription(parent, {
+      ...commute,
+      routeID: "*",
+      visibility: "personal",
+    });
+
+    const alerts = await module.processTransitConditions([{
+      id: "trip-specific-route",
+      agencyID: "CT",
+      routeID: "Local Weekday",
+      directionID: commute.directionID,
+      stopIDs: [commute.originStopID, commute.destinationStopID],
+      serviceWeekday: 3,
+      scheduledMinutes: 480,
+      kind: "delay",
+      delayMinutes: 20,
+      observedAt: "2026-09-09T14:59:00Z",
+      validUntil: "2026-09-09T15:02:00Z",
+    }], new Date("2026-09-09T15:00:00Z"));
+
+    expect(alerts).toHaveLength(1);
+  });
+
   it("matches scoped service disruptions without inventing delay minutes", async () => {
     const module = new CommuterModule(new InMemoryCommuterRepository());
     await module.enable(parent);
