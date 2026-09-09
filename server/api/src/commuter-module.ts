@@ -426,7 +426,8 @@ function matches(subscription: CommuteSubscription, condition: TransitCondition)
     : condition.stopIDs.length === 0 || (originIndex >= 0 && destinationIndex > originIndex);
   return subscription.status === "active"
     && subscription.agencyID === condition.agencyID
-    && (condition.routeID === "*" || subscription.routeID === condition.routeID)
+    && (condition.routeID === "*" || subscription.routeID === "*"
+      || subscription.routeID === condition.routeID)
     && (condition.directionID === "*" || subscription.directionID === condition.directionID)
     && subscription.serviceWeekdays.includes(condition.serviceWeekday)
     && condition.scheduledMinutes >= subscription.windowStartMinutes
