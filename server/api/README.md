@@ -8,7 +8,7 @@ replaceable.
 
 ## Development
 
-Requirements: Node 20+, PostgreSQL, and a Stytch test project.
+Requirements: Node 22+, PostgreSQL, and a Stytch test project.
 
 ```bash
 cp .env.example .env
