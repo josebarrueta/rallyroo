@@ -77,6 +77,18 @@ unsupported structured-output runtimes fall back to JSON-only generation before 
 same validation. Draft extraction never writes events or reminders and request bodies
 are not logged.
 
+## Caltrain Commuter polling
+
+Caltrain ingestion is one shared backend poll for all Families; it is never scheduled
+per installation or subscription. Polling is disabled by default. Set
+`CALTRAIN_POLLING_ENABLED=true` only after 511 approves backend fan-out, provide the
+backend-only `SF511_API_KEY`, and configure `CALTRAIN_POLL_INTERVAL_SECONDS`
+(default `120`, minimum `60`) plus `CALTRAIN_POLL_MAX_BACKOFF_SECONDS` (default
+`3600`). A catalog refresh replaces one real-time cycle at most once per day.
+HTTP 429 responses honor bounded `Retry-After`; other failures use bounded
+exponential backoff with positive jitter, and a successful cycle restores the
+configured cadence. Provider URLs and credentials are never logged.
+
 ## Family data protection
 
 `FAMILY_DATA_ENCRYPTION_KEY` is required and must contain exactly 32 random bytes

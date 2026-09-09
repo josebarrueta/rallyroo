@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CaltrainCatalogRefresher } from "../src/caltrain-catalog-refresher.js";
 import { CommuterModule } from "../src/commuter-module.js";
 import { InMemoryCommuterRepository } from "../src/in-memory-commuter-repository.js";
+import { SF511ProviderError } from "../src/sf511-client.js";
 
 const validBody = JSON.stringify({
   Contents: {
@@ -55,5 +56,23 @@ describe("CaltrainCatalogRefresher", () => {
     const catalog = await module.catalog(new Date("2026-09-09T08:01:00Z"));
     expect(catalog.status.state).toBe("degraded");
     expect(catalog.stops.map((stop) => stop.id)).toEqual(["70171"]);
+  });
+
+  it("preserves provider throttle metadata for the polling scheduler", async () => {
+    const providerError = new SF511ProviderError("http_error", 429, 300);
+    const refresher = new CaltrainCatalogRefresher(
+      { stops: async () => { throw providerError; } },
+      new CommuterModule(new InMemoryCommuterRepository()),
+    );
+
+    let caught: unknown;
+    try {
+      await refresher.refresh(new Date("2026-09-09T07:01:00Z"));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).cause).toBe(providerError);
   });
 });

@@ -39,7 +39,10 @@ describe("SF511Client", () => {
   it("bounds response bodies and never includes credentialed URLs in errors", async () => {
     const client = new SF511Client(testKey, async () => new Response(null, {
       status: 429,
-      headers: { "content-length": String(6 * 1024 * 1024) },
+      headers: {
+        "content-length": String(6 * 1024 * 1024),
+        "retry-after": "300",
+      },
     }));
 
     let caught: unknown;
@@ -48,7 +51,7 @@ describe("SF511Client", () => {
     } catch (error) {
       caught = error;
     }
-    expect(caught).toEqual(new SF511ProviderError("http_error", 429));
+    expect(caught).toEqual(new SF511ProviderError("http_error", 429, 300));
     expect(String(caught)).not.toContain(testKey);
     expect(String(caught)).not.toContain("api.511.org");
   });
