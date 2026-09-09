@@ -1,5 +1,9 @@
 import type {
   CommuterInstallation,
+  CaltrainStop,
+  CaltrainStopsSnapshot,
+  CommuterProviderFeed,
+  CommuterProviderFeedObservation,
   CommuterRepository,
   CommuteAlertIntent,
   CommuteSubscription,
@@ -9,6 +13,9 @@ export class InMemoryCommuterRepository implements CommuterRepository {
   private readonly installations = new Map<string, CommuterInstallation>();
   private readonly subscriptions = new Map<string, CommuteSubscription>();
   private readonly alertKeys = new Set<string>();
+  private readonly providerFeeds = new Map<CommuterProviderFeed, CommuterProviderFeedObservation>();
+  private catalogObservedAt: string | null = null;
+  private catalogStops: CaltrainStop[] = [];
 
   async installation(familyID: string): Promise<CommuterInstallation | null> {
     return this.installations.get(familyID) ?? null;
@@ -83,6 +90,46 @@ export class InMemoryCommuterRepository implements CommuterRepository {
       && subscription.status === "active"
       && this.installations.get(subscription.familyID)?.status === "enabled"
     ));
+  }
+
+  async providerFeedObservation(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+  ): Promise<CommuterProviderFeedObservation | null> {
+    const observation = this.providerFeeds.get(feed);
+    return observation?.agencyID === agencyID ? observation : null;
+  }
+
+  async saveProviderFeedAttempt(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+    attemptedAt: string,
+    succeeded: boolean,
+  ): Promise<void> {
+    const existing = this.providerFeeds.get(feed);
+    if (existing?.lastAttemptAt && existing.lastAttemptAt > attemptedAt) return;
+    this.providerFeeds.set(feed, {
+      agencyID,
+      feed,
+      lastSuccessAt: succeeded ? attemptedAt : existing?.lastSuccessAt ?? null,
+      lastAttemptAt: attemptedAt,
+      lastAttemptSucceeded: succeeded,
+    });
+  }
+
+  async replaceCaltrainCatalog(snapshot: CaltrainStopsSnapshot, attemptedAt: string): Promise<void> {
+    const priorAttempt = this.providerFeeds.get("catalog")?.lastAttemptAt;
+    if (priorAttempt && priorAttempt > attemptedAt) return;
+    this.catalogObservedAt = snapshot.observedAt;
+    this.catalogStops = snapshot.stops.map((stop) => ({ ...stop }));
+    await this.saveProviderFeedAttempt("CT", "catalog", attemptedAt, true);
+  }
+
+  async caltrainCatalog(): Promise<{ observedAt: string | null; stops: CaltrainStop[] }> {
+    return {
+      observedAt: this.catalogObservedAt,
+      stops: this.catalogStops.map((stop) => ({ ...stop })),
+    };
   }
 
   async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {

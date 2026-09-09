@@ -62,6 +62,38 @@ describe("CommuterModule", () => {
     expect((await module.state(otherFamilyParent)).installation).toBeNull();
   });
 
+  it("tracks catalog and real-time provider health independently from installation", async () => {
+    const module = new CommuterModule(new InMemoryCommuterRepository());
+    const firstAttempt = new Date("2026-09-09T15:00:00Z");
+
+    expect(await module.providerStatus(firstAttempt)).toMatchObject({
+      catalog: { state: "unavailable", lastSuccessAt: null },
+      realtime: { state: "unavailable", lastSuccessAt: null },
+    });
+    await module.enable(parent);
+    await module.recordProviderSuccess("catalog", firstAttempt);
+    await module.recordProviderSuccess("realtime", firstAttempt);
+    await module.recordProviderFailure("realtime", new Date("2026-09-09T15:01:00Z"));
+
+    expect(await module.providerStatus(new Date("2026-09-09T15:01:00Z"))).toMatchObject({
+      catalog: { state: "healthy", lastSuccessAt: firstAttempt.toISOString() },
+      realtime: {
+        state: "degraded",
+        lastSuccessAt: firstAttempt.toISOString(),
+        lastAttemptAt: "2026-09-09T15:01:00.000Z",
+      },
+    });
+    expect((await module.state(parent)).installation?.status).toBe("enabled");
+    expect((await module.providerStatus(new Date("2026-09-09T15:04:01Z"))).realtime.state)
+      .toBe("stale");
+
+    await module.recordProviderSuccess("realtime", new Date("2026-09-09T15:05:00Z"));
+    await module.recordProviderFailure("realtime", new Date("2026-09-09T15:04:00Z"));
+    expect(await module.providerStatus(new Date("2026-09-09T15:05:00Z"))).toMatchObject({
+      realtime: { state: "healthy", lastAttemptAt: "2026-09-09T15:05:00.000Z" },
+    });
+  });
+
   it("rejects kid configuration and subscriptions before installation", async () => {
     const module = new CommuterModule(new InMemoryCommuterRepository());
 
@@ -265,7 +297,7 @@ describe("CommuterModule", () => {
 
     await module.remove(parent);
 
-    expect(await module.state(parent)).toEqual({ installation: null, subscriptions: [] });
+    expect(await module.state(parent)).toMatchObject({ installation: null, subscriptions: [] });
     expect(await repository.subscriptionsForFamily(parent.familyID)).toEqual([]);
   });
 });

@@ -574,6 +574,11 @@ export function buildApp({
     return clientCommuterState(await commuter.state(requiredAccount(request)));
   });
 
+  app.get("/v1/modules/commuter/catalog", async (_request, reply) => {
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    return commuter.catalog(new Date());
+  });
+
   app.put("/v1/modules/commuter", async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
@@ -992,6 +997,7 @@ function clientCommuterState(state: Awaited<ReturnType<CommuterModule["state"]>>
       ? clientCommuterInstallation(state.installation)
       : null,
     subscriptions: state.subscriptions.map(clientCommuteSubscription),
+    providerStatus: state.providerStatus,
   };
 }
 

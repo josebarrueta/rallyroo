@@ -96,9 +96,54 @@ export interface CommuteAlertIntent {
   audience: { kind: "member"; memberID: string } | { kind: "family" };
 }
 
+export type CommuterProviderFeed = "catalog" | "realtime";
+export type CommuterProviderHealth = "unavailable" | "healthy" | "degraded" | "stale";
+
+export interface CommuterProviderFeedObservation {
+  agencyID: "CT";
+  feed: CommuterProviderFeed;
+  lastSuccessAt: string | null;
+  lastAttemptAt: string | null;
+  lastAttemptSucceeded: boolean | null;
+}
+
+export interface CommuterProviderFeedStatus {
+  state: CommuterProviderHealth;
+  lastSuccessAt: string | null;
+  lastAttemptAt: string | null;
+}
+
+export interface CommuterProviderStatus {
+  catalog: CommuterProviderFeedStatus;
+  realtime: CommuterProviderFeedStatus;
+}
+
+export interface CaltrainStop {
+  id: string;
+  stationID: string;
+  stationName: string;
+  direction: "northbound" | "southbound" | "unknown";
+  latitude: number;
+  longitude: number;
+  validFrom: string;
+  validUntil: string;
+}
+
+export interface CaltrainStopsSnapshot {
+  observedAt: string;
+  stops: CaltrainStop[];
+}
+
+export interface CaltrainCatalog {
+  status: CommuterProviderFeedStatus;
+  observedAt: string | null;
+  stops: CaltrainStop[];
+}
+
 export interface CommuterState {
   installation: CommuterInstallation | null;
   subscriptions: CommuteSubscription[];
+  providerStatus: CommuterProviderStatus;
 }
 
 export interface CommuterRepository {
@@ -116,6 +161,18 @@ export interface CommuterRepository {
   removeSubscription(familyID: string, subscriptionID: string): Promise<void>;
   activeSubscriptionsForAgency(agencyID: "CT"): Promise<CommuteSubscription[]>;
   saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]>;
+  providerFeedObservation(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+  ): Promise<CommuterProviderFeedObservation | null>;
+  saveProviderFeedAttempt(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+    attemptedAt: string,
+    succeeded: boolean,
+  ): Promise<void>;
+  replaceCaltrainCatalog(snapshot: CaltrainStopsSnapshot, attemptedAt: string): Promise<void>;
+  caltrainCatalog(): Promise<{ observedAt: string | null; stops: CaltrainStop[] }>;
 }
 
 export type CommuterModuleErrorReason =
@@ -159,13 +216,55 @@ export class CommuterModule {
   }
 
   async state(account: Account): Promise<CommuterState> {
+    const providerStatus = await this.providerStatus(new Date());
     const installation = await this.repository.installation(account.familyID);
-    if (!installation) return { installation: null, subscriptions: [] };
+    if (!installation) return { installation: null, subscriptions: [], providerStatus };
     const subscriptions = (await this.repository.subscriptionsForFamily(account.familyID))
       .filter((subscription) => (
         subscription.visibility === "family" || subscription.ownerMemberID === account.memberID
       ));
-    return { installation, subscriptions };
+    return { installation, subscriptions, providerStatus };
+  }
+
+  async providerStatus(now: Date): Promise<CommuterProviderStatus> {
+    const [catalog, realtime] = await Promise.all([
+      this.repository.providerFeedObservation("CT", "catalog"),
+      this.repository.providerFeedObservation("CT", "realtime"),
+    ]);
+    return {
+      catalog: feedStatus(catalog, now, 48 * 60 * 60 * 1_000),
+      realtime: feedStatus(realtime, now, 3 * 60 * 1_000),
+    };
+  }
+
+  async recordProviderSuccess(feed: CommuterProviderFeed, attemptedAt: Date): Promise<void> {
+    requireValidObservationDate(attemptedAt);
+    await this.repository.saveProviderFeedAttempt("CT", feed, attemptedAt.toISOString(), true);
+  }
+
+  async recordProviderFailure(feed: CommuterProviderFeed, attemptedAt: Date): Promise<void> {
+    requireValidObservationDate(attemptedAt);
+    await this.repository.saveProviderFeedAttempt("CT", feed, attemptedAt.toISOString(), false);
+  }
+
+  async replaceCatalog(snapshot: CaltrainStopsSnapshot, attemptedAt: Date): Promise<void> {
+    requireValidObservationDate(attemptedAt);
+    if (snapshot.stops.length < 1 || snapshot.stops.length > 500) {
+      throw new Error("Invalid Caltrain catalog size");
+    }
+    await this.repository.replaceCaltrainCatalog(snapshot, attemptedAt.toISOString());
+  }
+
+  async catalog(now: Date): Promise<CaltrainCatalog> {
+    const [stored, observation] = await Promise.all([
+      this.repository.caltrainCatalog(),
+      this.repository.providerFeedObservation("CT", "catalog"),
+    ]);
+    return {
+      status: feedStatus(observation, now, 48 * 60 * 60 * 1_000),
+      observedAt: stored.observedAt,
+      stops: stored.stops,
+    };
   }
 
   async createSubscription(
@@ -273,6 +372,34 @@ function validatedSubscriptionDetails(input: NewCommuteSubscription) {
 
 export function parseCommuteSubscriptionDetails(plaintext: string) {
   return subscriptionDetailsSchema.parse(JSON.parse(plaintext));
+}
+
+function feedStatus(
+  observation: CommuterProviderFeedObservation | null,
+  now: Date,
+  staleAfterMilliseconds: number,
+): CommuterProviderFeedStatus {
+  if (!observation?.lastSuccessAt) {
+    return {
+      state: "unavailable",
+      lastSuccessAt: null,
+      lastAttemptAt: observation?.lastAttemptAt ?? null,
+    };
+  }
+  const lastSuccess = new Date(observation.lastSuccessAt).getTime();
+  const stale = !Number.isFinite(lastSuccess)
+    || now.getTime() - lastSuccess > staleAfterMilliseconds;
+  return {
+    state: stale
+      ? "stale"
+      : observation.lastAttemptSucceeded === false ? "degraded" : "healthy",
+    lastSuccessAt: observation.lastSuccessAt,
+    lastAttemptAt: observation.lastAttemptAt,
+  };
+}
+
+function requireValidObservationDate(date: Date): void {
+  if (!Number.isFinite(date.getTime())) throw new Error("Invalid Commuter provider observation date");
 }
 
 function isFresh(condition: TransitCondition, now: Date): boolean {

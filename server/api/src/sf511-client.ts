@@ -42,7 +42,7 @@ export class SF511Client {
   }
 
   async stops(): Promise<Uint8Array> {
-    return this.request("/transit/stops", { operator_id: "CT" });
+    return this.request("/transit/stops", { operator_id: "CT", format: "json" });
   }
 
   private async request(path: string, parameters: Record<string, string>): Promise<Uint8Array> {

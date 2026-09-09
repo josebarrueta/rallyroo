@@ -76,6 +76,10 @@ _Avoid_: Private event, public calendar
 An imported calendar visible under the family's existing permissions.
 _Avoid_: Public calendar
 
+**Caltrain catalog**:
+The bounded, normalized last-good set of public Caltrain stations and directional stops used to configure commute subscriptions. A failed refresh changes Provider status but never replaces the catalog with malformed or empty data.
+_Avoid_: Live departure, commute subscription
+
 **Provider status**:
-The independently reported freshness and availability of Commuter's static catalog and real-time feeds. Provider failure must not silently disable an installation or erase its last-good static catalog.
+The independently reported freshness and availability of Commuter's static catalog and real-time feeds. A recent failed attempt is degraded; an expired last success is stale. Provider failure must not silently disable an installation or erase its last-good static catalog.
 _Avoid_: Installation status, subscription status

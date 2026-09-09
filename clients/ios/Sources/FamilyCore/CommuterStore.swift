@@ -90,13 +90,56 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
     }
 }
 
+public enum CommuterProviderHealth: String, Codable, Sendable {
+    case unavailable
+    case healthy
+    case degraded
+    case stale
+}
+
+public struct CommuterProviderFeedStatus: Codable, Equatable, Sendable {
+    public let state: CommuterProviderHealth
+    public let lastSuccessAt: Date?
+    public let lastAttemptAt: Date?
+}
+
+public struct CommuterProviderStatus: Codable, Equatable, Sendable {
+    public let catalog: CommuterProviderFeedStatus
+    public let realtime: CommuterProviderFeedStatus
+}
+
+public enum CaltrainDirection: String, Codable, Sendable {
+    case northbound
+    case southbound
+    case unknown
+}
+
+public struct CaltrainStop: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let stationID: String
+    public let stationName: String
+    public let direction: CaltrainDirection
+    public let latitude: Double
+    public let longitude: Double
+    public let validFrom: Date
+    public let validUntil: Date
+}
+
+public struct CaltrainCatalog: Codable, Equatable, Sendable {
+    public let status: CommuterProviderFeedStatus
+    public let observedAt: Date?
+    public let stops: [CaltrainStop]
+}
+
 public struct CommuterState: Codable, Equatable, Sendable {
     public let installation: CommuterInstallation?
     public let subscriptions: [CommuteSubscription]
+    public let providerStatus: CommuterProviderStatus
 }
 
 public protocol CommuterStore: Sendable {
     func state() async throws -> CommuterState
+    func catalog() async throws -> CaltrainCatalog
     func enable() async throws -> CommuterInstallation
     func disable() async throws
     func removeModule() async throws

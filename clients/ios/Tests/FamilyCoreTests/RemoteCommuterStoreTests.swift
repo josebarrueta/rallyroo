@@ -22,11 +22,27 @@ final class RemoteCommuterStoreTests: XCTestCase {
             "alertKinds":["delay","cancellation"],
             "minimumDelayMinutes":15,
             "status":"active"
+          }],
+          "providerStatus":{
+            "catalog":{"state":"healthy","lastSuccessAt":"2026-09-09T15:00:00Z","lastAttemptAt":"2026-09-09T15:00:00Z"},
+            "realtime":{"state":"degraded","lastSuccessAt":"2026-09-09T15:00:00Z","lastAttemptAt":"2026-09-09T15:01:00Z"}
+          }
+        }
+        """.utf8)
+        let catalogResponse = Data("""
+        {
+          "status":{"state":"healthy","lastSuccessAt":"2026-09-09T15:00:00Z","lastAttemptAt":"2026-09-09T15:00:00Z"},
+          "observedAt":"2026-09-09T14:59:00Z",
+          "stops":[{
+            "id":"70171","stationID":"palo_alto","stationName":"Palo Alto",
+            "direction":"northbound","latitude":37.443,"longitude":-122.1649,
+            "validFrom":"2026-01-31T08:00:00Z","validUntil":"2027-02-01T07:59:00Z"
           }]
         }
         """.utf8)
         let transport = CommuterRecordingTransport(responses: [
-            HTTPResponse(statusCode: 200, body: response)
+            HTTPResponse(statusCode: 200, body: response),
+            HTTPResponse(statusCode: 200, body: catalogResponse)
         ])
         let store: any CommuterStore = RemoteCommuterStore(
             baseURL: URL(string: "https://api.example.com")!,
@@ -37,10 +53,16 @@ final class RemoteCommuterStoreTests: XCTestCase {
 
         XCTAssertEqual(state.installation?.enabledByMemberID, "parent-1")
         XCTAssertEqual(state.subscriptions.first?.originStopID, "70171")
+        XCTAssertEqual(state.providerStatus.catalog.state, .healthy)
+        XCTAssertEqual(state.providerStatus.realtime.state, .degraded)
+        let catalog = try await store.catalog()
+        XCTAssertEqual(catalog.stops.first?.stationName, "Palo Alto")
         let requests = await transport.recordedRequests()
-        let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.method, .get)
-        XCTAssertEqual(request.url.path, "/v1/modules/commuter")
+        XCTAssertEqual(requests.map(\.method), [.get, .get])
+        XCTAssertEqual(requests.map(\.url.path), [
+            "/v1/modules/commuter",
+            "/v1/modules/commuter/catalog"
+        ])
     }
 
     func testDisablesWithoutRemovingAndExplicitlyRemovesTheModule() async throws {

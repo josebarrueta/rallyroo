@@ -180,6 +180,31 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       [condition],
       new Date("2026-09-09T15:01:00Z"),
     )).toEqual([]);
+    await writer.recordProviderSuccess("catalog", new Date("2026-09-09T15:00:00Z"));
+    await writer.recordProviderSuccess("realtime", new Date("2026-09-09T15:00:00Z"));
+    await reader.recordProviderFailure("realtime", new Date("2026-09-09T15:01:00Z"));
+    expect(await reader.providerStatus(new Date("2026-09-09T15:01:00Z"))).toMatchObject({
+      catalog: { state: "healthy" },
+      realtime: { state: "degraded", lastSuccessAt: "2026-09-09T15:00:00.000Z" },
+    });
+    await writer.replaceCatalog({
+      observedAt: "2026-09-09T14:59:00.000Z",
+      stops: [{
+        id: "70171",
+        stationID: "palo_alto",
+        stationName: "Palo Alto",
+        direction: "northbound",
+        latitude: 37.443,
+        longitude: -122.1649,
+        validFrom: "2026-01-31T08:00:00.000Z",
+        validUntil: "2027-02-01T07:59:00.000Z",
+      }],
+    }, new Date("2026-09-09T15:02:00Z"));
+    expect(await reader.catalog(new Date("2026-09-09T15:02:00Z"))).toMatchObject({
+      status: { state: "healthy" },
+      observedAt: "2026-09-09T14:59:00.000Z",
+      stops: [{ id: "70171", stationName: "Palo Alto" }],
+    });
   });
 
   it("persists an HTTP event across PostgreSQL repository instances", async () => {
@@ -896,6 +921,6 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await data.accountForIdentity("deletion-subject")).toBeNull();
     expect(await data.membersForFamily(account.familyID)).toEqual([]);
     expect(await data.eventsForFamily(account.familyID)).toEqual([]);
-    expect(await commuter.state(account)).toEqual({ installation: null, subscriptions: [] });
+    expect(await commuter.state(account)).toMatchObject({ installation: null, subscriptions: [] });
   });
 });

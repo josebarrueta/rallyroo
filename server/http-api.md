@@ -114,8 +114,10 @@ configured adapter fails or produces invalid output.
 Commuter is a parent-enabled Family capability. A single Family installation owns
 personal and Family-visible commute subscriptions:
 
-- `GET /v1/modules/commuter` returns the installation and only subscriptions visible
-  to the authenticated member.
+- `GET /v1/modules/commuter` returns the installation, independently computed provider
+  health, and only subscriptions visible to the authenticated member.
+- `GET /v1/modules/commuter/catalog` returns the last-good normalized Caltrain stop
+  catalog and its freshness status.
 - `PUT /v1/modules/commuter` enables the module. Parents only.
 - `PATCH /v1/modules/commuter` with `{ "status": "disabled" }` stops provider fan-out
   while preserving configuration. `PUT` enables it again.
@@ -131,7 +133,10 @@ personal and Family-visible commute subscriptions:
 
 The initial typed model is Caltrain-only (`agencyID: "CT"`) and bounds route,
 direction, stop pair, weekday, service-window, alert-kind, and minimum-delay fields.
-Commute details are encrypted per Family in PostgreSQL. Real-time conditions are
+Commute details are encrypted per Family in PostgreSQL. Caltrain's public stop
+catalog is normalized behind the provider adapter, replaced atomically, bounded to
+500 stops, and retained when refresh fails. Catalog and real-time health have
+independent success, attempt, degraded, and stale state. Real-time conditions are
 fanned out once across active subscriptions, must be fresh and route/window-matched,
 and enter an encrypted PostgreSQL outbox idempotently. Provider polling is not activated until Rallyroo has
 an approved production quota and written backend-fan-out confirmation.

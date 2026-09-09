@@ -3,16 +3,27 @@ import Foundation
 public actor RemoteCommuterStore: CommuterStore {
     private let commuterURL: URL
     private let transport: any HTTPTransport
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
 
     public init(baseURL: URL, transport: any HTTPTransport = URLSessionHTTPTransport()) {
         commuterURL = baseURL.appending(path: "v1/modules/commuter")
         self.transport = transport
+        encoder = JSONEncoder()
+        decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
     }
 
     public func state() async throws -> CommuterState {
         try await sendAndDecode(HTTPRequest(method: .get, url: commuterURL))
+    }
+
+    public func catalog() async throws -> CaltrainCatalog {
+        try await sendAndDecode(HTTPRequest(
+            method: .get,
+            url: commuterURL.appending(path: "catalog")
+        ))
     }
 
     public func enable() async throws -> CommuterInstallation {

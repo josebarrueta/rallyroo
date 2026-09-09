@@ -30,7 +30,11 @@ import type {
 } from "./calendar-source-module.js";
 import { parseCommuteSubscriptionDetails } from "./commuter-module.js";
 import type {
+  CaltrainStop,
+  CaltrainStopsSnapshot,
   CommuterInstallation,
+  CommuterProviderFeed,
+  CommuterProviderFeedObservation,
   CommuterRepository,
   CommuteAlertIntent,
   CommuteSubscription,
@@ -575,6 +579,136 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       result.rows.map((row) => this.commuteSubscriptionFromRow(row)),
     );
     return subscriptions.filter((item) => item.agencyID === agencyID);
+  }
+
+  async providerFeedObservation(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+  ): Promise<CommuterProviderFeedObservation | null> {
+    const result = await this.pool.query<CommuterProviderFeedRow>(
+      `SELECT agency_id, feed, last_success_at, last_attempt_at, last_attempt_succeeded
+       FROM commuter_provider_feeds WHERE agency_id = $1 AND feed = $2`,
+      [agencyID, feed],
+    );
+    const row = result.rows[0];
+    return row ? {
+      agencyID: row.agency_id,
+      feed: row.feed,
+      lastSuccessAt: row.last_success_at ? asISOString(row.last_success_at) : null,
+      lastAttemptAt: row.last_attempt_at ? asISOString(row.last_attempt_at) : null,
+      lastAttemptSucceeded: row.last_attempt_succeeded,
+    } : null;
+  }
+
+  async saveProviderFeedAttempt(
+    agencyID: "CT",
+    feed: CommuterProviderFeed,
+    attemptedAt: string,
+    succeeded: boolean,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO commuter_provider_feeds
+         (agency_id, feed, last_success_at, last_attempt_at, last_attempt_succeeded)
+       VALUES ($1, $2, CASE WHEN $4 THEN $3::timestamptz ELSE NULL END, $3, $4)
+       ON CONFLICT (agency_id, feed) DO UPDATE SET
+         last_success_at = CASE WHEN EXCLUDED.last_attempt_succeeded
+           THEN EXCLUDED.last_attempt_at
+           ELSE commuter_provider_feeds.last_success_at END,
+         last_attempt_at = EXCLUDED.last_attempt_at,
+         last_attempt_succeeded = EXCLUDED.last_attempt_succeeded
+       WHERE commuter_provider_feeds.last_attempt_at IS NULL
+          OR EXCLUDED.last_attempt_at >= commuter_provider_feeds.last_attempt_at`,
+      [agencyID, feed, attemptedAt, succeeded],
+    );
+  }
+
+  async replaceCaltrainCatalog(
+    snapshot: CaltrainStopsSnapshot,
+    attemptedAt: string,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('commuter:CT:catalog', 0))",
+      );
+      const prior = await client.query<{ last_attempt_at: Date | string | null }>(
+        `SELECT last_attempt_at FROM commuter_provider_feeds
+         WHERE agency_id = 'CT' AND feed = 'catalog' FOR UPDATE`,
+      );
+      const priorAttempt = prior.rows[0]?.last_attempt_at;
+      if (priorAttempt && new Date(priorAttempt) > new Date(attemptedAt)) {
+        await client.query("ROLLBACK");
+        return;
+      }
+      await client.query(
+        `INSERT INTO commuter_caltrain_catalog (agency_id, observed_at)
+         VALUES ('CT', $1)
+         ON CONFLICT (agency_id) DO UPDATE SET observed_at = EXCLUDED.observed_at`,
+        [snapshot.observedAt],
+      );
+      await client.query("DELETE FROM commuter_caltrain_stops WHERE agency_id = 'CT'");
+      for (const stop of snapshot.stops) {
+        await client.query(
+          `INSERT INTO commuter_caltrain_stops
+             (id, agency_id, station_id, station_name, direction, latitude, longitude,
+              valid_from, valid_until)
+           VALUES ($1, 'CT', $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            stop.id, stop.stationID, stop.stationName, stop.direction,
+            stop.latitude, stop.longitude, stop.validFrom, stop.validUntil,
+          ],
+        );
+      }
+      await client.query(
+        `INSERT INTO commuter_provider_feeds
+           (agency_id, feed, last_success_at, last_attempt_at, last_attempt_succeeded)
+         VALUES ('CT', 'catalog', $1, $1, true)
+         ON CONFLICT (agency_id, feed) DO UPDATE SET
+           last_success_at = EXCLUDED.last_success_at,
+           last_attempt_at = EXCLUDED.last_attempt_at,
+           last_attempt_succeeded = true
+         WHERE commuter_provider_feeds.last_attempt_at IS NULL
+            OR EXCLUDED.last_attempt_at >= commuter_provider_feeds.last_attempt_at`,
+        [attemptedAt],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async caltrainCatalog(): Promise<{ observedAt: string | null; stops: CaltrainStop[] }> {
+    const [catalog, stops] = await Promise.all([
+      this.pool.query<{ observed_at: Date | string }>(
+        "SELECT observed_at FROM commuter_caltrain_catalog WHERE agency_id = 'CT'",
+      ),
+      this.pool.query<CaltrainStopRow>(
+        `SELECT id, station_id, station_name, direction, latitude, longitude,
+                valid_from, valid_until
+         FROM commuter_caltrain_stops
+         WHERE agency_id = 'CT'
+         ORDER BY station_name, direction, id
+         LIMIT 501`,
+      ),
+    ]);
+    if (stops.rows.length > 500) throw new Error("Caltrain catalog size limit exceeded");
+    return {
+      observedAt: catalog.rows[0] ? asISOString(catalog.rows[0].observed_at) : null,
+      stops: stops.rows.map((row) => ({
+        id: row.id,
+        stationID: row.station_id,
+        stationName: row.station_name,
+        direction: row.direction,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        validFrom: asISOString(row.valid_from),
+        validUntil: asISOString(row.valid_until),
+      })),
+    };
   }
 
   async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {
@@ -1970,6 +2104,25 @@ interface CommuterInstallationRow {
   family_id: string;
   enabled_by_member_id: string;
   status: CommuterInstallation["status"];
+}
+
+interface CaltrainStopRow {
+  id: string;
+  station_id: string;
+  station_name: string;
+  direction: CaltrainStop["direction"];
+  latitude: number;
+  longitude: number;
+  valid_from: Date | string;
+  valid_until: Date | string;
+}
+
+interface CommuterProviderFeedRow {
+  agency_id: "CT";
+  feed: CommuterProviderFeed;
+  last_success_at: Date | string | null;
+  last_attempt_at: Date | string | null;
+  last_attempt_succeeded: boolean | null;
 }
 
 interface CommuterSubscriptionRow {
