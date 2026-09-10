@@ -72,9 +72,11 @@ struct CommuterSettingsView: View {
             Text("All commute alerts will be deleted. Events created from commute plans are not affected.")
         }
         .sheet(isPresented: $isAddingSubscription) {
-            AddCommuteSubscriptionView(stops: model.catalog?.stops ?? []) { draft in
-                await model.createSubscription(draft)
-            }
+            AddCommuteSubscriptionView(
+                stops: model.catalog?.stops ?? [],
+                onSearch: { search in await model.searchJourneys(search) },
+                onSave: { draft in await model.createSubscription(draft) }
+            )
         }
     }
 
@@ -190,6 +192,11 @@ struct CommuterSettingsView: View {
             Text(subscriptionSummary(subscription))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            if subscription.scheduleAvailability == .needsReselection {
+                Label("Schedule changed — delete and choose this train again", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             Label(
                 subscription.visibility == .personal ? "Personal" : "Shared with Family",
                 systemImage: subscription.visibility == .personal ? "person.fill" : "person.2.fill"
@@ -222,7 +229,13 @@ struct CommuterSettingsView: View {
     private func subscriptionSummary(_ subscription: CommuteSubscription) -> String {
         let direction = subscription.directionID == CaltrainDirection.northbound.rawValue
             ? "Northbound" : "Southbound"
-        let window = "\(formatMinutes(subscription.windowStartMinutes))–\(formatMinutes(subscription.windowEndMinutes))"
+        let window: String
+        if let departure = subscription.scheduledDepartureMinutes,
+           let arrival = subscription.scheduledArrivalMinutes {
+            window = "\(formatMinutes(departure)) → \(formatMinutes(arrival))"
+        } else {
+            window = "\(formatMinutes(subscription.windowStartMinutes))–\(formatMinutes(subscription.windowEndMinutes))"
+        }
         let weekdays = subscription.serviceWeekdays.map(shortWeekday).joined(separator: ", ")
         let kinds = subscription.alertKinds.map { $0 == .delay ? "delays" : "cancellations" }
             .joined(separator: " + ")
@@ -235,19 +248,16 @@ struct CommuterSettingsView: View {
 
 private struct AddCommuteSubscriptionView: View {
     let stops: [CaltrainStop]
+    let onSearch: (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?
     let onSave: (CommuteSubscriptionDraft) async -> Bool
 
     @Environment(\.dismiss) private var dismiss
-    @State private var direction = CaltrainDirection.northbound
-    @State private var originStopID = ""
-    @State private var destinationStopID = ""
-    @State private var selectedWeekdays = Set(1...5)
-    @State private var windowStart = Self.date(hour: 7, minute: 30)
-    @State private var windowEnd = Self.date(hour: 9, minute: 0)
+    @StateObject private var selection = CommuterScheduleSelection()
     @State private var visibility = CommuteSubscriptionVisibility.personal
     @State private var alertDelays = true
     @State private var alertCancellations = true
     @State private var minimumDelayMinutes = 15
+    @State private var isSearching = false
     @State private var isSaving = false
     @State private var saveFailed = false
 
@@ -255,37 +265,88 @@ private struct AddCommuteSubscriptionView: View {
         NavigationStack {
             Form {
                 Section("Trip") {
-                    Picker("Direction", selection: $direction) {
-                        Text("Northbound").tag(CaltrainDirection.northbound)
-                        Text("Southbound").tag(CaltrainDirection.southbound)
-                    }
-                    Picker("From", selection: $originStopID) {
+                    Picker("From", selection: originBinding) {
                         Text("Select a station").tag("")
-                        ForEach(directionalStops) { stop in
-                            Text(stop.stationName).tag(stop.id)
+                        ForEach(stationStops) { stop in
+                            Text(stop.stationName).tag(stop.stationID)
                         }
                     }
-                    Picker("To", selection: $destinationStopID) {
+                    Picker("To", selection: destinationBinding) {
                         Text("Select a station").tag("")
-                        ForEach(directionalStops) { stop in
-                            Text(stop.stationName).tag(stop.id)
+                        ForEach(destinationStops) { stop in
+                            Text(stop.stationName).tag(stop.stationID)
                         }
                     }
-                    if hasInvalidTravelDirection {
-                        Text("Choose a destination in the selected direction of travel.")
+                    .disabled(selection.originStationID == nil)
+                }
+
+                Section("Schedule days") {
+                    Picker("Schedule", selection: dayGroupBinding) {
+                        Text("Choose").tag(Optional<CommuteScheduleDayGroup>.none)
+                        Text("Weekdays").tag(Optional(CommuteScheduleDayGroup.weekdays))
+                        Text("Weekends").tag(Optional(CommuteScheduleDayGroup.weekends))
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(selection.originStationID == nil || selection.destinationStationID == nil)
+
+                    if selection.dayGroup != nil {
+                        weekdayPicker
+                        Text(selection.dayGroup == .weekdays
+                             ? "Choose your commute days from Monday through Friday."
+                             : "Choose Saturday, Sunday, or both.")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
-                Section("Days and time") {
-                    weekdayPicker
-                    DatePicker("Start", selection: $windowStart, displayedComponents: .hourAndMinute)
-                    DatePicker("End", selection: $windowEnd, displayedComponents: .hourAndMinute)
-                    if windowStartMinutes >= windowEndMinutes {
-                        Text("End must be after start.")
+                Section("Scheduled train") {
+                    if isSearching {
+                        HStack {
+                            ProgressView()
+                            Text("Loading available trains…")
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if selection.searchRequest == nil {
+                        Text("Choose From, To, a schedule, and at least one commute day.")
+                            .foregroundStyle(.secondary)
+                    } else if selection.journeyOptions.isEmpty {
+                        Text("No train runs at the same scheduled time on every selected day.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(selection.journeyOptions) { option in
+                            Button {
+                                selection.selectJourney(option)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(formatMinutes(option.departureMinutes))
+                                            .font(.headline)
+                                        Text("Arrives \(formatMinutes(option.arrivalMinutes))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if selection.selectedJourney?.id == option.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(AppTheme.purple)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(
+                                "Departs \(formatMinutes(option.departureMinutes)), arrives \(formatMinutes(option.arrivalMinutes))"
+                            )
+                        }
+                    }
+                    if let health = selection.scheduleStatus?.state,
+                       health == .degraded || health == .stale {
+                        Label("Showing the last available Caltrain schedule.", systemImage: "clock.badge.exclamationmark")
                             .font(.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.orange)
+                    }
+                    if let selected = selection.selectedJourney {
+                        LabeledContent("Departure", value: formatMinutes(selected.departureMinutes))
+                        LabeledContent("Arrival", value: formatMinutes(selected.arrivalMinutes))
                     }
                 }
 
@@ -328,10 +389,6 @@ private struct AddCommuteSubscriptionView: View {
             }
             .navigationTitle("Add commute alert")
             .navigationBarTitleDisplayMode(.inline)
-            .onChange(of: direction) { _ in
-                originStopID = ""
-                destinationStopID = ""
-            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -344,20 +401,48 @@ private struct AddCommuteSubscriptionView: View {
         }
     }
 
+    private var originBinding: Binding<String> {
+        Binding(
+            get: { selection.originStationID ?? "" },
+            set: { value in
+                selection.selectOrigin(value.isEmpty ? nil : value)
+                refreshJourneys()
+            }
+        )
+    }
+
+    private var destinationBinding: Binding<String> {
+        Binding(
+            get: { selection.destinationStationID ?? "" },
+            set: { value in
+                selection.selectDestination(value.isEmpty ? nil : value)
+                refreshJourneys()
+            }
+        )
+    }
+
+    private var dayGroupBinding: Binding<CommuteScheduleDayGroup?> {
+        Binding(
+            get: { selection.dayGroup },
+            set: { value in
+                guard let value else { return }
+                selection.selectDayGroup(value)
+                refreshJourneys()
+            }
+        )
+    }
+
     private var weekdayPicker: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7), spacing: 4) {
-            ForEach(1...7, id: \.self) { weekday in
-                let isSelected = selectedWeekdays.contains(weekday)
+        HStack(spacing: 8) {
+            ForEach(selection.availableWeekdays, id: \.self) { weekday in
+                let isSelected = selection.selectedWeekdays.contains(weekday)
                 Button {
-                    if isSelected {
-                        selectedWeekdays.remove(weekday)
-                    } else {
-                        selectedWeekdays.insert(weekday)
-                    }
+                    selection.toggleWeekday(weekday)
+                    refreshJourneys()
                 } label: {
                     Text(compactWeekday(weekday))
                         .font(.caption.bold())
-                        .frame(maxWidth: .infinity, minHeight: 30)
+                        .frame(maxWidth: .infinity, minHeight: 34)
                         .foregroundStyle(isSelected ? .white : .primary)
                         .background(
                             isSelected ? AppTheme.purple : Color.secondary.opacity(0.15),
@@ -371,58 +456,46 @@ private struct AddCommuteSubscriptionView: View {
         }
     }
 
-    private var directionalStops: [CaltrainStop] {
-        stops.filter { $0.direction == direction }
+    private var stationStops: [CaltrainStop] {
+        var seen = Set<String>()
+        return stops
             .sorted { $0.stationName.localizedCaseInsensitiveCompare($1.stationName) == .orderedAscending }
+            .filter { seen.insert($0.stationID).inserted }
     }
 
-    private var originStop: CaltrainStop? {
-        directionalStops.first { $0.id == originStopID }
-    }
-
-    private var destinationStop: CaltrainStop? {
-        directionalStops.first { $0.id == destinationStopID }
-    }
-
-    private var hasInvalidTravelDirection: Bool {
-        guard let originStop, let destinationStop else { return false }
-        switch direction {
-        case .northbound: return destinationStop.latitude <= originStop.latitude
-        case .southbound: return destinationStop.latitude >= originStop.latitude
-        case .unknown: return true
-        }
+    private var destinationStops: [CaltrainStop] {
+        stationStops.filter { $0.stationID != selection.originStationID }
     }
 
     private var canSave: Bool {
-        !originStopID.isEmpty
-            && !destinationStopID.isEmpty
-            && originStopID != destinationStopID
-            && !hasInvalidTravelDirection
-            && !selectedWeekdays.isEmpty
-            && windowStartMinutes < windowEndMinutes
-            && (alertDelays || alertCancellations)
+        selection.selectedJourney != nil && (alertDelays || alertCancellations)
     }
 
-    private var windowStartMinutes: Int { minutesSinceMidnight(windowStart) }
-    private var windowEndMinutes: Int { minutesSinceMidnight(windowEnd) }
+    private func refreshJourneys() {
+        guard let intent = selection.searchIntent else {
+            isSearching = false
+            return
+        }
+        isSearching = true
+        Task {
+            let result = await onSearch(intent.request)
+            guard intent == selection.searchIntent else { return }
+            if let result {
+                selection.applySearchResult(result, for: intent)
+            }
+            isSearching = false
+        }
+    }
 
     private func save() {
-        guard canSave else { return }
         var kinds: [CommuteAlertKind] = []
         if alertDelays { kinds.append(.delay) }
         if alertCancellations { kinds.append(.cancellation) }
-        let draft = CommuteSubscriptionDraft(
+        guard let draft = selection.subscriptionDraft(
             visibility: visibility,
-            routeID: "*",
-            directionID: direction.rawValue,
-            originStopID: originStopID,
-            destinationStopID: destinationStopID,
-            serviceWeekdays: selectedWeekdays.sorted(),
-            windowStartMinutes: windowStartMinutes,
-            windowEndMinutes: windowEndMinutes,
             alertKinds: kinds,
             minimumDelayMinutes: minimumDelayMinutes
-        )
+        ) else { return }
         isSaving = true
         saveFailed = false
         Task {
@@ -435,12 +508,7 @@ private struct AddCommuteSubscriptionView: View {
             }
         }
     }
-
-    private static func date(hour: Int, minute: Int) -> Date {
-        Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: .now) ?? .now
-    }
 }
-
 private func minutesSinceMidnight(_ date: Date) -> Int {
     let components = Calendar.current.dateComponents([.hour, .minute], from: date)
     return (components.hour ?? 0) * 60 + (components.minute ?? 0)

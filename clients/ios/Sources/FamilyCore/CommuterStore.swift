@@ -19,6 +19,11 @@ public enum CommuteSubscriptionStatus: String, Codable, Sendable {
     case paused
 }
 
+public enum CommuteScheduleAvailability: String, Codable, Sendable {
+    case available
+    case needsReselection = "needs_reselection"
+}
+
 public enum CommuteAlertKind: String, Codable, Sendable {
     case delay
     case cancellation
@@ -49,6 +54,11 @@ public struct CommuteSubscription: Codable, Equatable, Identifiable, Sendable {
     public let alertKinds: [CommuteAlertKind]
     public let minimumDelayMinutes: Int
     public let status: CommuteSubscriptionStatus
+    public let scheduleOptionID: String?
+    public let scheduledDepartureMinutes: Int?
+    public let scheduledArrivalMinutes: Int?
+    public let scheduleVersion: String?
+    public let scheduleAvailability: CommuteScheduleAvailability?
 }
 
 public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
@@ -63,6 +73,10 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
     public let windowEndMinutes: Int
     public let alertKinds: [CommuteAlertKind]
     public let minimumDelayMinutes: Int
+    public let scheduleOptionID: String?
+    public let scheduledDepartureMinutes: Int?
+    public let scheduledArrivalMinutes: Int?
+    public let scheduleVersion: String?
 
     public init(
         visibility: CommuteSubscriptionVisibility,
@@ -74,7 +88,11 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
         windowStartMinutes: Int,
         windowEndMinutes: Int,
         alertKinds: [CommuteAlertKind],
-        minimumDelayMinutes: Int
+        minimumDelayMinutes: Int,
+        scheduleOptionID: String? = nil,
+        scheduledDepartureMinutes: Int? = nil,
+        scheduledArrivalMinutes: Int? = nil,
+        scheduleVersion: String? = nil
     ) {
         self.visibility = visibility
         agencyID = .caltrain
@@ -87,6 +105,10 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
         self.windowEndMinutes = windowEndMinutes
         self.alertKinds = alertKinds
         self.minimumDelayMinutes = minimumDelayMinutes
+        self.scheduleOptionID = scheduleOptionID
+        self.scheduledDepartureMinutes = scheduledDepartureMinutes
+        self.scheduledArrivalMinutes = scheduledArrivalMinutes
+        self.scheduleVersion = scheduleVersion
     }
 }
 
@@ -131,6 +153,54 @@ public struct CaltrainCatalog: Codable, Equatable, Sendable {
     public let stops: [CaltrainStop]
 }
 
+public struct CaltrainJourneySearch: Codable, Equatable, Sendable {
+    public let originStationID: String
+    public let destinationStationID: String
+    public let serviceWeekdays: [Int]
+
+    public init(originStationID: String, destinationStationID: String, serviceWeekdays: [Int]) {
+        self.originStationID = originStationID
+        self.destinationStationID = destinationStationID
+        self.serviceWeekdays = serviceWeekdays
+    }
+}
+
+public struct CaltrainJourneyOption: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let directionID: String
+    public let originStopID: String
+    public let destinationStopID: String
+    public let departureMinutes: Int
+    public let arrivalMinutes: Int
+    public let operatingWeekdays: [Int]
+
+    public init(
+        id: String,
+        directionID: String,
+        originStopID: String,
+        destinationStopID: String,
+        departureMinutes: Int,
+        arrivalMinutes: Int,
+        operatingWeekdays: [Int]
+    ) {
+        self.id = id
+        self.directionID = directionID
+        self.originStopID = originStopID
+        self.destinationStopID = destinationStopID
+        self.departureMinutes = departureMinutes
+        self.arrivalMinutes = arrivalMinutes
+        self.operatingWeekdays = operatingWeekdays
+    }
+}
+
+public struct CaltrainJourneySearchResult: Codable, Equatable, Sendable {
+    public let scheduleVersion: String
+    public let observedAt: Date
+    public let validUntil: String
+    public let status: CommuterProviderFeedStatus
+    public let options: [CaltrainJourneyOption]
+}
+
 public struct CommuterState: Codable, Equatable, Sendable {
     public let installation: CommuterInstallation?
     public let subscriptions: [CommuteSubscription]
@@ -140,6 +210,7 @@ public struct CommuterState: Codable, Equatable, Sendable {
 public protocol CommuterStore: Sendable {
     func state() async throws -> CommuterState
     func catalog() async throws -> CaltrainCatalog
+    func searchJourneys(_ search: CaltrainJourneySearch) async throws -> CaltrainJourneySearchResult
     func enable() async throws -> CommuterInstallation
     func disable() async throws
     func removeModule() async throws

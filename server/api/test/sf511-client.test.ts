@@ -18,8 +18,9 @@ describe("SF511Client", () => {
     await expect(client.tripUpdates()).resolves.toEqual(new Uint8Array([1, 2, 3]));
     await expect(client.serviceAlerts()).resolves.toEqual(new Uint8Array([1, 2, 3]));
     await expect(client.stops()).resolves.toEqual(new Uint8Array([1, 2, 3]));
+    await expect(client.staticSchedule()).resolves.toEqual(new Uint8Array([1, 2, 3]));
 
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(4);
     const [tripURL, tripOptions] = requests[0]!;
     expect(tripURL).toBeInstanceOf(URL);
     expect(tripURL.origin).toBe("https://api.511.org");
@@ -34,6 +35,9 @@ describe("SF511Client", () => {
     expect(stopsURL.pathname).toBe("/transit/stops");
     expect(stopsURL.searchParams.get("operator_id")).toBe("CT");
     expect(stopsURL.searchParams.get("format")).toBe("json");
+    const [scheduleURL] = requests[3]!;
+    expect(scheduleURL.pathname).toBe("/transit/datafeeds");
+    expect(scheduleURL.searchParams.get("operator_id")).toBe("CT");
   });
 
   it("bounds response bodies and never includes credentialed URLs in errors", async () => {

@@ -26,6 +26,17 @@ public actor RemoteCommuterStore: CommuterStore {
         ))
     }
 
+    public func searchJourneys(
+        _ search: CaltrainJourneySearch
+    ) async throws -> CaltrainJourneySearchResult {
+        try await sendAndDecode(HTTPRequest(
+            method: .post,
+            url: commuterURL.appending(path: "journeys").appending(path: "search"),
+            headers: ["Content-Type": "application/json"],
+            body: try encoder.encode(search)
+        ))
+    }
+
     public func enable() async throws -> CommuterInstallation {
         try await sendAndDecode(HTTPRequest(method: .put, url: commuterURL))
     }

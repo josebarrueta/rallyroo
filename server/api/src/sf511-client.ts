@@ -46,6 +46,10 @@ export class SF511Client {
     return this.request("/transit/stops", { operator_id: "CT", format: "json" });
   }
 
+  async staticSchedule(): Promise<Uint8Array> {
+    return this.request("/transit/datafeeds", { operator_id: "CT" });
+  }
+
   private async request(path: string, parameters: Record<string, string>): Promise<Uint8Array> {
     const url = new URL(path, providerOrigin);
     for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
@@ -58,7 +62,7 @@ export class SF511Client {
         redirect: "error",
         signal: abort.signal,
         headers: {
-          accept: "application/x-protobuf, application/octet-stream, application/json;q=0.5",
+          accept: "application/zip, application/x-protobuf, application/octet-stream, application/json;q=0.5",
           "accept-encoding": "gzip, deflate",
           "user-agent": "Rallyroo-Commuter/1.0",
         },

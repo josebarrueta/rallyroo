@@ -71,6 +71,19 @@ public final class CommuterSettingsModel: ObservableObject {
         }
     }
 
+    public func searchJourneys(
+        _ search: CaltrainJourneySearch
+    ) async -> CaltrainJourneySearchResult? {
+        do {
+            let result = try await store.searchJourneys(search)
+            errorMessage = nil
+            return result
+        } catch {
+            errorMessage = "Train schedules could not be loaded."
+            return nil
+        }
+    }
+
     @discardableResult
     public func createSubscription(_ draft: CommuteSubscriptionDraft) async -> Bool {
         guard beginMutation() else { return false }

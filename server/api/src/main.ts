@@ -3,7 +3,7 @@ import { APNSPushNotificationProvider } from "./apns-push-notification-provider.
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
-import { CaltrainCatalogRefresher } from "./caltrain-catalog-refresher.js";
+import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
 import { CommuterAlertDispatcher } from "./commuter-alert-dispatcher.js";
@@ -195,7 +195,7 @@ const caltrainPollingAbort = new AbortController();
 let caltrainPollingTask: Promise<void> | undefined;
 if (caltrainPolling.enabled && sf511APIKey) {
   const client = new SF511Client(sf511APIKey);
-  const catalogRefresher = new CaltrainCatalogRefresher(client, commuter);
+  const catalogRefresher = new CaltrainScheduleRefresher(client, commuter);
   const commutePoller = new CaltrainCommutePoller(client, commuter);
   let nextCatalogRefreshAtMilliseconds: number | undefined;
   const scheduler = new CaltrainPollingScheduler({
@@ -203,9 +203,9 @@ if (caltrainPolling.enabled && sf511APIKey) {
     maximumBackoffMilliseconds: caltrainPolling.maximumBackoffMilliseconds,
     poll: async (attemptedAt) => {
       if (nextCatalogRefreshAtMilliseconds === undefined) {
-        const observedAt = (await commuter.catalog(attemptedAt)).observedAt;
-        nextCatalogRefreshAtMilliseconds = observedAt
-          ? new Date(observedAt).getTime() + 24 * 60 * 60 * 1_000
+        const schedule = await commuter.providerSchedule();
+        nextCatalogRefreshAtMilliseconds = schedule
+          ? new Date(schedule.observedAt).getTime() + 24 * 60 * 60 * 1_000
           : 0;
       }
       const catalogIsDue = attemptedAt.getTime() >= nextCatalogRefreshAtMilliseconds;
@@ -222,6 +222,9 @@ if (caltrainPolling.enabled && sf511APIKey) {
         metrics.observeProvider(operation.name, "success", (performance.now() - startedAt) / 1_000);
       } catch (error) {
         metrics.observeProvider(operation.name, "failure", (performance.now() - startedAt) / 1_000);
+        if (catalogIsDue && !await commuter.providerSchedule()) {
+          nextCatalogRefreshAtMilliseconds = attemptedAt.getTime() + 60 * 60 * 1_000;
+        }
         throw error;
       }
     },

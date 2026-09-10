@@ -116,8 +116,13 @@ personal and Family-visible commute subscriptions:
 
 - `GET /v1/modules/commuter` returns the installation, independently computed provider
   health, and only subscriptions visible to the authenticated member.
-- `GET /v1/modules/commuter/catalog` returns the last-good normalized Caltrain stop
-  catalog and its freshness status.
+- `GET /v1/modules/commuter/catalog` returns the stations from the last-good normalized
+  Caltrain static schedule and its freshness status.
+- `POST /v1/modules/commuter/journeys/search` accepts an origin station, destination
+  station, and either weekday-only or weekend-only day selection. It returns at most
+  500 scheduled trains that operate at the same departure and arrival times on every
+  selected day. Parents only; commute selections remain in the request body rather
+  than query strings.
 - `PUT /v1/modules/commuter` enables the module. Parents only.
 - `PATCH /v1/modules/commuter` with `{ "status": "disabled" }` stops provider fan-out
   while preserving configuration. `PUT` enables it again.
@@ -131,21 +136,27 @@ personal and Family-visible commute subscriptions:
   owner-only.
 - `DELETE /v1/modules/commuter/subscriptions/{id}` follows the same ownership rules.
 
-The initial typed model is Caltrain-only (`agencyID: "CT"`) and bounds route,
-direction, stop pair, weekday, service-window, alert-kind, and minimum-delay fields.
-Commute details are encrypted per Family in PostgreSQL. Caltrain's public stop
-catalog is normalized behind the provider adapter, replaced atomically, bounded to
-500 stops, and retained when refresh fails. Catalog and real-time health have
-independent success, attempt, degraded, and stale state. Trip Updates and Service Alerts are fetched once per Caltrain polling cycle, decoded
+The initial typed model is Caltrain-only (`agencyID: "CT"`). New subscriptions bind
+an opaque static-schedule option, selected weekdays, immutable origin departure and
+destination arrival, alert kinds, and minimum delay. The server revalidates the
+schedule version and option before saving. Legacy service-window subscriptions remain
+readable and continue matching without silent conversion. Commute details are
+encrypted per Family in PostgreSQL.
+
+Caltrain's bounded static GTFS schedule is refreshed every 24 hours, normalized behind
+the provider adapter, and atomically replaces both the schedule and station catalog.
+Malformed, empty, expired, or out-of-order snapshots cannot replace the last-good
+schedule. A failed refresh retains that schedule and reports degraded or stale health.
+Catalog and real-time health remain independent. Trip Updates and Service Alerts are fetched once per Caltrain polling cycle, decoded
 with bounded GTFS-Realtime schemas, rejected when stale, and normalized without
 requiring optional Trip Update `start_date` values. Real-time conditions are fanned
-out across active subscriptions, must be fresh and route/window-matched, and enter
+out across active subscriptions, must be fresh, and match a scheduled subscription at
+its selected origin stop (legacy subscriptions remain route/window-matched). Matches enter
 an encrypted PostgreSQL outbox idempotently. The notification dispatcher recovers
 stale claims, targets personal alerts only to the owning member and Family alerts to
 Family devices, uses privacy-safe generic copy, times out stalled APNs requests, and
 retries with bounded exponential backoff. Alerts with no registered devices complete
-without an APNs call. Provider polling is not activated until Rallyroo has an approved
-production quota and written backend-fan-out confirmation.
+without an APNs call. Shared production polling uses the approved quota-aware profile.
 
 Live transit data never automatically creates Events or Reminders.
 

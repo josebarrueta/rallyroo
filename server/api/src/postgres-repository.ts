@@ -33,6 +33,10 @@ import type {
   ImportedCalendarEvent,
 } from "./calendar-source-module.js";
 import { parseCommuteSubscriptionDetails } from "./commuter-module.js";
+import {
+  parseStoredCaltrainStaticSchedule,
+  type CaltrainStaticScheduleSnapshot,
+} from "./caltrain-static-schedule.js";
 import type {
   CaltrainStop,
   CaltrainStopsSnapshot,
@@ -387,6 +391,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         windowEndMinutes: subscription.windowEndMinutes,
         alertKinds: subscription.alertKinds,
         minimumDelayMinutes: subscription.minimumDelayMinutes,
+        scheduleOptionID: subscription.scheduleOptionID ?? null,
+        scheduledDepartureMinutes: subscription.scheduledDepartureMinutes ?? null,
+        scheduledArrivalMinutes: subscription.scheduledArrivalMinutes ?? null,
+        scheduleVersion: subscription.scheduleVersion ?? null,
       }),
     );
   }
@@ -400,6 +408,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       row.details_ciphertext,
     );
     const details = parseCommuteSubscriptionDetails(plaintext);
+    const parsed = details as any;
     return {
       id: row.id,
       familyID: row.family_id,
@@ -407,6 +416,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       visibility: row.visibility,
       status: row.status,
       ...details,
+      scheduleOptionID: parsed.scheduleOptionID ?? null,
+      scheduledDepartureMinutes: parsed.scheduledDepartureMinutes ?? null,
+      scheduledArrivalMinutes: parsed.scheduledArrivalMinutes ?? null,
+      scheduleVersion: parsed.scheduleVersion ?? null,
     };
   }
 
@@ -713,6 +726,92 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         validUntil: asISOString(row.valid_until),
       })),
     };
+  }
+
+  async replaceCaltrainSchedule(
+    snapshot: CaltrainStaticScheduleSnapshot,
+    attemptedAt: string,
+  ): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('commuter:CT:catalog', 0))",
+      );
+      const prior = await client.query<{ last_attempt_at: Date | string | null }>(
+        `SELECT last_attempt_at FROM commuter_provider_feeds
+         WHERE agency_id = 'CT' AND feed = 'catalog' FOR UPDATE`,
+      );
+      const priorAttempt = prior.rows[0]?.last_attempt_at;
+      if (priorAttempt && new Date(priorAttempt) > new Date(attemptedAt)) {
+        await client.query("ROLLBACK");
+        return;
+      }
+      await client.query(
+        `INSERT INTO commuter_caltrain_schedule
+           (agency_id, version, observed_at, valid_from, valid_until, time_zone, schedule)
+         VALUES ('CT', $1, $2, $3, $4, $5, $6)
+         ON CONFLICT (agency_id) DO UPDATE SET
+           version = EXCLUDED.version,
+           observed_at = EXCLUDED.observed_at,
+           valid_from = EXCLUDED.valid_from,
+           valid_until = EXCLUDED.valid_until,
+           time_zone = EXCLUDED.time_zone,
+           schedule = EXCLUDED.schedule`,
+        [
+          snapshot.version,
+          snapshot.observedAt,
+          snapshot.validFrom,
+          snapshot.validUntil,
+          snapshot.timeZone,
+          snapshot,
+        ],
+      );
+      await client.query(
+        `INSERT INTO commuter_caltrain_catalog (agency_id, observed_at)
+         VALUES ('CT', $1)
+         ON CONFLICT (agency_id) DO UPDATE SET observed_at = EXCLUDED.observed_at`,
+        [snapshot.observedAt],
+      );
+      await client.query("DELETE FROM commuter_caltrain_stops WHERE agency_id = 'CT'");
+      for (const stop of snapshot.stops) {
+        await client.query(
+          `INSERT INTO commuter_caltrain_stops
+             (id, agency_id, station_id, station_name, direction, latitude, longitude,
+              valid_from, valid_until)
+           VALUES ($1, 'CT', $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            stop.id, stop.stationID, stop.stationName, stop.direction,
+            stop.latitude, stop.longitude, stop.validFrom, stop.validUntil,
+          ],
+        );
+      }
+      await client.query(
+        `INSERT INTO commuter_provider_feeds
+           (agency_id, feed, last_success_at, last_attempt_at, last_attempt_succeeded)
+         VALUES ('CT', 'catalog', $1, $1, true)
+         ON CONFLICT (agency_id, feed) DO UPDATE SET
+           last_success_at = EXCLUDED.last_success_at,
+           last_attempt_at = EXCLUDED.last_attempt_at,
+           last_attempt_succeeded = true
+         WHERE commuter_provider_feeds.last_attempt_at IS NULL
+            OR EXCLUDED.last_attempt_at >= commuter_provider_feeds.last_attempt_at`,
+        [attemptedAt],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async caltrainSchedule(): Promise<CaltrainStaticScheduleSnapshot | null> {
+    const result = await this.pool.query<{ schedule: unknown }>(
+      "SELECT schedule FROM commuter_caltrain_schedule WHERE agency_id = 'CT'",
+    );
+    return result.rows[0] ? parseStoredCaltrainStaticSchedule(result.rows[0].schedule) : null;
   }
 
   async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {
