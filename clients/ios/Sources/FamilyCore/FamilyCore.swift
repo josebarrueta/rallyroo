@@ -59,6 +59,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var endTime: Date
     public var location: String?
     public var driver: String?
+    public var driverMemberID: KidID?
     public var source: EventSource
     public var status: EventStatus
     public var alertLeadTime: EventAlertLeadTime?
@@ -68,7 +69,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, kidID, participantIDs, startTime, endTime, location
-        case driver, source, status, recurrence, provenance
+        case driver, driverMemberID, source, status, recurrence, provenance
         case alertLeadTime = "alertLeadTimeMinutes"
         case isReadOnly = "readOnly"
     }
@@ -82,6 +83,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         endTime: Date,
         location: String? = nil,
         driver: String? = nil,
+        driverMemberID: KidID? = nil,
         source: EventSource,
         status: EventStatus,
         alertLeadTime: EventAlertLeadTime? = .atStart,
@@ -97,6 +99,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.endTime = endTime
         self.location = location
         self.driver = driver
+        self.driverMemberID = driverMemberID
         self.source = source
         self.status = status
         self.alertLeadTime = alertLeadTime
@@ -115,6 +118,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         endTime = try container.decode(Date.self, forKey: .endTime)
         location = try container.decodeIfPresent(String.self, forKey: .location)
         driver = try container.decodeIfPresent(String.self, forKey: .driver)
+        driverMemberID = try container.decodeIfPresent(KidID.self, forKey: .driverMemberID)
         source = try container.decode(EventSource.self, forKey: .source)
         status = try container.decode(EventStatus.self, forKey: .status)
         alertLeadTime = try container.decodeIfPresent(EventAlertLeadTime.self, forKey: .alertLeadTime)
@@ -133,6 +137,7 @@ public struct EventConflict: Equatable, Sendable {
         case overlappingKidActivity(KidID)
         case overlappingParticipantActivity(KidID)
         case doubleBookedDriver(String)
+        case doubleBookedDriverMember(KidID)
     }
 
     public let kind: Kind
@@ -306,7 +311,16 @@ public actor LocalEventStore: EventStore {
                 )
             }
 
-            if let driver = event.driver, !driver.isEmpty, driver == savedEvent.driver {
+            if let driverMemberID = event.driverMemberID,
+               driverMemberID == savedEvent.driverMemberID {
+                return EventConflict(
+                    kind: .doubleBookedDriverMember(driverMemberID),
+                    eventIDs: [savedEvent.id, event.id]
+                )
+            }
+
+            if event.driverMemberID == nil, savedEvent.driverMemberID == nil,
+               let driver = event.driver, !driver.isEmpty, driver == savedEvent.driver {
                 return EventConflict(
                     kind: .doubleBookedDriver(driver),
                     eventIDs: [savedEvent.id, event.id]

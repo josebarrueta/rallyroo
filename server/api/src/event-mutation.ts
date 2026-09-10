@@ -14,7 +14,7 @@ export interface ImportedEventReader {
 
 export class EventMutationError extends Error {
   constructor(
-    readonly code: "parent_role_required" | "imported_event_read_only" | "unknown_participant",
+    readonly code: "parent_role_required" | "imported_event_read_only" | "unknown_participant" | "invalid_driver",
     readonly statusCode: 400 | 403 | 409,
   ) {
     super(code);
@@ -96,6 +96,15 @@ export class EventMutationModule {
         ];
         if (referencedMemberIDs.some((memberID) => !memberIDs.has(memberID))) {
           throw new EventMutationError("unknown_participant", 400);
+        }
+        if (input.event.driverMemberID && input.event.driver) {
+          throw new EventMutationError("invalid_driver", 400);
+        }
+        if (input.event.driverMemberID) {
+          const driverMember = members.find((member) => member.id === input.event.driverMemberID);
+          if (!driverMember || (driverMember.role === "kid" && driverMember.canDrive !== true)) {
+            throw new EventMutationError("invalid_driver", 400);
+          }
         }
         const existingEvent = events.find((candidate) => candidate.id.toLowerCase() === eventID);
         const recurrence = preserveWeeklyWeekdays(input.event.recurrence, existingEvent?.recurrence);
@@ -201,7 +210,15 @@ export function detectEventConflicts(
         driver: null,
         eventIDs: [existing.id, event.id],
       });
-    } else if (event.driver && event.driver === existing.driver) {
+    } else if (event.driverMemberID && event.driverMemberID === existing.driverMemberID) {
+      conflicts.push({
+        kind: "double_booked_driver",
+        memberID: event.driverMemberID,
+        driver: null,
+        eventIDs: [existing.id, event.id],
+      });
+    } else if (!event.driverMemberID && !existing.driverMemberID
+      && event.driver && event.driver === existing.driver) {
       conflicts.push({
         kind: "double_booked_driver",
         memberID: null,

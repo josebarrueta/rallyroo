@@ -15,7 +15,8 @@ struct AddEventSheet: View {
     @State private var endTime: Date
     @State private var alertChoice: EventAlertChoice
     @State private var location: String
-    @State private var driver: String
+    @State private var driverChoice: EventDriverChoice
+    @State private var otherDriver: String
     @State private var repeatOption: RepeatOption
     @State private var recurrenceEndDate: Date
     @State private var selectedWeekdays: Set<EventRecurrence.Weekday>
@@ -53,7 +54,9 @@ struct AddEventSheet: View {
             EventAlertChoice(leadTime: $0.alertLeadTime)
         } ?? .atStart)
         _location = State(initialValue: event?.location ?? "")
-        _driver = State(initialValue: event?.driver ?? "")
+        _driverChoice = State(initialValue: event?.driverMemberID.map(EventDriverChoice.member)
+            ?? (event?.driver?.isEmpty == false ? .other : .notApplicable))
+        _otherDriver = State(initialValue: event?.driver ?? "")
         _repeatOption = State(initialValue: RepeatOption(recurrence: event?.recurrence))
         _recurrenceEndDate = State(initialValue: event?.recurrence?.endDate ?? Calendar.current.date(
             byAdding: .month,
@@ -136,7 +139,16 @@ struct AddEventSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    TextField("Driver", text: $driver)
+                    Picker("Driver", selection: $driverChoice) {
+                        Text("Not applicable").tag(EventDriverChoice.notApplicable)
+                        ForEach(eligibleDrivers) { member in
+                            Text(member.name).tag(EventDriverChoice.member(member.id))
+                        }
+                        Text("Other").tag(EventDriverChoice.other)
+                    }
+                    if driverChoice == .other {
+                        TextField("Other driver", text: $otherDriver)
+                    }
                 }
             }
             .navigationTitle(existingEvent == nil ? "Add Event" : "Edit Event")
@@ -283,7 +295,8 @@ struct AddEventSheet: View {
             startTime: startTime,
             endTime: endTime,
             location: optionalText(location),
-            driver: optionalText(driver),
+            driver: driverChoice == .other ? optionalText(otherDriver) : nil,
+            driverMemberID: driverChoice.memberID,
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
             alertLeadTime: alertChoice.leadTime,
@@ -292,6 +305,10 @@ struct AddEventSheet: View {
                 weekdays: selectedWeekdays.sorted()
             )
         )
+    }
+
+    private var eligibleDrivers: [FamilyMember] {
+        members.filter { $0.role == .parent || $0.canDrive }
     }
 
     private func participantBinding(for memberID: KidID) -> Binding<Bool> {
@@ -319,6 +336,17 @@ struct AddEventSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+}
+
+private enum EventDriverChoice: Hashable {
+    case notApplicable
+    case member(KidID)
+    case other
+
+    var memberID: KidID? {
+        guard case .member(let memberID) = self else { return nil }
+        return memberID
     }
 }
 

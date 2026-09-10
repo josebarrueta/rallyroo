@@ -48,6 +48,7 @@ const eventSchema = z.object({
   endTime: z.string().datetime(),
   location: z.string().nullable().default(null),
   driver: z.string().nullable().default(null),
+  driverMemberID: z.string().trim().min(1).nullable().default(null),
   source: z.enum(["manual", "email_suggested", "voice"]),
   status: z.enum(["confirmed", "pending_review"]),
   alertLeadTimeMinutes: z.union([
@@ -64,6 +65,8 @@ const eventSchema = z.object({
   }).refine((recurrence) => recurrence.frequency === "weekly" || recurrence.weekdays === undefined, {
     message: "weekdays are supported only for weekly recurrence",
   }).nullable().optional(),
+}).refine((event) => !(event.driverMemberID && event.driver), {
+  message: "driverMemberID and driver cannot both be set",
 }).refine((event) => new Date(event.endTime) > new Date(event.startTime), {
   message: "endTime must follow startTime",
 }).refine((event) => !event.recurrence || (
@@ -115,6 +118,7 @@ const memberSchema = z.object({
   role: z.enum(["parent", "kid"]),
   gradeOrBirthYear: z.string().nullable().optional(),
   colorTag: z.string().min(1),
+  canDrive: z.boolean().default(false),
 });
 
 const calendarSourceVisibilitySchema = z.object({
@@ -970,7 +974,9 @@ export function buildApp({
     if (!account) return;
     const memberID = (request.params as { id: string }).id;
     const events = await repository.eventsForFamily(account.familyID);
-    if (events.some((event) => event.participantIDs.includes(memberID))) {
+    if (events.some((event) =>
+      event.participantIDs.includes(memberID) || event.driverMemberID === memberID
+    )) {
       return reply.code(409).send({ error: "member_has_scheduled_events" });
     }
     const reminders = await repository.remindersForFamily(account.familyID);

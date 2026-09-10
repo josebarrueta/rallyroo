@@ -17,6 +17,9 @@ public enum ConflictNotificationMessage {
             return "Heads up: \(event.title) overlaps another event for \(name)."
         case .doubleBookedDriver(let driver):
             return "Heads up: \(driver) is already driving another event at this time."
+        case .doubleBookedDriverMember(let memberID):
+            let name = members.first { $0.id == memberID }?.name ?? "a family member"
+            return "Heads up: \(name) is already driving another event at this time."
         }
     }
 }

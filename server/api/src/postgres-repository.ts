@@ -101,7 +101,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
 
       if (remaining() > 0) {
         const members = await client.query<MemberRow>(
-          `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+          `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
            FROM family_members
            WHERE name NOT LIKE 'rr1.%'
               OR (grade_or_birth_year IS NOT NULL AND grade_or_birth_year NOT LIKE 'rr1.%')
@@ -144,7 +144,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       if (remaining() > 0) {
         const events = await client.query<EventRow>(
           `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                  end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                  end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
            FROM events
            WHERE title NOT LIKE 'rr1.%'
               OR (location IS NOT NULL AND location NOT LIKE 'rr1.%')
@@ -1409,7 +1409,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
     const result = await this.pool.query<EventRow>(
       `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-              end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+              end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
@@ -1454,12 +1454,12 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       }
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
          FROM events WHERE family_id = $1 ORDER BY start_time`,
         [familyID],
       );
       const members = await client.query<MemberRow>(
-        `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+        `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
          FROM family_members WHERE family_id = $1 ORDER BY name`,
         [familyID],
       );
@@ -1473,13 +1473,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query(
           `INSERT INTO events (
              family_id, id, title, kid_id, participant_ids, start_time, end_time,
-             location, driver, source, status, alert_lead_time_minutes, recurrence
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (family_id, id) DO UPDATE SET
              title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
              participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
              end_time=EXCLUDED.end_time, location=EXCLUDED.location,
-             driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+             driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
              alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
              recurrence=EXCLUDED.recurrence`,
           eventValues(protectedEvent),
@@ -1648,13 +1648,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query(
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
-         location, driver, source, status, alert_lead_time_minutes, recurrence
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
          end_time=EXCLUDED.end_time, location=EXCLUDED.location,
-         driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+         driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence`,
       eventValues(protectedEvent),
@@ -1671,7 +1671,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       await client.query("BEGIN");
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
          FROM events
          WHERE alert_lead_time_minutes IS NOT NULL
            AND start_time <= $1::timestamptz + interval '1 day'
@@ -2006,7 +2006,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
 
   async membersForFamily(familyID: string): Promise<FamilyMember[]> {
     const result = await this.pool.query<MemberRow>(
-      `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+      `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
        FROM family_members WHERE family_id = $1 ORDER BY name`,
       [familyID],
     );
@@ -2028,15 +2028,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         member.gradeOrBirthYear,
       );
     await this.pool.query(
-      `INSERT INTO family_members (family_id, id, name, role, grade_or_birth_year, color_tag)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO family_members (family_id, id, name, role, grade_or_birth_year, color_tag, can_drive)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (family_id, id) DO UPDATE SET
          name=EXCLUDED.name, role=EXCLUDED.role,
          grade_or_birth_year=EXCLUDED.grade_or_birth_year,
-         color_tag=EXCLUDED.color_tag`,
+         color_tag=EXCLUDED.color_tag, can_drive=EXCLUDED.can_drive`,
       [
         member.familyID, member.id, protectedName, member.role,
-        protectedGradeOrBirthYear, member.colorTag,
+        protectedGradeOrBirthYear, member.colorTag, member.canDrive ?? false,
       ],
     );
   }
@@ -2401,6 +2401,7 @@ interface EventRow {
   end_time: Date | string;
   location: string | null;
   driver: string | null;
+  driver_member_id: string | null;
   source: FamilyEvent["source"];
   status: FamilyEvent["status"];
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
@@ -2473,6 +2474,7 @@ interface MemberRow {
   role: AccountRole;
   grade_or_birth_year: string | null;
   color_tag: string;
+  can_drive: boolean;
 }
 
 function calendarSourceFromRow(row: CalendarSourceRow): CalendarSource {
@@ -2508,6 +2510,7 @@ function memberFromRow(row: MemberRow): FamilyMember {
     name: row.name,
     role: row.role,
     colorTag: row.color_tag,
+    canDrive: row.can_drive,
     ...(row.grade_or_birth_year !== null ? { gradeOrBirthYear: row.grade_or_birth_year } : {}),
   };
 }
@@ -2515,7 +2518,7 @@ function memberFromRow(row: MemberRow): FamilyMember {
 function eventValues(event: FamilyEvent): unknown[] {
   return [
     event.familyID, event.id, event.title, event.kidID, event.participantIDs,
-    event.startTime, event.endTime, event.location, event.driver,
+    event.startTime, event.endTime, event.location, event.driver, event.driverMemberID ?? null,
     event.source, event.status, event.alertLeadTimeMinutes ?? null,
     event.recurrence ? JSON.stringify(event.recurrence) : null,
   ];
@@ -2532,6 +2535,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
     endTime: asISOString(row.end_time),
     location: row.location,
     driver: row.driver,
+    driverMemberID: row.driver_member_id,
     source: row.source,
     status: row.status,
     alertLeadTimeMinutes: row.alert_lead_time_minutes,

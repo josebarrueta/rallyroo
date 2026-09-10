@@ -196,7 +196,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     const reader = new CommuterModule(readerRepository);
     expect((await reader.state(account!)).subscriptions).toEqual([subscription]);
     const condition = {
-      id: "trip-123:2026-09-09",
+      id: "trip-123:2030-09-09",
       agencyID: "CT" as const,
       routeID: "caltrain-local",
       directionID: "northbound",
@@ -205,12 +205,12 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       scheduledMinutes: 480,
       kind: "delay" as const,
       delayMinutes: 20,
-      observedAt: "2026-09-09T14:59:00Z",
-      validUntil: "2026-09-10T15:02:00Z",
+      observedAt: "2030-09-09T14:59:00Z",
+      validUntil: "2030-09-10T15:02:00Z",
     };
     expect(await writer.processTransitConditions(
       [condition],
-      new Date("2026-09-09T15:00:00Z"),
+      new Date("2030-09-09T15:00:00Z"),
     )).toHaveLength(1);
     const alertPool = new Pool({ connectionString: databaseURL });
     const storedAlert = await alertPool.query<{ details_ciphertext: string; status: string }>(
@@ -222,7 +222,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(storedAlert.rows[0]?.details_ciphertext).not.toContain(condition.id);
     expect(storedAlert.rows[0]?.status).toBe("pending");
 
-    const dispatchAt = new Date(Date.now() + 60_000);
+    const dispatchAt = new Date("2030-09-09T15:01:00Z");
     const expiredAlertID = randomUUID();
     await writerRepository.saveAlertsIfAbsent([{
       id: expiredAlertID,

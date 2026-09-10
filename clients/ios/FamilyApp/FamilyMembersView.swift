@@ -326,6 +326,7 @@ private struct FamilyMemberEditor: View {
     @State private var role: FamilyMemberRole
     @State private var grade: String
     @State private var color: String
+    @State private var canDrive: Bool
     @State private var errorMessage: String?
     @State private var confirmDelete = false
 
@@ -335,6 +336,7 @@ private struct FamilyMemberEditor: View {
         _role = State(initialValue: member?.role ?? .kid)
         _grade = State(initialValue: member?.gradeOrBirthYear ?? "")
         _color = State(initialValue: member?.colorTag ?? "blue")
+        _canDrive = State(initialValue: member?.canDrive ?? false)
     }
 
     var body: some View {
@@ -342,7 +344,10 @@ private struct FamilyMemberEditor: View {
             Form {
                 TextField("Name", text: $name)
                 Picker("Role", selection: $role) { Text("Parent").tag(FamilyMemberRole.parent); Text("Kid").tag(FamilyMemberRole.kid) }
-                if role == .kid { TextField("Grade or birth year", text: $grade) }
+                if role == .kid {
+                    TextField("Grade or birth year", text: $grade)
+                    Toggle("Can drive to activities", isOn: $canDrive)
+                }
                 Picker("Color", selection: $color) {
                     ForEach(["red", "orange", "yellow", "green", "blue", "purple", "pink"], id: \.self) { colorTag in
                         HStack {
@@ -367,6 +372,6 @@ private struct FamilyMemberEditor: View {
         }
     }
 
-    private func save() { Task { do { try await onSave(FamilyMember(id: existingMember?.id ?? KidID(rawValue: UUID().uuidString), name: name, role: role, gradeOrBirthYear: role == .kid ? grade : nil, colorTag: color)); dismiss() } catch { errorMessage = "Could not save this family member." } } }
+    private func save() { Task { do { try await onSave(FamilyMember(id: existingMember?.id ?? KidID(rawValue: UUID().uuidString), name: name, role: role, gradeOrBirthYear: role == .kid ? grade : nil, colorTag: color, canDrive: role == .kid && canDrive)); dismiss() } catch { errorMessage = "Could not save this family member." } } }
     private func delete() { guard let existingMember, let onDelete else { return }; Task { do { try await onDelete(existingMember); dismiss() } catch FamilyMemberDeletionError.hasScheduledEvents { errorMessage = "Remove this member from scheduled events before deleting." } catch FamilyMemberDeletionError.hasOpenReminders { errorMessage = "Complete or reassign this member's open reminders before deleting." } catch { errorMessage = "Could not delete this family member." } } }
 }

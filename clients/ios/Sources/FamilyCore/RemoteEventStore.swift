@@ -210,8 +210,13 @@ private struct ConflictPayload: Codable {
             guard let memberID else { return nil }
             conflictKind = .overlappingParticipantActivity(KidID(rawValue: memberID))
         case "double_booked_driver":
-            guard let driver else { return nil }
-            conflictKind = .doubleBookedDriver(driver)
+            if let memberID {
+                conflictKind = .doubleBookedDriverMember(KidID(rawValue: memberID))
+            } else if let driver {
+                conflictKind = .doubleBookedDriver(driver)
+            } else {
+                return nil
+            }
         default:
             return nil
         }
