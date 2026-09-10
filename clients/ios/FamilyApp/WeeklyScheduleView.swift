@@ -61,7 +61,7 @@ struct WeeklyScheduleView: View {
                 )
                 .padding(.bottom, 4)
 
-                if allowsEditing, calendarSourceStore != nil || commuterStore != nil {
+                if (allowsEditing && calendarSourceStore != nil) || commuterStore != nil {
                     scheduleConnections
                         .padding(.horizontal)
                         .padding(.bottom, 8)
@@ -190,7 +190,10 @@ struct WeeklyScheduleView: View {
             }
             if let commuterStore {
                 NavigationLink {
-                    CommuterSettingsView(store: commuterStore)
+                    CommuterSettingsView(
+                        store: commuterStore,
+                        canManageFamilySettings: allowsEditing
+                    )
                 } label: {
                     connectionCard(
                         title: "Commute",

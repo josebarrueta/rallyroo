@@ -67,7 +67,10 @@ struct SettingsView: View {
                 if let commuterStore {
                     Section("Transit") {
                         NavigationLink("Commuter module") {
-                            CommuterSettingsView(store: commuterStore)
+                            CommuterSettingsView(
+                                store: commuterStore,
+                                canManageFamilySettings: memberStore != nil
+                            )
                         }
                         Text("Get alerts for Caltrain delays and cancellations.")
                             .font(.caption)
@@ -105,7 +108,8 @@ struct SettingsView: View {
                     NavigationStack {
                         CommuterSettingsView(
                             store: commuterStore,
-                            initialSubscriptionID: linkedCommuteSubscriptionID
+                            initialSubscriptionID: linkedCommuteSubscriptionID,
+                            canManageFamilySettings: memberStore != nil
                         )
                     }
                 }

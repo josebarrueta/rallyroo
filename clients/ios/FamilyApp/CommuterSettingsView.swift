@@ -6,9 +6,15 @@ struct CommuterSettingsView: View {
     @State private var subscriptionEditor: CommuteSubscriptionEditor?
     @State private var isConfirmingRemoval = false
     private let initialSubscriptionID: String?
+    private let canManageFamilySettings: Bool
 
-    init(store: any CommuterStore, initialSubscriptionID: String? = nil) {
+    init(
+        store: any CommuterStore,
+        initialSubscriptionID: String? = nil,
+        canManageFamilySettings: Bool = true
+    ) {
         self.initialSubscriptionID = initialSubscriptionID
+        self.canManageFamilySettings = canManageFamilySettings
         _model = StateObject(wrappedValue: CommuterSettingsModel(store: store))
     }
 
@@ -85,6 +91,7 @@ struct CommuterSettingsView: View {
             AddCommuteSubscriptionView(
                 stops: model.catalog?.stops ?? [],
                 subscription: editor.subscription,
+                allowsFamilyVisibility: canManageFamilySettings,
                 onSearch: { search in await model.searchJourneys(search) },
                 onSave: { draft in
                     if let subscription = editor.subscription {
@@ -103,27 +110,23 @@ struct CommuterSettingsView: View {
             case .enabled:
                 Label("Enabled", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Button("Disable Commuter") {
-                    Task { _ = await model.disable() }
-                }
-                Button("Remove Commuter", role: .destructive) {
-                    isConfirmingRemoval = true
+                if canManageFamilySettings {
+                    Button("Disable Commuter") { Task { _ = await model.disable() } }
+                    Button("Remove Commuter", role: .destructive) { isConfirmingRemoval = true }
                 }
             case .disabled:
                 Label("Disabled — alerts are paused", systemImage: "pause.circle.fill")
                     .foregroundStyle(.orange)
-                Button("Enable Commuter") {
-                    Task { _ = await model.enable() }
-                }
-                Button("Remove Commuter", role: .destructive) {
-                    isConfirmingRemoval = true
+                if canManageFamilySettings {
+                    Button("Enable Commuter") { Task { _ = await model.enable() } }
+                    Button("Remove Commuter", role: .destructive) { isConfirmingRemoval = true }
                 }
             case nil:
                 Text("Enable Caltrain commute alerts for this Family. Configuration is shared, while each alert can be personal or Family-visible.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Enable Commuter") {
-                    Task { _ = await model.enable() }
+                if canManageFamilySettings {
+                    Button("Enable Commuter") { Task { _ = await model.enable() } }
                 }
             }
         }
@@ -204,9 +207,11 @@ struct CommuterSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.caption.bold())
-                    .foregroundStyle(.tertiary)
+                if canManageFamilySettings || subscription.visibility == .personal {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
             }
             Text(subscriptionSummary(subscription))
                 .font(.subheadline)
@@ -225,19 +230,25 @@ struct CommuterSettingsView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
+            if canManageFamilySettings || subscription.visibility == .personal {
+                subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
+            }
         }
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Opens this commute alert for editing")
         .swipeActions(edge: .leading) {
-            Button(subscription.status == .active ? "Pause" : "Resume") {
-                Task { _ = await model.toggleStatus(of: subscription) }
+            if canManageFamilySettings || subscription.visibility == .personal {
+                Button(subscription.status == .active ? "Pause" : "Resume") {
+                    Task { _ = await model.toggleStatus(of: subscription) }
+                }
+                .tint(subscription.status == .active ? .orange : .green)
             }
-            .tint(subscription.status == .active ? .orange : .green)
         }
         .swipeActions {
-            Button("Delete", role: .destructive) {
-                Task { _ = await model.remove(subscription) }
+            if canManageFamilySettings || subscription.visibility == .personal {
+                Button("Delete", role: .destructive) {
+                    Task { _ = await model.remove(subscription) }
+                }
             }
         }
     }
@@ -279,6 +290,7 @@ private struct CommuteSubscriptionEditor: Identifiable {
 private struct AddCommuteSubscriptionView: View {
     let stops: [CaltrainStop]
     let subscription: CommuteSubscription?
+    let allowsFamilyVisibility: Bool
     let onSearch: (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?
     let onSave: (CommuteSubscriptionDraft) async -> Bool
 
@@ -296,11 +308,13 @@ private struct AddCommuteSubscriptionView: View {
     init(
         stops: [CaltrainStop],
         subscription: CommuteSubscription? = nil,
+        allowsFamilyVisibility: Bool = true,
         onSearch: @escaping (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?,
         onSave: @escaping (CommuteSubscriptionDraft) async -> Bool
     ) {
         self.stops = stops
         self.subscription = subscription
+        self.allowsFamilyVisibility = allowsFamilyVisibility
         self.onSearch = onSearch
         self.onSave = onSave
         _visibility = State(initialValue: subscription?.visibility ?? .personal)
@@ -405,7 +419,9 @@ private struct AddCommuteSubscriptionView: View {
                 Section("Visibility") {
                     Picker("Visibility", selection: $visibility) {
                         Text("Personal").tag(CommuteSubscriptionVisibility.personal)
-                        Text("Family").tag(CommuteSubscriptionVisibility.family)
+                        if allowsFamilyVisibility {
+                            Text("Family").tag(CommuteSubscriptionVisibility.family)
+                        }
                     }
                     .pickerStyle(.segmented)
                     Text(visibility == .personal

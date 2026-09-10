@@ -131,7 +131,7 @@ struct FamilyActivityCoordinatorApp: App {
                         reminderStore: reminderStore,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
-                        commuterStore: session.role == .parent ? commuterStore : nil
+                        commuterStore: commuterStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     .tag(AppTab.schedule)
@@ -167,7 +167,7 @@ struct FamilyActivityCoordinatorApp: App {
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
-                        commuterStore: session.role == .parent ? commuterStore : nil,
+                        commuterStore: commuterStore,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )
