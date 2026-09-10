@@ -44,6 +44,58 @@ final class CommuterScheduleSelectionTests: XCTestCase {
         XCTAssertTrue(model.journeyOptions.isEmpty)
     }
 
+    func testStationChoicesCollapseDirectionalPlatformsAndSortNorthToSouth() {
+        let validFrom = Date(timeIntervalSince1970: 1_788_192_000)
+        let validUntil = Date(timeIntervalSince1970: 1_796_054_399)
+        let stops = [
+            CaltrainStop(
+                id: "south-platform", stationID: "south", stationName: "Palo Alto Caltrain Station Southbound",
+                direction: .southbound, latitude: 37.443, longitude: -122.165,
+                validFrom: validFrom, validUntil: validUntil
+            ),
+            CaltrainStop(
+                id: "north-platform", stationID: "north", stationName: "San Francisco Caltrain Station Northbound",
+                direction: .northbound, latitude: 37.776, longitude: -122.394,
+                validFrom: validFrom, validUntil: validUntil
+            ),
+            CaltrainStop(
+                id: "north-platform-2", stationID: "north", stationName: "San Francisco Caltrain Station Southbound",
+                direction: .southbound, latitude: 37.776, longitude: -122.394,
+                validFrom: validFrom, validUntil: validUntil
+            ),
+        ]
+
+        XCTAssertEqual(
+            CommuterScheduleSelection.stationChoices(from: stops),
+            [
+                CaltrainStationChoice(id: "north", name: "San Francisco", latitude: 37.776),
+                CaltrainStationChoice(id: "south", name: "Palo Alto", latitude: 37.443),
+            ]
+        )
+    }
+
+    func testJourneyOptionsAreExposedInChronologicalOrder() throws {
+        let model = CommuterScheduleSelection()
+        model.selectOrigin("palo_alto")
+        model.selectDestination("san_francisco")
+        model.selectDayGroup(.weekdays)
+        let intent = try XCTUnwrap(model.searchIntent)
+        let later = CaltrainJourneyOption(
+            id: String(repeating: "b", count: 64), directionID: "northbound",
+            originStopID: "70171", destinationStopID: "70011",
+            departureMinutes: 519, arrivalMinutes: 550, operatingWeekdays: [1, 2, 3, 4, 5]
+        )
+        let result = CaltrainJourneySearchResult(
+            scheduleVersion: "v1", observedAt: Date(timeIntervalSince1970: 1_789_000_000),
+            validUntil: "2026-12-31", status: Self.result.status,
+            options: [later, Self.option]
+        )
+
+        model.applySearchResult(result, for: intent)
+
+        XCTAssertEqual(model.journeyOptions.map(\.departureMinutes), [451, 519])
+    }
+
     func testChangingStationsInvalidatesOptionsAndBuildsScheduleBoundDraft() async throws {
         let model = CommuterScheduleSelection()
         model.selectOrigin("palo_alto")

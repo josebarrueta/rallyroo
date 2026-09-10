@@ -267,14 +267,14 @@ private struct AddCommuteSubscriptionView: View {
                 Section("Trip") {
                     Picker("From", selection: originBinding) {
                         Text("Select a station").tag("")
-                        ForEach(stationStops) { stop in
-                            Text(stop.stationName).tag(stop.stationID)
+                        ForEach(stationChoices) { station in
+                            Text(station.name).tag(station.id)
                         }
                     }
                     Picker("To", selection: destinationBinding) {
                         Text("Select a station").tag("")
-                        ForEach(destinationStops) { stop in
-                            Text(stop.stationName).tag(stop.stationID)
+                        ForEach(destinationChoices) { station in
+                            Text(station.name).tag(station.id)
                         }
                     }
                     .disabled(selection.originStationID == nil)
@@ -313,30 +313,17 @@ private struct AddCommuteSubscriptionView: View {
                         Text("No train runs at the same scheduled time on every selected day.")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(selection.journeyOptions) { option in
-                            Button {
-                                selection.selectJourney(option)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(formatMinutes(option.departureMinutes))
-                                            .font(.headline)
-                                        Text("Arrives \(formatMinutes(option.arrivalMinutes))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if selection.selectedJourney?.id == option.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(AppTheme.purple)
-                                    }
-                                }
+                        Picker("Departure", selection: journeyBinding) {
+                            Text("Select a train").tag("")
+                            ForEach(selection.journeyOptions) { option in
+                                Text(
+                                    "\(formatMinutes(option.departureMinutes)) · arrives \(formatMinutes(option.arrivalMinutes))"
+                                )
+                                .tag(option.id)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(
-                                "Departs \(formatMinutes(option.departureMinutes)), arrives \(formatMinutes(option.arrivalMinutes))"
-                            )
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityHint("Choose a scheduled origin departure")
                     }
                     if let health = selection.scheduleStatus?.state,
                        health == .degraded || health == .stale {
@@ -345,8 +332,8 @@ private struct AddCommuteSubscriptionView: View {
                             .foregroundStyle(.orange)
                     }
                     if let selected = selection.selectedJourney {
-                        LabeledContent("Departure", value: formatMinutes(selected.departureMinutes))
                         LabeledContent("Arrival", value: formatMinutes(selected.arrivalMinutes))
+                            .accessibilityHint("Arrival is determined by the selected train")
                     }
                 }
 
@@ -421,6 +408,16 @@ private struct AddCommuteSubscriptionView: View {
         )
     }
 
+    private var journeyBinding: Binding<String> {
+        Binding(
+            get: { selection.selectedJourney?.id ?? "" },
+            set: { journeyID in
+                guard let option = selection.journeyOptions.first(where: { $0.id == journeyID }) else { return }
+                selection.selectJourney(option)
+            }
+        )
+    }
+
     private var dayGroupBinding: Binding<CommuteScheduleDayGroup?> {
         Binding(
             get: { selection.dayGroup },
@@ -456,15 +453,12 @@ private struct AddCommuteSubscriptionView: View {
         }
     }
 
-    private var stationStops: [CaltrainStop] {
-        var seen = Set<String>()
-        return stops
-            .sorted { $0.stationName.localizedCaseInsensitiveCompare($1.stationName) == .orderedAscending }
-            .filter { seen.insert($0.stationID).inserted }
+    private var stationChoices: [CaltrainStationChoice] {
+        CommuterScheduleSelection.stationChoices(from: stops)
     }
 
-    private var destinationStops: [CaltrainStop] {
-        stationStops.filter { $0.stationID != selection.originStationID }
+    private var destinationChoices: [CaltrainStationChoice] {
+        stationChoices.filter { $0.id != selection.originStationID }
     }
 
     private var canSave: Bool {
