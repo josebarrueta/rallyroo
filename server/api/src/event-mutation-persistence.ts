@@ -13,7 +13,7 @@ export interface EventMutationResult {
 
 export interface StoredEventMutationResult extends EventMutationResult {
   notificationID?: string;
-  driverAssignmentMemberID?: string;
+  driverChanges?: Array<{ memberID: string; change: "assigned" | "removed" }>;
 }
 
 export interface EventMutationSnapshot {

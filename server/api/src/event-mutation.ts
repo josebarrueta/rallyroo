@@ -77,13 +77,13 @@ export class EventMutationModule {
       input.idempotencyKey,
     );
     if (previous) {
-      if (previous.driverAssignmentMemberID) {
-        await this.recordDriverAssignment(input, previous.driverAssignmentMemberID, false);
+      for (const change of previous.driverChanges ?? []) {
+        await this.recordDriverChange(input, change, false);
       }
       return this.deliverImmediately(previous);
     }
     const eventID = input.event.id.toLowerCase();
-    let newlyAssignedDriverMemberID: string | undefined;
+    let driverChanges: Array<{ memberID: string; change: "assigned" | "removed" }> = [];
     const [visibleImportedEvents, sharedImportedEvents] = await Promise.all([
       this.dependencies.importedEvents.visibleEvents(input.account.familyID, input.account.memberID),
       this.dependencies.importedEvents.sharedEvents(input.account.familyID),
@@ -115,10 +115,13 @@ export class EventMutationModule {
           }
         }
         const existingEvent = events.find((candidate) => candidate.id.toLowerCase() === eventID);
-        if (input.event.driverMemberID
-          && input.event.driverMemberID !== existingEvent?.driverMemberID
-          && input.event.driverMemberID !== input.account.memberID) {
-          newlyAssignedDriverMemberID = input.event.driverMemberID;
+        if (input.event.driverMemberID !== existingEvent?.driverMemberID) {
+          driverChanges = [
+            ...(existingEvent?.driverMemberID && existingEvent.driverMemberID !== input.account.memberID
+              ? [{ memberID: existingEvent.driverMemberID, change: "removed" as const }] : []),
+            ...(input.event.driverMemberID && input.event.driverMemberID !== input.account.memberID
+              ? [{ memberID: input.event.driverMemberID, change: "assigned" as const }] : []),
+          ];
         }
         const recurrence = preserveWeeklyWeekdays(input.event.recurrence, existingEvent?.recurrence);
         const event: FamilyEvent = {
@@ -145,9 +148,7 @@ export class EventMutationModule {
               ? (shouldNotify ? "queuedForRetry" : "noRecipients")
               : "notRequested",
             ...(shouldNotify ? { notificationID } : {}),
-            ...(newlyAssignedDriverMemberID ? {
-              driverAssignmentMemberID: newlyAssignedDriverMemberID,
-            } : {}),
+            ...(driverChanges.length > 0 ? { driverChanges } : {}),
           },
           ...(shouldNotify ? {
             notification: {
@@ -163,24 +164,26 @@ export class EventMutationModule {
         };
       },
     );
-    if (storedResult.driverAssignmentMemberID) {
-      await this.recordDriverAssignment(input, storedResult.driverAssignmentMemberID);
+    for (const change of storedResult.driverChanges ?? []) {
+      await this.recordDriverChange(input, change);
     }
     return this.deliverImmediately(storedResult);
   }
 
-  private async recordDriverAssignment(input: {
+  private async recordDriverChange(input: {
     account: Account;
     event: FamilyEvent;
     idempotencyKey: string;
-  }, driverMemberID: string, dispatchImmediately = true): Promise<void> {
-    const title = "You're assigned to drive";
-    const body = `${input.event.title} has you listed as the driver.`;
+  }, driverChange: { memberID: string; change: "assigned" | "removed" }, dispatchImmediately = true): Promise<void> {
+    const title = driverChange.change === "assigned" ? "You're assigned to drive" : "Driver assignment changed";
+    const body = driverChange.change === "assigned"
+      ? `${input.event.title} has you listed as the driver.`
+      : `You are no longer listed as the driver for ${input.event.title}.`;
     const intent: NotificationIntent = {
       familyID: input.account.familyID,
-      recipientMemberIDs: [driverMemberID],
+      recipientMemberIDs: [driverChange.memberID],
       kind: "driver_assignment",
-      deduplicationKey: `${input.idempotencyKey}:${driverMemberID}`,
+      deduplicationKey: `${input.idempotencyKey}:${driverChange.memberID}:${driverChange.change}`,
       title,
       body,
       destination: { kind: "event", id: input.event.id.toLowerCase() },
