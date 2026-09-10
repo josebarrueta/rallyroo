@@ -56,6 +56,7 @@ export interface NotificationCenterRepository {
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
   completeNotificationDelivery(recordID: string, claimedAt: Date, outcome: "delivered" | "no_recipient", completedAt: Date): Promise<void>;
   releaseNotificationDelivery(recordID: string, claimedAt: Date, errorCategory: string, releasedAt: Date): Promise<void>;
+  notificationDeliveryOutcomes(recordIDs: string[]): Promise<Array<"pending" | "claimed" | "delivered" | "no_recipient" | "terminal_failure">>;
   pruneNotificationInbox(now: Date, limit: number): Promise<number>;
 }
 
@@ -98,11 +99,16 @@ export class NotificationCenterModule {
     outcomes: Array<"delivered" | "no_recipient">;
   }> {
     const records = await this.record(intent);
-    const outcomes = await this.dispatchDue(new Date(), records.length, records.map((record) => record.id));
-    if (this.pushNotificationProvider && outcomes.length !== records.length) {
+    await this.dispatchDue(new Date(), records.length, records.map((record) => record.id));
+    if (!this.pushNotificationProvider) return { records, outcomes: [] };
+    const states = await this.repository.notificationDeliveryOutcomes(records.map((record) => record.id));
+    if (states.length !== records.length || states.some((state) => state === "pending" || state === "claimed")) {
       throw new Error("notification_delivery_deferred");
     }
-    return { records, outcomes };
+    if (states.some((state) => state === "terminal_failure")) {
+      throw new Error("notification_delivery_terminal_failure");
+    }
+    return { records, outcomes: states as Array<"delivered" | "no_recipient"> };
   }
 
   async dispatchDue(

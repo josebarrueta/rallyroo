@@ -62,6 +62,7 @@ describe("NotificationCenterModule", () => {
     expect(await center.list(kid)).toHaveLength(1);
     shouldFail = false;
     await center.recordAndDispatch(intent);
+    await center.recordAndDispatch(intent);
     expect(await center.list(kid)).toHaveLength(1);
     expect(sent).toEqual([["token:kid-1"]]);
   });

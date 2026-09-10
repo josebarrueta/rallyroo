@@ -54,6 +54,13 @@ export class InMemoryNotificationCenterRepository implements NotificationCenterR
     this.deliveryStatus.set(recordID, "pending");
   }
 
+  async notificationDeliveryOutcomes(recordIDs: string[]) {
+    return recordIDs.flatMap((id) => {
+      const status = this.deliveryStatus.get(id);
+      return status ? [status] : [];
+    });
+  }
+
   async pruneNotificationInbox(): Promise<number> { return 0; }
 
   async deleteInboxRecord(familyID: string, memberID: string, recordID: string): Promise<boolean> {

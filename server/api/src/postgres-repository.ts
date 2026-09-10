@@ -2123,6 +2123,16 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
+  async notificationDeliveryOutcomes(recordIDs: string[]) {
+    if (recordIDs.length === 0) return [];
+    const result = await this.pool.query<{ status: "pending" | "claimed" | "delivered" | "no_recipient" | "terminal_failure" }>(
+      `SELECT status FROM member_notification_delivery
+       WHERE notification_id = ANY($1::uuid[]) ORDER BY notification_id`,
+      [recordIDs],
+    );
+    return result.rows.map((row) => row.status);
+  }
+
   async pruneNotificationInbox(now: Date, limit: number): Promise<number> {
     const result = await this.pool.query(
       `WITH expired AS (
