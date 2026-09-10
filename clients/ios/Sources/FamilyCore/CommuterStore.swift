@@ -49,6 +49,10 @@ public struct CommuteSubscription: Codable, Equatable, Identifiable, Sendable {
     public let alertKinds: [CommuteAlertKind]
     public let minimumDelayMinutes: Int
     public let status: CommuteSubscriptionStatus
+    public let scheduledJourneyId: String?
+    public let scheduledDepartureMinutes: Int?
+    public let scheduledArrivalMinutes: Int?
+    public let scheduleVersion: String?
 }
 
 public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
@@ -63,6 +67,10 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
     public let windowEndMinutes: Int
     public let alertKinds: [CommuteAlertKind]
     public let minimumDelayMinutes: Int
+    public let scheduledJourneyId: String?
+    public let scheduledDepartureMinutes: Int?
+    public let scheduledArrivalMinutes: Int?
+    public let scheduleVersion: String?
 
     public init(
         visibility: CommuteSubscriptionVisibility,
@@ -74,7 +82,11 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
         windowStartMinutes: Int,
         windowEndMinutes: Int,
         alertKinds: [CommuteAlertKind],
-        minimumDelayMinutes: Int
+        minimumDelayMinutes: Int,
+        scheduledJourneyId: String? = nil,
+        scheduledDepartureMinutes: Int? = nil,
+        scheduledArrivalMinutes: Int? = nil,
+        scheduleVersion: String? = nil
     ) {
         self.visibility = visibility
         agencyID = .caltrain
@@ -87,6 +99,10 @@ public struct CommuteSubscriptionDraft: Codable, Equatable, Sendable {
         self.windowEndMinutes = windowEndMinutes
         self.alertKinds = alertKinds
         self.minimumDelayMinutes = minimumDelayMinutes
+        self.scheduledJourneyId = scheduledJourneyId
+        self.scheduledDepartureMinutes = scheduledDepartureMinutes
+        self.scheduledArrivalMinutes = scheduledArrivalMinutes
+        self.scheduleVersion = scheduleVersion
     }
 }
 

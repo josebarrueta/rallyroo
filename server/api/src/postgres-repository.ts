@@ -387,6 +387,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         windowEndMinutes: subscription.windowEndMinutes,
         alertKinds: subscription.alertKinds,
         minimumDelayMinutes: subscription.minimumDelayMinutes,
+        scheduledJourneyId: subscription.scheduledJourneyId ?? null,
+        scheduledDepartureMinutes: subscription.scheduledDepartureMinutes ?? null,
+        scheduledArrivalMinutes: subscription.scheduledArrivalMinutes ?? null,
+        scheduleVersion: subscription.scheduleVersion ?? null,
       }),
     );
   }
@@ -400,6 +404,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       row.details_ciphertext,
     );
     const details = parseCommuteSubscriptionDetails(plaintext);
+    const parsed = details as any;
     return {
       id: row.id,
       familyID: row.family_id,
@@ -407,6 +412,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       visibility: row.visibility,
       status: row.status,
       ...details,
+      scheduledJourneyId: parsed.scheduledJourneyId ?? null,
+      scheduledDepartureMinutes: parsed.scheduledDepartureMinutes ?? null,
+      scheduledArrivalMinutes: parsed.scheduledArrivalMinutes ?? null,
+      scheduleVersion: parsed.scheduleVersion ?? null,
     };
   }
 

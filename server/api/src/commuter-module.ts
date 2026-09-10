@@ -13,6 +13,10 @@ const subscriptionDetailsSchema = z.object({
   windowEndMinutes: z.number().int().min(1).max(1440),
   alertKinds: z.array(z.enum(["delay", "cancellation"])).min(1).max(2),
   minimumDelayMinutes: z.number().int().min(1).max(180),
+  scheduledJourneyId: z.string().trim().min(1).max(200).optional().nullable(),
+  scheduledDepartureMinutes: z.number().int().min(0).max(1439).optional().nullable(),
+  scheduledArrivalMinutes: z.number().int().min(0).max(1439).optional().nullable(),
+  scheduleVersion: z.string().trim().min(1).max(200).optional().nullable(),
 }).strict().refine((value) => value.originStopID !== value.destinationStopID)
   .refine((value) => value.windowEndMinutes > value.windowStartMinutes);
 
@@ -57,6 +61,10 @@ export interface CommuteSubscription {
   alertKinds: CommuteAlertKind[];
   minimumDelayMinutes: number;
   status: CommuteSubscriptionStatus;
+  scheduledJourneyId?: string | null;
+  scheduledDepartureMinutes?: number | null;
+  scheduledArrivalMinutes?: number | null;
+  scheduleVersion?: string | null;
 }
 
 export interface NewCommuteSubscription {
@@ -71,6 +79,10 @@ export interface NewCommuteSubscription {
   windowEndMinutes: number;
   alertKinds: readonly CommuteAlertKind[];
   minimumDelayMinutes: number;
+  scheduledJourneyId?: string | null;
+  scheduledDepartureMinutes?: number | null;
+  scheduledArrivalMinutes?: number | null;
+  scheduleVersion?: string | null;
 }
 
 export interface TransitCondition {
@@ -288,6 +300,10 @@ export class CommuterModule {
       serviceWeekdays: [...new Set(details.serviceWeekdays)].sort((left, right) => left - right),
       alertKinds: [...new Set(details.alertKinds)],
       status: "active",
+      scheduledJourneyId: details.scheduledJourneyId ?? null,
+      scheduledDepartureMinutes: details.scheduledDepartureMinutes ?? null,
+      scheduledArrivalMinutes: details.scheduledArrivalMinutes ?? null,
+      scheduleVersion: details.scheduleVersion ?? null,
     };
     if (!await this.repository.saveSubscriptionIfCapacity(subscription, 20)) {
       throw new CommuterModuleError("subscription_limit_reached");
@@ -375,7 +391,26 @@ function validatedSubscriptionDetails(input: NewCommuteSubscription) {
 }
 
 export function parseCommuteSubscriptionDetails(plaintext: string) {
-  return subscriptionDetailsSchema.parse(JSON.parse(plaintext));
+  const parsed = subscriptionDetailsSchema.parse(JSON.parse(plaintext));
+  if (parsed.scheduledJourneyId || parsed.scheduledDepartureMinutes !== undefined || parsed.scheduledArrivalMinutes !== undefined || parsed.scheduleVersion) {
+    return {
+      agencyID: parsed.agencyID,
+      routeID: parsed.routeID,
+      directionID: parsed.directionID,
+      originStopID: parsed.originStopID,
+      destinationStopID: parsed.destinationStopID,
+      serviceWeekdays: parsed.serviceWeekdays,
+      windowStartMinutes: parsed.windowStartMinutes,
+      windowEndMinutes: parsed.windowEndMinutes,
+      alertKinds: parsed.alertKinds,
+      minimumDelayMinutes: parsed.minimumDelayMinutes,
+      scheduledJourneyId: parsed.scheduledJourneyId ?? null,
+      scheduledDepartureMinutes: parsed.scheduledDepartureMinutes ?? null,
+      scheduledArrivalMinutes: parsed.scheduledArrivalMinutes ?? null,
+      scheduleVersion: parsed.scheduleVersion ?? null,
+    };
+  }
+  return parsed;
 }
 
 function feedStatus(
@@ -424,14 +459,19 @@ function matches(subscription: CommuteSubscription, condition: TransitCondition)
       || condition.stopIDs.includes(subscription.originStopID)
       || condition.stopIDs.includes(subscription.destinationStopID)
     : condition.stopIDs.length === 0 || (originIndex >= 0 && destinationIndex > originIndex);
+  const timeWithinWindow = condition.scheduledMinutes >= subscription.windowStartMinutes
+    && condition.scheduledMinutes <= subscription.windowEndMinutes;
+  const timeMatchesJourney = subscription.scheduledJourneyId
+    ? condition.scheduledMinutes === subscription.scheduledDepartureMinutes
+      && subscription.scheduledArrivalMinutes !== undefined
+    : true;
   return subscription.status === "active"
     && subscription.agencyID === condition.agencyID
     && (condition.routeID === "*" || subscription.routeID === "*"
       || subscription.routeID === condition.routeID)
     && (condition.directionID === "*" || subscription.directionID === condition.directionID)
     && subscription.serviceWeekdays.includes(condition.serviceWeekday)
-    && condition.scheduledMinutes >= subscription.windowStartMinutes
-    && condition.scheduledMinutes <= subscription.windowEndMinutes
+    && (subscription.scheduledJourneyId ? timeMatchesJourney : timeWithinWindow)
     && subscription.alertKinds.includes(condition.kind)
     && (condition.kind !== "delay" || disruption
       || condition.delayMinutes >= subscription.minimumDelayMinutes)
