@@ -3,7 +3,7 @@ import SwiftUI
 
 struct CommuterSettingsView: View {
     @StateObject private var model: CommuterSettingsModel
-    @State private var isAddingSubscription = false
+    @State private var subscriptionEditor: CommuteSubscriptionEditor?
     @State private var isConfirmingRemoval = false
 
     init(store: any CommuterStore) {
@@ -71,11 +71,17 @@ struct CommuterSettingsView: View {
         } message: {
             Text("All commute alerts will be deleted. Events created from commute plans are not affected.")
         }
-        .sheet(isPresented: $isAddingSubscription) {
+        .sheet(item: $subscriptionEditor) { editor in
             AddCommuteSubscriptionView(
                 stops: model.catalog?.stops ?? [],
+                subscription: editor.subscription,
                 onSearch: { search in await model.searchJourneys(search) },
-                onSave: { draft in await model.createSubscription(draft) }
+                onSave: { draft in
+                    if let subscription = editor.subscription {
+                        return await model.updateSubscription(subscription, with: draft)
+                    }
+                    return await model.createSubscription(draft)
+                }
             )
         }
     }
@@ -162,7 +168,7 @@ struct CommuterSettingsView: View {
                 Spacer()
                 if state.installation?.status == .enabled {
                     Button {
-                        isAddingSubscription = true
+                        subscriptionEditor = CommuteSubscriptionEditor(subscription: nil)
                     } label: {
                         Image(systemName: "plus.circle.fill")
                     }
@@ -188,6 +194,9 @@ struct CommuterSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(.tertiary)
             }
             Text(subscriptionSummary(subscription))
                 .font(.subheadline)
@@ -204,6 +213,12 @@ struct CommuterSettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens this commute alert for editing")
         .swipeActions(edge: .leading) {
             Button(subscription.status == .active ? "Pause" : "Resume") {
                 Task { _ = await model.toggleStatus(of: subscription) }
@@ -246,8 +261,14 @@ struct CommuterSettingsView: View {
     }
 }
 
+private struct CommuteSubscriptionEditor: Identifiable {
+    let id = UUID()
+    let subscription: CommuteSubscription?
+}
+
 private struct AddCommuteSubscriptionView: View {
     let stops: [CaltrainStop]
+    let subscription: CommuteSubscription?
     let onSearch: (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?
     let onSave: (CommuteSubscriptionDraft) async -> Bool
 
@@ -260,6 +281,23 @@ private struct AddCommuteSubscriptionView: View {
     @State private var isSearching = false
     @State private var isSaving = false
     @State private var saveFailed = false
+    @State private var didPrepareForEditing = false
+
+    init(
+        stops: [CaltrainStop],
+        subscription: CommuteSubscription? = nil,
+        onSearch: @escaping (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?,
+        onSave: @escaping (CommuteSubscriptionDraft) async -> Bool
+    ) {
+        self.stops = stops
+        self.subscription = subscription
+        self.onSearch = onSearch
+        self.onSave = onSave
+        _visibility = State(initialValue: subscription?.visibility ?? .personal)
+        _alertDelays = State(initialValue: subscription?.alertKinds.contains(.delay) ?? true)
+        _alertCancellations = State(initialValue: subscription?.alertKinds.contains(.cancellation) ?? true)
+        _minimumDelayMinutes = State(initialValue: subscription?.minimumDelayMinutes ?? 15)
+    }
 
     var body: some View {
         NavigationStack {
@@ -374,8 +412,14 @@ private struct AddCommuteSubscriptionView: View {
                     }
                 }
             }
-            .navigationTitle("Add commute alert")
+            .navigationTitle(subscription == nil ? "Add commute alert" : "Edit commute alert")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                guard !didPrepareForEditing, let subscription else { return }
+                didPrepareForEditing = true
+                selection.prepareForEditing(subscription, stops: stops)
+                refreshJourneys()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

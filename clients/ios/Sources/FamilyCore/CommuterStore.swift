@@ -215,6 +215,10 @@ public protocol CommuterStore: Sendable {
     func disable() async throws
     func removeModule() async throws
     func createSubscription(_ draft: CommuteSubscriptionDraft) async throws -> CommuteSubscription
+    func updateSubscription(
+        _ draft: CommuteSubscriptionDraft,
+        for subscription: CommuteSubscription
+    ) async throws -> CommuteSubscription
     func setStatus(
         _ status: CommuteSubscriptionStatus,
         for subscription: CommuteSubscription

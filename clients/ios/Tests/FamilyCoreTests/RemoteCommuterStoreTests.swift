@@ -109,6 +109,47 @@ final class RemoteCommuterStoreTests: XCTestCase {
         XCTAssertEqual(json["serviceWeekdays"] as? [Int], [1, 4, 5])
     }
 
+    func testUpdatesACommuterSubscriptionWithAFullPutPayload() async throws {
+        let response = Data("""
+        {
+          "id":"00000000-0000-4000-8000-000000000401",
+          "ownerMemberID":"parent-1","visibility":"personal","agencyID":"CT",
+          "routeID":"*","directionID":"northbound","originStopID":"70171",
+          "destinationStopID":"70011","serviceWeekdays":[1,4,5],
+          "windowStartMinutes":451,"windowEndMinutes":452,
+          "alertKinds":["cancellation"],"minimumDelayMinutes":30,"status":"paused",
+          "scheduleOptionID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scheduledDepartureMinutes":451,"scheduledArrivalMinutes":484,"scheduleVersion":"v1"
+        }
+        """.utf8)
+        let transport = CommuterRecordingTransport(responses: [HTTPResponse(statusCode: 200, body: response)])
+        let store = RemoteCommuterStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: transport
+        )
+        let subscription = try JSONDecoder().decode(CommuteSubscription.self, from: response)
+        let draft = CommuteSubscriptionDraft(
+            visibility: .personal, routeID: "*", directionID: "northbound",
+            originStopID: "70171", destinationStopID: "70011", serviceWeekdays: [1, 4, 5],
+            windowStartMinutes: 451, windowEndMinutes: 452, alertKinds: [.cancellation],
+            minimumDelayMinutes: 30,
+            scheduleOptionID: String(repeating: "a", count: 64),
+            scheduledDepartureMinutes: 451, scheduledArrivalMinutes: 484, scheduleVersion: "v1"
+        )
+
+        let updated = try await store.updateSubscription(draft, for: subscription)
+
+        XCTAssertEqual(updated.id, subscription.id)
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.method, .put)
+        XCTAssertEqual(request.url.path, "/v1/modules/commuter/subscriptions/00000000-0000-4000-8000-000000000401")
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["minimumDelayMinutes"] as? Int, 30)
+        XCTAssertNil(json["ownerMemberID"])
+        XCTAssertNil(json["status"])
+    }
+
     func testDisablesWithoutRemovingAndExplicitlyRemovesTheModule() async throws {
         let transport = CommuterRecordingTransport(responses: [
             HTTPResponse(statusCode: 204, body: Data()),

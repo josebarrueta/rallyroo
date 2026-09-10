@@ -229,6 +229,72 @@ describe("CommuterModule", () => {
     })).rejects.toEqual(new CommuterModuleError("parent_required"));
   });
 
+  it("updates a schedule-bound subscription without changing its identity or status", async () => {
+    const repository = new InMemoryCommuterRepository();
+    const module = new CommuterModule(repository);
+    await module.enable(parent);
+    await module.replaceSchedule(staticSchedule, new Date(staticSchedule.observedAt));
+    const searched = await module.searchJourneys(parent, {
+      originStationID: "PA", destinationStationID: "SF", serviceWeekdays: [1, 4, 5],
+    }, new Date("2026-09-10T01:00:00Z"));
+    const option = searched.options[0]!;
+    const saved = await module.createSubscription(parent, {
+      ...commute,
+      visibility: "personal",
+      serviceWeekdays: [1, 4, 5],
+      directionID: option.directionID,
+      originStopID: option.originStopID,
+      destinationStopID: option.destinationStopID,
+      windowStartMinutes: option.departureMinutes,
+      windowEndMinutes: option.departureMinutes + 1,
+      scheduleOptionID: option.id,
+      scheduledDepartureMinutes: option.departureMinutes,
+      scheduledArrivalMinutes: option.arrivalMinutes,
+      scheduleVersion: searched.scheduleVersion,
+    }, new Date("2026-09-10T01:00:00Z"));
+    await module.setSubscriptionStatus(parent, saved.id, "paused");
+
+    const updated = await module.updateSubscription(parent, saved.id, {
+      ...commute,
+      visibility: "personal",
+      serviceWeekdays: [1, 4, 5],
+      directionID: option.directionID,
+      originStopID: option.originStopID,
+      destinationStopID: option.destinationStopID,
+      windowStartMinutes: option.departureMinutes,
+      windowEndMinutes: option.departureMinutes + 1,
+      alertKinds: ["cancellation"],
+      minimumDelayMinutes: 30,
+      scheduleOptionID: option.id,
+      scheduledDepartureMinutes: option.departureMinutes,
+      scheduledArrivalMinutes: option.arrivalMinutes,
+      scheduleVersion: searched.scheduleVersion,
+    }, new Date("2026-09-10T01:00:00Z"));
+
+    expect(updated).toMatchObject({
+      id: saved.id,
+      ownerMemberID: parent.memberID,
+      status: "paused",
+      alertKinds: ["cancellation"],
+      minimumDelayMinutes: 30,
+    });
+    await expect(module.updateSubscription(parent, saved.id, {
+      ...commute,
+      visibility: "personal",
+      scheduleOptionID: "f".repeat(64),
+      scheduledDepartureMinutes: option.departureMinutes,
+      scheduledArrivalMinutes: option.arrivalMinutes,
+      scheduleVersion: searched.scheduleVersion,
+    }, new Date("2026-09-10T01:00:00Z"))).rejects.toEqual(
+      new CommuterModuleError("invalid_subscription"),
+    );
+    expect((await module.state(parent)).subscriptions[0]).toMatchObject({
+      id: saved.id,
+      alertKinds: ["cancellation"],
+      minimumDelayMinutes: 30,
+    });
+  });
+
   it("rejects kid configuration and subscriptions before installation", async () => {
     const module = new CommuterModule(new InMemoryCommuterRepository());
 

@@ -442,6 +442,70 @@ export class CommuterModule {
     return subscription;
   }
 
+  async updateSubscription(
+    account: Account,
+    subscriptionID: string,
+    input: NewCommuteSubscription,
+    now: Date = new Date(),
+  ): Promise<CommuteSubscription> {
+    requireParent(account);
+    if ((await this.repository.installation(account.familyID))?.status !== "enabled") {
+      throw new CommuterModuleError("module_not_enabled");
+    }
+    const existing = await this.repository.subscription(account.familyID, subscriptionID);
+    if (!existing
+      || (existing.visibility === "personal" && existing.ownerMemberID !== account.memberID)
+      || (input.visibility === "personal" && existing.ownerMemberID !== account.memberID)) {
+      throw new CommuterModuleError("subscription_not_found");
+    }
+    let details = validatedSubscriptionDetails(input);
+    if (details.scheduleOptionID) {
+      const schedule = await this.repository.caltrainSchedule();
+      const today = caltrainLocalDate(now);
+      if (!schedule || today < schedule.validFrom || today > schedule.validUntil) {
+        throw new CommuterModuleError("schedule_unavailable");
+      }
+      if (details.scheduleVersion !== schedule.version) {
+        throw new CommuterModuleError("invalid_subscription");
+      }
+      const origin = schedule.stops.find((stop) => stop.id === details.originStopID);
+      const destination = schedule.stops.find((stop) => stop.id === details.destinationStopID);
+      if (!origin || !destination) throw new CommuterModuleError("invalid_subscription");
+      const option = searchCaltrainJourneys(schedule, {
+        originStationID: origin.stationID,
+        destinationStationID: destination.stationID,
+        serviceWeekdays: details.serviceWeekdays,
+      }, today).find((candidate) => candidate.id === details.scheduleOptionID);
+      if (!option
+        || option.originStopID !== details.originStopID
+        || option.destinationStopID !== details.destinationStopID
+        || option.directionID !== details.directionID
+        || option.departureMinutes !== details.scheduledDepartureMinutes
+        || option.arrivalMinutes !== details.scheduledArrivalMinutes) {
+        throw new CommuterModuleError("invalid_subscription");
+      }
+      details = {
+        ...details,
+        routeID: "*",
+        windowStartMinutes: option.departureMinutes,
+        windowEndMinutes: Math.min(option.departureMinutes + 1, 1_440),
+      };
+    }
+    const updated: CommuteSubscription = {
+      ...existing,
+      ...details,
+      visibility: input.visibility,
+      serviceWeekdays: [...new Set(details.serviceWeekdays)].sort((left, right) => left - right),
+      alertKinds: [...new Set(details.alertKinds)],
+      scheduleOptionID: details.scheduleOptionID ?? null,
+      scheduledDepartureMinutes: details.scheduledDepartureMinutes ?? null,
+      scheduledArrivalMinutes: details.scheduledArrivalMinutes ?? null,
+      scheduleVersion: details.scheduleVersion ?? null,
+    };
+    await this.repository.saveSubscription(updated);
+    return updated;
+  }
+
   async removeSubscription(account: Account, subscriptionID: string): Promise<void> {
     requireParent(account);
     const subscription = await this.repository.subscription(account.familyID, subscriptionID);

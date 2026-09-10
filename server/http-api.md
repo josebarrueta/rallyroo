@@ -131,6 +131,10 @@ personal and Family-visible commute subscriptions:
   independent.
 - `POST /v1/modules/commuter/subscriptions` creates a personal or Family subscription.
   Parents only.
+- `PUT /v1/modules/commuter/subscriptions/{id}` atomically replaces an authorized
+  subscription's configuration while preserving its identity, owner, and active/paused
+  status. Opaque schedule options and versions are revalidated; stale or fabricated
+  journeys are rejected without changing the stored subscription.
 - `PATCH /v1/modules/commuter/subscriptions/{id}` accepts an `active` or `paused`
   status. Any parent may manage Family subscriptions; personal subscriptions remain
   owner-only.

@@ -67,6 +67,18 @@ public actor RemoteCommuterStore: CommuterStore {
         ))
     }
 
+    public func updateSubscription(
+        _ draft: CommuteSubscriptionDraft,
+        for subscription: CommuteSubscription
+    ) async throws -> CommuteSubscription {
+        try await sendAndDecode(HTTPRequest(
+            method: .put,
+            url: subscriptionURL(subscription),
+            headers: ["Content-Type": "application/json"],
+            body: try encoder.encode(draft)
+        ))
+    }
+
     public func setStatus(
         _ status: CommuteSubscriptionStatus,
         for subscription: CommuteSubscription

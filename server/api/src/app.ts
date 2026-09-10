@@ -657,6 +657,30 @@ export function buildApp({
     }
   });
 
+  app.put("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterSubscriptionSchema.safeParse(request.body);
+    if (!parsed.success || parsed.data.originStopID === parsed.data.destinationStopID
+      || parsed.data.windowEndMinutes <= parsed.data.windowStartMinutes) {
+      return reply.code(400).send({ error: "invalid_commuter_subscription" });
+    }
+    const parsedID = commuterSubscriptionIDSchema.safeParse((request.params as { id: string }).id);
+    if (!parsedID.success) return reply.code(400).send({ error: "invalid_commuter_subscription_id" });
+    const existing = (await commuter.state(account)).subscriptions
+      .find((subscription) => subscription.id === parsedID.data);
+    try {
+      const subscription = await commuter.updateSubscription(account, parsedID.data, parsed.data);
+      if (existing?.visibility === "family" || subscription.visibility === "family") {
+        await repository.markFamilyChanged(account.familyID);
+      }
+      return clientCommuteSubscription(subscription);
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
   app.patch("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;

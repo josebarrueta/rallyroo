@@ -123,6 +123,13 @@ private actor CommuterSettingsStoreStub: CommuterStore {
         fatalError("Not needed by this test")
     }
 
+    func updateSubscription(
+        _ draft: CommuteSubscriptionDraft,
+        for subscription: CommuteSubscription
+    ) -> CommuteSubscription {
+        subscription
+    }
+
     func setStatus(
         _ status: CommuteSubscriptionStatus,
         for subscription: CommuteSubscription

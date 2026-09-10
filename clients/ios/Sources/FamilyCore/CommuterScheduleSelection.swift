@@ -83,6 +83,43 @@ public final class CommuterScheduleSelection: ObservableObject {
         )
     }
 
+    public func prepareForEditing(_ subscription: CommuteSubscription, stops: [CaltrainStop]) {
+        generation &+= 1
+        originStationID = stops.first { $0.id == subscription.originStopID }?.stationID
+        destinationStationID = stops.first { $0.id == subscription.destinationStopID }?.stationID
+        let weekdays = Set(subscription.serviceWeekdays)
+        if weekdays.isSubset(of: Set(CommuteScheduleDayGroup.weekdays.weekdays)) {
+            dayGroup = .weekdays
+        } else if weekdays.isSubset(of: Set(CommuteScheduleDayGroup.weekends.weekdays)) {
+            dayGroup = .weekends
+        } else {
+            dayGroup = nil
+        }
+        selectedWeekdays = weekdays
+        journeyOptions = []
+        selectedJourney = nil
+        scheduleStatus = nil
+        scheduleVersion = nil
+        guard subscription.scheduleAvailability != .needsReselection,
+              let optionID = subscription.scheduleOptionID,
+              let departureMinutes = subscription.scheduledDepartureMinutes,
+              let arrivalMinutes = subscription.scheduledArrivalMinutes,
+              let version = subscription.scheduleVersion
+        else { return }
+        let option = CaltrainJourneyOption(
+            id: optionID,
+            directionID: subscription.directionID,
+            originStopID: subscription.originStopID,
+            destinationStopID: subscription.destinationStopID,
+            departureMinutes: departureMinutes,
+            arrivalMinutes: arrivalMinutes,
+            operatingWeekdays: subscription.serviceWeekdays
+        )
+        scheduleVersion = version
+        journeyOptions = [option]
+        selectedJourney = option
+    }
+
     public func selectOrigin(_ stationID: String?) {
         guard stationID != originStationID else { return }
         originStationID = normalized(stationID)
@@ -118,6 +155,7 @@ public final class CommuterScheduleSelection: ObservableObject {
         for intent: CommuterScheduleSearchIntent
     ) {
         guard intent.generation == generation, intent.request == searchRequest else { return }
+        let previouslySelectedJourneyID = selectedJourney?.id
         scheduleVersion = result.scheduleVersion
         scheduleStatus = result.status
         journeyOptions = result.options
@@ -133,7 +171,7 @@ public final class CommuterScheduleSelection: ObservableObject {
                 }
                 return $0.id < $1.id
             }
-        selectedJourney = nil
+        selectedJourney = journeyOptions.first { $0.id == previouslySelectedJourneyID }
     }
 
     public func selectJourney(_ option: CaltrainJourneyOption) {

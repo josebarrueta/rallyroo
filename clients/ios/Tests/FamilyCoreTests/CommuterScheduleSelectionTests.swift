@@ -96,6 +96,70 @@ final class CommuterScheduleSelectionTests: XCTestCase {
         XCTAssertEqual(model.journeyOptions.map(\.departureMinutes), [451, 519])
     }
 
+    func testPreparesAnExistingSubscriptionWithoutSilentlyRemappingItsTrain() throws {
+        let model = CommuterScheduleSelection()
+        let subscription = CommuteSubscription(
+            id: UUID(uuidString: "00000000-0000-4000-8000-000000000401")!,
+            ownerMemberID: "parent-1", visibility: .personal, agencyID: .caltrain,
+            routeID: "*", directionID: "northbound", originStopID: "70171",
+            destinationStopID: "70011", serviceWeekdays: [1, 4, 5],
+            windowStartMinutes: 451, windowEndMinutes: 452,
+            alertKinds: [.delay], minimumDelayMinutes: 15, status: .active,
+            scheduleOptionID: Self.option.id, scheduledDepartureMinutes: 451,
+            scheduledArrivalMinutes: 484, scheduleVersion: "v1", scheduleAvailability: .available
+        )
+        let validFrom = Date(timeIntervalSince1970: 1_788_192_000)
+        let validUntil = Date(timeIntervalSince1970: 1_796_054_399)
+        let stops = [
+            CaltrainStop(
+                id: "70171", stationID: "PA", stationName: "Palo Alto",
+                direction: .northbound, latitude: 37.443, longitude: -122.165,
+                validFrom: validFrom, validUntil: validUntil
+            ),
+            CaltrainStop(
+                id: "70011", stationID: "SF", stationName: "San Francisco",
+                direction: .northbound, latitude: 37.776, longitude: -122.394,
+                validFrom: validFrom, validUntil: validUntil
+            ),
+        ]
+
+        model.prepareForEditing(subscription, stops: stops)
+
+        XCTAssertEqual(model.originStationID, "PA")
+        XCTAssertEqual(model.destinationStationID, "SF")
+        XCTAssertEqual(model.dayGroup, .weekdays)
+        XCTAssertEqual(model.selectedWeekdays, Set([1, 4, 5]))
+        XCTAssertEqual(model.selectedJourney?.id, Self.option.id)
+        XCTAssertEqual(model.subscriptionDraft(
+            visibility: .personal, alertKinds: [.delay], minimumDelayMinutes: 15
+        )?.scheduleVersion, "v1")
+        let intent = try XCTUnwrap(model.searchIntent)
+        let later = CaltrainJourneyOption(
+            id: String(repeating: "b", count: 64), directionID: "northbound",
+            originStopID: "70171", destinationStopID: "70011",
+            departureMinutes: 519, arrivalMinutes: 550, operatingWeekdays: [1, 2, 3, 4, 5]
+        )
+        model.applySearchResult(CaltrainJourneySearchResult(
+            scheduleVersion: "v1", observedAt: Date(timeIntervalSince1970: 1_789_000_000),
+            validUntil: "2026-12-31", status: Self.result.status,
+            options: [later, Self.option]
+        ), for: intent)
+        XCTAssertEqual(model.journeyOptions.map(\.departureMinutes), [451, 519])
+        XCTAssertEqual(model.selectedJourney?.id, Self.option.id)
+
+        let legacy = CommuteSubscription(
+            id: UUID(), ownerMemberID: "parent-1", visibility: .personal, agencyID: .caltrain,
+            routeID: "legacy", directionID: "northbound", originStopID: "70171",
+            destinationStopID: "70011", serviceWeekdays: [1, 4, 5],
+            windowStartMinutes: 420, windowEndMinutes: 540, alertKinds: [.delay],
+            minimumDelayMinutes: 15, status: .active, scheduleOptionID: nil,
+            scheduledDepartureMinutes: nil, scheduledArrivalMinutes: nil,
+            scheduleVersion: nil, scheduleAvailability: nil
+        )
+        model.prepareForEditing(legacy, stops: stops)
+        XCTAssertNil(model.selectedJourney)
+    }
+
     func testChangingStationsInvalidatesOptionsAndBuildsScheduleBoundDraft() async throws {
         let model = CommuterScheduleSelection()
         model.selectOrigin("palo_alto")

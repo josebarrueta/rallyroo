@@ -173,6 +173,24 @@ describe("Rallyroo API", () => {
     expect(personalResponse.statusCode).toBe(201);
     expect(personalResponse.json()).not.toHaveProperty("familyID");
 
+    const updatedPersonalResponse = await app.inject({
+      method: "PUT",
+      url: `/v1/modules/commuter/subscriptions/${personalResponse.json().id}`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        ...subscriptionPayload,
+        alertKinds: ["cancellation"],
+        minimumDelayMinutes: 30,
+      },
+    });
+    expect(updatedPersonalResponse.statusCode).toBe(200);
+    expect(updatedPersonalResponse.json()).toMatchObject({
+      id: personalResponse.json().id,
+      alertKinds: ["cancellation"],
+      minimumDelayMinutes: 30,
+      status: "active",
+    });
+
     const kidState = await app.inject({
       method: "GET",
       url: "/v1/modules/commuter",
