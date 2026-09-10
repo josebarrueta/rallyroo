@@ -81,6 +81,8 @@ struct NotificationsView: View {
             }
         }
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens the related item and marks this alert read")
     }
 
     private func icon(for kind: InboxNotificationKind) -> String {

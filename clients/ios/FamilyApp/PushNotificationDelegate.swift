@@ -25,6 +25,7 @@ final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcu
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         postLocalInboxRecord(from: notification)
+        NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
         completionHandler([.banner, .sound, .badge])
     }
 
@@ -35,6 +36,7 @@ final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcu
     ) {
         defer { completionHandler() }
         postLocalInboxRecord(from: response.notification)
+        NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
         let data = response.notification.request.content.userInfo
         let destination: InboxNotificationDestination?
         if let rawKind = data["destinationKind"] as? String,
@@ -85,4 +87,5 @@ extension Notification.Name {
     static let didRegisterDeviceToken = Notification.Name("didRegisterDeviceToken")
     static let openNotificationDestination = Notification.Name("openNotificationDestination")
     static let didDeliverLocalInboxNotification = Notification.Name("didDeliverLocalInboxNotification")
+    static let notificationInboxDidChange = Notification.Name("notificationInboxDidChange")
 }

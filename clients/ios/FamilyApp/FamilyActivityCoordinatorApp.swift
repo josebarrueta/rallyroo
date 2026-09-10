@@ -185,11 +185,25 @@ struct FamilyActivityCoordinatorApp: App {
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
                 .task { await monitorFamilyChanges() }
+                .task {
+                    unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                        .filter { $0.readAt == nil }.count
+                }
                 .task { await synchronizeCalendars(for: session.role) }
                 .task { await requestPushNotifications() }
                 .onReceive(NotificationCenter.default.publisher(for: .didDeliverLocalInboxNotification)) { notification in
                     guard let item = notification.object as? InboxNotification else { return }
-                    Task { try? await inboxStore.ingest(item) }
+                    Task {
+                        try? await inboxStore.ingest(item)
+                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                            .filter { $0.readAt == nil }.count
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .notificationInboxDidChange)) { _ in
+                    Task {
+                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                            .filter { $0.readAt == nil }.count
+                    }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .didRegisterDeviceToken)) { notification in
                     guard let token = notification.object as? String else { return }
