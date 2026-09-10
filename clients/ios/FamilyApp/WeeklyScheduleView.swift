@@ -7,12 +7,18 @@ struct WeeklyScheduleView: View {
     private let locationSearch: any LocationSearch
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let reminderStore: (any ReminderStore)?
+    private let memberStore: any FamilyMemberStore
+    private let currentMemberID: String?
+    private let calendarSourceStore: (any CalendarSourceStore)?
+    private let commuterStore: (any CommuterStore)?
     @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
     @State private var editingEvent: FamilyEvent?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
     @State private var scheduleUpdateNotice: String?
+    @State private var connectedCalendarCount: Int?
+    @State private var commuterState: CommuterState?
 
     init(
         eventStore: any EventStore,
@@ -22,12 +28,19 @@ struct WeeklyScheduleView: View {
         locationSearch: any LocationSearch = EmptyLocationSearch(),
         alertScheduler: (any EventAlertScheduler)? = nil,
         scheduleDraftExtractor: (any ScheduleDraftExtractor)? = nil,
-        reminderStore: (any ReminderStore)? = nil
+        reminderStore: (any ReminderStore)? = nil,
+        currentMemberID: String? = nil,
+        calendarSourceStore: (any CalendarSourceStore)? = nil,
+        commuterStore: (any CommuterStore)? = nil
      ) {
         self.allowsEditing = allowsEditing
         self.locationSearch = locationSearch
         self.scheduleDraftExtractor = scheduleDraftExtractor
         self.reminderStore = reminderStore
+        self.memberStore = memberStore
+        self.currentMemberID = currentMemberID
+        self.calendarSourceStore = calendarSourceStore
+        self.commuterStore = commuterStore
         _viewModel = StateObject(
             wrappedValue: WeeklyScheduleViewModel(
                 eventStore: eventStore,
@@ -47,6 +60,12 @@ struct WeeklyScheduleView: View {
                 )
                 .padding(.bottom, 4)
 
+                if allowsEditing, calendarSourceStore != nil || commuterStore != nil {
+                    scheduleConnections
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
+                }
+
                 if viewModel.isShowingCachedEvents {
                     Label("Offline — showing saved schedule", systemImage: "wifi.slash")
                         .font(.caption.weight(.semibold))
@@ -63,13 +82,17 @@ struct WeeklyScheduleView: View {
                         Task { await viewModel.loadEvents() }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
-                        Task { await viewModel.loadEvents() }
+                        Task {
+                            await viewModel.loadEvents()
+                            await loadConnectionSummaries()
+                        }
                     }
                     .onReceive(NotificationCenter.default.publisher(for: .scheduleUpdateNotice)) { notification in
                         scheduleUpdateNotice = notification.userInfo?["message"] as? String
                     }
             }
             .navigationTitle("Rallyroo")
+            .task { await loadConnectionSummaries() }
             .toolbar { toolbarContent }
             .sheet(isPresented: $isAddingEvent) {
                 AddEventSheet(members: viewModel.members, locationSearch: locationSearch) { event, notifyParticipants, idempotencyKey in
@@ -120,6 +143,91 @@ struct WeeklyScheduleView: View {
                 Text(scheduleUpdateNotice ?? "")
             }
              .tint(AppTheme.purple)
+        }
+    }
+
+    // MARK: - Connections
+
+    private var scheduleConnections: some View {
+        HStack(spacing: 10) {
+            if let calendarSourceStore {
+                NavigationLink {
+                    CalendarSourcesView(
+                        store: calendarSourceStore,
+                        memberStore: memberStore,
+                        currentMemberID: currentMemberID
+                    )
+                } label: {
+                    connectionCard(
+                        title: "Calendars",
+                        subtitle: calendarSubtitle,
+                        systemImage: "calendar.badge.plus"
+                    )
+                }
+                .accessibilityIdentifier("schedule-connected-calendars")
+            }
+            if let commuterStore {
+                NavigationLink {
+                    CommuterSettingsView(store: commuterStore)
+                } label: {
+                    connectionCard(
+                        title: "Commute",
+                        subtitle: commuterSubtitle,
+                        systemImage: "train.side.front.car"
+                    )
+                }
+                .accessibilityIdentifier("schedule-commute-alerts")
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func connectionCard(title: String, subtitle: String, systemImage: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: systemImage)
+                .foregroundStyle(AppTheme.purple)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.bold())
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.caption.bold())
+                .foregroundStyle(.tertiary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var calendarSubtitle: String {
+        guard let connectedCalendarCount else { return "Manage sources" }
+        if connectedCalendarCount == 0 { return "Connect a calendar" }
+        return "\(connectedCalendarCount) connected"
+    }
+
+    private var commuterSubtitle: String {
+        guard let commuterState else { return "Manage alerts" }
+        guard let installation = commuterState.installation else { return "Set up alerts" }
+        if installation.status == .disabled { return "Alerts paused" }
+        if [.degraded, .stale].contains(commuterState.providerStatus.catalog.state)
+            || [.degraded, .stale].contains(commuterState.providerStatus.realtime.state) {
+            return "Service needs attention"
+        }
+        let active = commuterState.subscriptions.filter { $0.status == .active }.count
+        if active == 0 { return "Add an alert" }
+        return active == 1 ? "1 active alert" : "\(active) active alerts"
+    }
+
+    private func loadConnectionSummaries() async {
+        if let calendarSourceStore {
+            connectedCalendarCount = (try? await calendarSourceStore.sources().count) ?? nil
+        }
+        if let commuterStore {
+            commuterState = try? await commuterStore.state()
         }
     }
 

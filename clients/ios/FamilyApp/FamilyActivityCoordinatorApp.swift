@@ -116,7 +116,10 @@ struct FamilyActivityCoordinatorApp: App {
                         locationSearch: locationSearch,
                         alertScheduler: eventAlertScheduler,
                         scheduleDraftExtractor: scheduleDraftExtractor,
-                        reminderStore: reminderStore
+                        reminderStore: reminderStore,
+                        currentMemberID: session.accountID,
+                        calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
+                        commuterStore: session.role == .parent ? commuterStore : nil
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     RemindersView(

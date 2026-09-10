@@ -147,7 +147,7 @@ struct SettingsView: View {
     }
 }
 
-private struct CalendarSourcesView: View {
+struct CalendarSourcesView: View {
     let store: any CalendarSourceStore
     let memberStore: any FamilyMemberStore
     let currentMemberID: String?
