@@ -133,6 +133,24 @@ const commuterSubscriptionSchema = z.object({
   windowEndMinutes: z.number().int().min(1).max(1440),
   alertKinds: z.array(z.enum(["delay", "cancellation"])).min(1).max(2),
   minimumDelayMinutes: z.number().int().min(1).max(180),
+  scheduleOptionID: z.string().regex(/^[a-f0-9]{64}$/).optional().nullable(),
+  scheduledDepartureMinutes: z.number().int().min(0).max(1439).optional().nullable(),
+  scheduledArrivalMinutes: z.number().int().min(0).max(1439).optional().nullable(),
+  scheduleVersion: z.string().trim().min(1).max(200).optional().nullable(),
+}).refine((value) => {
+  const scheduleFields = [
+    value.scheduleOptionID,
+    value.scheduledDepartureMinutes,
+    value.scheduledArrivalMinutes,
+    value.scheduleVersion,
+  ];
+  return scheduleFields.every((field) => field === undefined || field === null)
+    || scheduleFields.every((field) => field !== undefined && field !== null);
+});
+const commuterJourneySearchSchema = z.object({
+  originStationID: z.string().trim().min(1).max(300),
+  destinationStationID: z.string().trim().min(1).max(300),
+  serviceWeekdays: z.array(z.number().int().min(1).max(7)).min(1).max(5),
 });
 const commuterInstallationStatusSchema = z.object({
   status: z.literal("disabled"),
@@ -608,6 +626,19 @@ export function buildApp({
     return reply.code(204).send();
   });
 
+  app.post("/v1/modules/commuter/journeys/search", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterJourneySearchSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_commuter_journey_search" });
+    try {
+      return await commuter.searchJourneys(account, parsed.data);
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
   app.post("/v1/modules/commuter/subscriptions", async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
@@ -970,6 +1001,10 @@ function commuterErrorReply(error: unknown, reply: FastifyReply) {
     return reply.code(409).send({ error: "commuter_not_enabled" });
   case "invalid_subscription":
     return reply.code(400).send({ error: "invalid_commuter_subscription" });
+  case "invalid_journey_search":
+    return reply.code(400).send({ error: "invalid_commuter_journey_search" });
+  case "schedule_unavailable":
+    return reply.code(503).send({ error: "commuter_schedule_unavailable" });
   case "subscription_not_found":
     return reply.code(404).send({ error: "commuter_subscription_not_found" });
   case "subscription_limit_reached":

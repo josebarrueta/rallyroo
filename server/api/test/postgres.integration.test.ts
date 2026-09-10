@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { CalendarSourceModule } from "../src/calendar-source-module.js";
 import { CommuterModule } from "../src/commuter-module.js";
+import type { CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-schedule.js";
 import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 
@@ -102,6 +103,50 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
     await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await adminPool.end();
+  });
+
+  it("atomically persists the last-good static Caltrain schedule", async () => {
+    const repository = repositoryForTest();
+    const snapshot: CaltrainStaticScheduleSnapshot = {
+      observedAt: "2026-08-10T00:00:00.000Z",
+      version: "integration-v1",
+      timeZone: "America/Los_Angeles",
+      validFrom: "2026-08-01",
+      validUntil: "2026-12-31",
+      stops: [
+        {
+          id: "A-N", stationID: "A", stationName: "Alpha", direction: "northbound",
+          latitude: 37, longitude: -122,
+          validFrom: "2026-08-01T00:00:00.000Z", validUntil: "2026-12-31T23:59:59.999Z",
+        },
+        {
+          id: "B-N", stationID: "B", stationName: "Beta", direction: "northbound",
+          latitude: 38, longitude: -122,
+          validFrom: "2026-08-01T00:00:00.000Z", validUntil: "2026-12-31T23:59:59.999Z",
+        },
+      ],
+      services: [{
+        id: "a".repeat(64), weekdays: [1, 2, 3, 4, 5],
+        startsOn: "2026-08-01", endsOn: "2026-12-31", addedDates: [], removedDates: [],
+      }],
+      journeys: [{
+        id: "b".repeat(64), serviceID: "a".repeat(64), routeID: "c".repeat(64),
+        direction: "northbound",
+        calls: [
+          { stopID: "A-N", sequence: 1, arrivalSeconds: 25_140, departureSeconds: 25_200 },
+          { stopID: "B-N", sequence: 2, arrivalSeconds: 27_000, departureSeconds: 27_060 },
+        ],
+      }],
+    };
+
+    await repository.replaceCaltrainSchedule(snapshot, snapshot.observedAt);
+    const reader = repositoryForTest();
+    expect(await reader.caltrainSchedule()).toEqual(snapshot);
+    await reader.replaceCaltrainSchedule(
+      { ...snapshot, observedAt: "2026-08-09T00:00:00.000Z", version: "older" },
+      "2026-08-09T00:00:00.000Z",
+    );
+    expect((await repository.caltrainSchedule())?.version).toBe("integration-v1");
   });
 
   it("persists encrypted Commuter state and durable alert deduplication", async () => {

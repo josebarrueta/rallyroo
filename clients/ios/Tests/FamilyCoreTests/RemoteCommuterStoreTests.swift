@@ -65,6 +65,50 @@ final class RemoteCommuterStoreTests: XCTestCase {
         ])
     }
 
+    func testSearchesScheduledJourneysWithoutPuttingCommuteDataInTheURL() async throws {
+        let response = Data("""
+        {
+          "scheduleVersion":"v1",
+          "observedAt":"2026-09-10T00:00:00Z",
+          "validUntil":"2026-12-31",
+          "status":{"state":"healthy","lastSuccessAt":"2026-09-10T00:00:00Z","lastAttemptAt":"2026-09-10T00:00:00Z"},
+          "options":[{
+            "id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "directionID":"northbound",
+            "originStopID":"70171",
+            "destinationStopID":"70011",
+            "departureMinutes":451,
+            "arrivalMinutes":484,
+            "operatingWeekdays":[1,2,3,4,5]
+          }]
+        }
+        """.utf8)
+        let transport = CommuterRecordingTransport(responses: [
+            HTTPResponse(statusCode: 200, body: response)
+        ])
+        let store = RemoteCommuterStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+
+        let result = try await store.searchJourneys(CaltrainJourneySearch(
+            originStationID: "palo_alto",
+            destinationStationID: "san_francisco",
+            serviceWeekdays: [1, 4, 5]
+        ))
+
+        XCTAssertEqual(result.options.first?.departureMinutes, 451)
+        XCTAssertEqual(result.options.first?.arrivalMinutes, 484)
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.method, .post)
+        XCTAssertEqual(request.url.path, "/v1/modules/commuter/journeys/search")
+        XCTAssertNil(request.url.query)
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["serviceWeekdays"] as? [Int], [1, 4, 5])
+    }
+
     func testDisablesWithoutRemovingAndExplicitlyRemovesTheModule() async throws {
         let transport = CommuterRecordingTransport(responses: [
             HTTPResponse(statusCode: 204, body: Data()),

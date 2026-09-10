@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { caltrainRealtimeConditions } from "../src/caltrain-realtime-conditions.js";
+import { caltrainJourneyID, type CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-schedule.js";
 
 const catalog = [{
   id: "70171", stationID: "palo_alto", stationName: "Palo Alto",
@@ -24,6 +25,52 @@ describe("caltrainRealtimeConditions", () => {
       scope: "trip", id: expect.stringMatching(/^trip:[a-f0-9]{64}$/), routeID: "L1",
       directionID: "northbound", serviceWeekday: 3, scheduledMinutes: 460,
       kind: "delay", delayMinutes: 20,
+    })]);
+  });
+
+  it("enriches a canceled trip with its static stops and schedule when realtime omits calls", () => {
+    const schedule: CaltrainStaticScheduleSnapshot = {
+      observedAt: "2026-09-09T00:00:00Z", version: "v1",
+      timeZone: "America/Los_Angeles", validFrom: "2026-09-01", validUntil: "2026-12-31",
+      stops: [catalog[0]!, {
+        ...catalog[0]!, id: "70011", stationID: "san_francisco", stationName: "San Francisco",
+      }],
+      services: [{
+        id: "a".repeat(64), weekdays: [1, 2, 3, 4, 5],
+        startsOn: "2026-09-01", endsOn: "2026-12-31", addedDates: [], removedDates: [],
+      }],
+      journeys: [{
+        id: caltrainJourneyID("trip-canceled"), serviceID: "a".repeat(64),
+        routeID: "b".repeat(64), direction: "northbound",
+        calls: [
+          { stopID: "70171", sequence: 1, arrivalSeconds: 25_140, departureSeconds: 25_200 },
+          { stopID: "70011", sequence: 2, arrivalSeconds: 27_000, departureSeconds: 27_060 },
+        ],
+      }],
+    };
+    const conditions = caltrainRealtimeConditions({
+      tripUpdates: {
+        observedAt: "2026-09-09T14:00:00Z", validUntil: "2026-09-09T14:03:00Z",
+        trips: [{
+          id: "entity-canceled", tripID: "trip-canceled", routeID: "L1", directionID: null,
+          startDate: "20260909", startTime: null, status: "canceled", stops: [],
+        }],
+      },
+      serviceAlerts: {
+        observedAt: "2026-09-09T14:00:00Z", validUntil: "2026-09-09T14:03:00Z", alerts: [],
+      },
+    }, catalog, new Date("2026-09-09T14:01:00Z"), schedule);
+
+    expect(conditions).toEqual([expect.objectContaining({
+      directionID: "northbound",
+      stopIDs: ["70171", "70011"],
+      serviceWeekday: 3,
+      scheduledMinutes: 420,
+      kind: "cancellation",
+      scheduledStops: [
+        { stopID: "70171", scheduledMinutes: 420, delayMinutes: 0 },
+        { stopID: "70011", scheduledMinutes: 451, delayMinutes: 0 },
+      ],
     })]);
   });
 

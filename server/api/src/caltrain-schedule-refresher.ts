@@ -1,27 +1,25 @@
 import { parseCaltrainStaticSchedule } from "./caltrain-static-schedule.js";
+import type { CommuterModule } from "./commuter-module.js";
 
-const maximumArchiveBytes = 5 * 1024 * 1024;
-const maximumExpandedBytes = 25 * 1024 * 1024;
+interface CaltrainStaticScheduleClient {
+  staticSchedule(): Promise<Uint8Array>;
+}
 
 export class CaltrainScheduleRefresher {
   constructor(
-    private readonly client: () => Promise<Uint8Array>,
-    private readonly repository: {
-      saveScheduleSnapshot(schedule: any): Promise<void>;
-      recordAttempt(attemptedAt: Date, succeeded: boolean): Promise<void>;
-    },
+    private readonly client: CaltrainStaticScheduleClient,
+    private readonly commuter: CommuterModule,
   ) {}
 
   async refresh(attemptedAt: Date): Promise<void> {
     try {
-      if (attemptedAt.getTime() > Date.now() + 60_000) throw new Error("future attemptedAt");
-      const body = (await this.client());
-      if (body.byteLength < 1 || body.byteLength > maximumArchiveBytes) throw new Error("invalid archive size");
-      const schedule = parseCaltrainStaticSchedule(body, attemptedAt);
-      await this.repository.saveScheduleSnapshot(schedule);
-      await this.repository.recordAttempt(attemptedAt, true);
+      const schedule = parseCaltrainStaticSchedule(
+        await this.client.staticSchedule(),
+        attemptedAt,
+      );
+      await this.commuter.replaceSchedule(schedule, attemptedAt);
     } catch (error) {
-      await this.repository.recordAttempt(attemptedAt, false);
+      await this.commuter.recordProviderFailure("catalog", attemptedAt);
       throw new Error("Caltrain schedule refresh failed", { cause: error });
     }
   }

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { CaltrainStop, TransitCondition } from "./commuter-module.js";
 import type { CaltrainRealtimeSnapshot } from "./caltrain-realtime-refresher.js";
+import {
+  caltrainJourneyID,
+  type CaltrainStaticScheduleSnapshot,
+} from "./caltrain-static-schedule.js";
 
 const caltrainTimeZone = "America/Los_Angeles";
 
@@ -8,29 +12,53 @@ export function caltrainRealtimeConditions(
   snapshot: CaltrainRealtimeSnapshot,
   catalog: CaltrainStop[],
   now: Date,
+  schedule?: CaltrainStaticScheduleSnapshot | null,
 ): TransitCondition[] {
   const stopDirections = new Map(catalog.map((stop) => [stop.id, stop.direction]));
+  const scheduledJourneys = new Map(
+    (schedule?.journeys ?? []).map((journey) => [journey.id, journey] as const),
+  );
   const conditions: TransitCondition[] = [];
   for (const trip of snapshot.tripUpdates.trips) {
+    const staticJourney = scheduledJourneys.get(caltrainJourneyID(trip.tripID));
     const firstTimedStop = trip.stops.find((stop) => stop.eventTime);
-    const direction = trip.stops.map((stop) => stopDirections.get(stop.stopID))
+    const direction = staticJourney?.direction ?? trip.stops.map((stop) => stopDirections.get(stop.stopID))
       .find((value) => value === "northbound" || value === "southbound");
-    if (!firstTimedStop?.eventTime || !direction) continue;
+    if (!direction || (!firstTimedStop?.eventTime && !staticJourney)) continue;
     const maximumDelay = Math.max(0, ...trip.stops.map((stop) => stop.delaySeconds));
     if (trip.status !== "canceled" && maximumDelay < 60) continue;
-    const scheduledAt = new Date(
-      new Date(firstTimedStop.eventTime).getTime() - firstTimedStop.delaySeconds * 1_000,
-    );
-    const local = localSchedule(scheduledAt);
+    const firstScheduledAt = firstTimedStop?.eventTime
+      ? new Date(new Date(firstTimedStop.eventTime).getTime() - firstTimedStop.delaySeconds * 1_000)
+      : null;
+    const local = firstScheduledAt ? localSchedule(firstScheduledAt) : serviceDateSchedule(trip.startDate, now);
+    const realtimeByStop = new Map(trip.stops.map((stop) => [stop.stopID, stop] as const));
+    const scheduledStops = staticJourney
+      ? staticJourney.calls.map((call) => ({
+        stopID: call.stopID,
+        scheduledMinutes: Math.floor(call.departureSeconds / 60) % 1_440,
+        delayMinutes: Math.max(0, Math.floor((realtimeByStop.get(call.stopID)?.delaySeconds ?? 0) / 60)),
+      }))
+      : trip.stops.flatMap((stop) => {
+        if (!stop.eventTime) return [];
+        const scheduled = new Date(new Date(stop.eventTime).getTime() - stop.delaySeconds * 1_000);
+        return [{
+          stopID: stop.stopID,
+          scheduledMinutes: localSchedule(scheduled).minutes,
+          delayMinutes: Math.max(0, Math.floor(stop.delaySeconds / 60)),
+        }];
+      });
+    if (scheduledStops.length === 0) continue;
     conditions.push({
       scope: "trip",
       id: stableConditionID("trip", trip.id, local.date),
       agencyID: "CT",
       routeID: trip.routeID,
       directionID: direction,
-      stopIDs: trip.stops.map((stop) => stop.stopID),
+      stopIDs: staticJourney?.calls.map((call) => call.stopID)
+        ?? trip.stops.map((stop) => stop.stopID),
       serviceWeekday: local.weekday,
-      scheduledMinutes: local.minutes,
+      scheduledMinutes: scheduledStops[0]!.scheduledMinutes,
+      scheduledStops,
       kind: trip.status === "canceled" ? "cancellation" : "delay",
       delayMinutes: Math.floor(maximumDelay / 60),
       observedAt: snapshot.tripUpdates.observedAt,
@@ -112,6 +140,26 @@ function boundedAlertExpiry(
     .map((period) => period.endsAt ? new Date(period.endsAt).getTime() : Number.POSITIVE_INFINITY)
     .filter((value) => value >= now);
   return new Date(Math.min(new Date(feedExpiry).getTime(), ...activeEnds)).toISOString();
+}
+
+function serviceDateSchedule(
+  startDate: string | null,
+  fallback: Date,
+): { date: string; weekday: number; minutes: number } {
+  if (!startDate || !/^\d{8}$/.test(startDate)) return localSchedule(fallback);
+  const year = Number(startDate.slice(0, 4));
+  const month = Number(startDate.slice(4, 6));
+  const day = Number(startDate.slice(6, 8));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    return localSchedule(fallback);
+  }
+  const utcWeekday = date.getUTCDay();
+  return {
+    date: `${startDate.slice(0, 4)}-${startDate.slice(4, 6)}-${startDate.slice(6, 8)}`,
+    weekday: utcWeekday === 0 ? 7 : utcWeekday,
+    minutes: 0,
+  };
 }
 
 function localSchedule(date: Date): { date: string; weekday: number; minutes: number } {

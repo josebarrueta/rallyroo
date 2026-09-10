@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Account } from "./domain.js";
+import type { CaltrainStaticScheduleSnapshot } from "./caltrain-static-schedule.js";
+import {
+  searchCaltrainJourneys,
+  type CaltrainJourneyOption,
+  type CaltrainJourneySearch,
+} from "./caltrain-schedule-search.js";
 
 const subscriptionDetailsSchema = z.object({
   agencyID: z.literal("CT"),
@@ -13,12 +19,22 @@ const subscriptionDetailsSchema = z.object({
   windowEndMinutes: z.number().int().min(1).max(1440),
   alertKinds: z.array(z.enum(["delay", "cancellation"])).min(1).max(2),
   minimumDelayMinutes: z.number().int().min(1).max(180),
-  scheduledJourneyId: z.string().trim().min(1).max(200).optional().nullable(),
+  scheduleOptionID: z.string().trim().min(1).max(200).optional().nullable(),
   scheduledDepartureMinutes: z.number().int().min(0).max(1439).optional().nullable(),
   scheduledArrivalMinutes: z.number().int().min(0).max(1439).optional().nullable(),
   scheduleVersion: z.string().trim().min(1).max(200).optional().nullable(),
 }).strict().refine((value) => value.originStopID !== value.destinationStopID)
-  .refine((value) => value.windowEndMinutes > value.windowStartMinutes);
+  .refine((value) => value.windowEndMinutes > value.windowStartMinutes)
+  .refine((value) => {
+    const scheduleFields = [
+      value.scheduleOptionID,
+      value.scheduledDepartureMinutes,
+      value.scheduledArrivalMinutes,
+      value.scheduleVersion,
+    ];
+    return scheduleFields.every((field) => field === undefined || field === null)
+      || scheduleFields.every((field) => field !== undefined && field !== null);
+  });
 
 const transitConditionSchema = z.object({
   scope: z.enum(["trip", "disruption"]).optional(),
@@ -29,6 +45,11 @@ const transitConditionSchema = z.object({
   stopIDs: z.array(z.string().min(1).max(200)).max(500),
   serviceWeekday: z.number().int().min(1).max(7),
   scheduledMinutes: z.number().int().min(0).max(1439),
+  scheduledStops: z.array(z.object({
+    stopID: z.string().min(1).max(200),
+    scheduledMinutes: z.number().int().min(0).max(1439),
+    delayMinutes: z.number().int().min(0).max(1440),
+  }).strict()).max(500).optional(),
   kind: z.enum(["delay", "cancellation"]),
   delayMinutes: z.number().int().min(0).max(1440),
   observedAt: z.string().datetime({ offset: true }),
@@ -61,10 +82,11 @@ export interface CommuteSubscription {
   alertKinds: CommuteAlertKind[];
   minimumDelayMinutes: number;
   status: CommuteSubscriptionStatus;
-  scheduledJourneyId?: string | null;
+  scheduleOptionID?: string | null;
   scheduledDepartureMinutes?: number | null;
   scheduledArrivalMinutes?: number | null;
   scheduleVersion?: string | null;
+  scheduleAvailability?: "available" | "needs_reselection";
 }
 
 export interface NewCommuteSubscription {
@@ -79,10 +101,10 @@ export interface NewCommuteSubscription {
   windowEndMinutes: number;
   alertKinds: readonly CommuteAlertKind[];
   minimumDelayMinutes: number;
-  scheduledJourneyId?: string | null;
-  scheduledDepartureMinutes?: number | null;
-  scheduledArrivalMinutes?: number | null;
-  scheduleVersion?: string | null;
+  scheduleOptionID?: string | null | undefined;
+  scheduledDepartureMinutes?: number | null | undefined;
+  scheduledArrivalMinutes?: number | null | undefined;
+  scheduleVersion?: string | null | undefined;
 }
 
 export interface TransitCondition {
@@ -94,6 +116,11 @@ export interface TransitCondition {
   stopIDs: string[];
   serviceWeekday: number;
   scheduledMinutes: number;
+  scheduledStops?: Array<{
+    stopID: string;
+    scheduledMinutes: number;
+    delayMinutes: number;
+  }>;
   kind: CommuteAlertKind;
   delayMinutes: number;
   observedAt: string;
@@ -155,6 +182,14 @@ export interface CaltrainCatalog {
   stops: CaltrainStop[];
 }
 
+export interface CaltrainJourneySearchResult {
+  scheduleVersion: string;
+  observedAt: string;
+  validUntil: string;
+  status: CommuterProviderFeedStatus;
+  options: CaltrainJourneyOption[];
+}
+
 export interface CommuterState {
   installation: CommuterInstallation | null;
   subscriptions: CommuteSubscription[];
@@ -188,12 +223,19 @@ export interface CommuterRepository {
   ): Promise<void>;
   replaceCaltrainCatalog(snapshot: CaltrainStopsSnapshot, attemptedAt: string): Promise<void>;
   caltrainCatalog(): Promise<{ observedAt: string | null; stops: CaltrainStop[] }>;
+  replaceCaltrainSchedule(
+    snapshot: CaltrainStaticScheduleSnapshot,
+    attemptedAt: string,
+  ): Promise<void>;
+  caltrainSchedule(): Promise<CaltrainStaticScheduleSnapshot | null>;
 }
 
 export type CommuterModuleErrorReason =
   | "parent_required"
   | "module_not_enabled"
   | "invalid_subscription"
+  | "invalid_journey_search"
+  | "schedule_unavailable"
   | "subscription_not_found"
   | "subscription_limit_reached";
 
@@ -230,14 +272,30 @@ export class CommuterModule {
     await this.repository.removeInstallationAndState(account.familyID);
   }
 
-  async state(account: Account): Promise<CommuterState> {
-    const providerStatus = await this.providerStatus(new Date());
+  async state(account: Account, now: Date = new Date()): Promise<CommuterState> {
+    const providerStatus = await this.providerStatus(now);
     const installation = await this.repository.installation(account.familyID);
     if (!installation) return { installation: null, subscriptions: [], providerStatus };
-    const subscriptions = (await this.repository.subscriptionsForFamily(account.familyID))
+    const visibleSubscriptions = (await this.repository.subscriptionsForFamily(account.familyID))
       .filter((subscription) => (
         subscription.visibility === "family" || subscription.ownerMemberID === account.memberID
       ));
+    const needsSchedule = visibleSubscriptions.some((subscription) => subscription.scheduleOptionID);
+    const schedule = needsSchedule ? await this.repository.caltrainSchedule() : null;
+    const subscriptions = visibleSubscriptions.map((subscription) => (
+      subscription.scheduleOptionID
+        ? {
+          ...subscription,
+          scheduleAvailability: scheduledSubscriptionIsAvailable(
+            subscription,
+            schedule,
+            caltrainLocalDate(now),
+          )
+            ? "available" as const
+            : "needs_reselection" as const,
+        }
+        : subscription
+    ));
     return { installation, subscriptions, providerStatus };
   }
 
@@ -282,15 +340,88 @@ export class CommuterModule {
     };
   }
 
+  async replaceSchedule(
+    snapshot: CaltrainStaticScheduleSnapshot,
+    attemptedAt: Date,
+  ): Promise<void> {
+    requireValidObservationDate(attemptedAt);
+    await this.repository.replaceCaltrainSchedule(snapshot, attemptedAt.toISOString());
+  }
+
+  async providerSchedule(): Promise<CaltrainStaticScheduleSnapshot | null> {
+    return this.repository.caltrainSchedule();
+  }
+
+  async searchJourneys(
+    account: Account,
+    search: CaltrainJourneySearch,
+    now: Date = new Date(),
+  ): Promise<CaltrainJourneySearchResult> {
+    requireParent(account);
+    if ((await this.repository.installation(account.familyID))?.status !== "enabled") {
+      throw new CommuterModuleError("module_not_enabled");
+    }
+    const schedule = await this.repository.caltrainSchedule();
+    const today = caltrainLocalDate(now);
+    if (!schedule || today < schedule.validFrom || today > schedule.validUntil) {
+      throw new CommuterModuleError("schedule_unavailable");
+    }
+    const observation = await this.repository.providerFeedObservation("CT", "catalog");
+    try {
+      return {
+        scheduleVersion: schedule.version,
+        observedAt: schedule.observedAt,
+        validUntil: schedule.validUntil,
+        status: feedStatus(observation, now, 48 * 60 * 60 * 1_000),
+        options: searchCaltrainJourneys(schedule, search, today),
+      };
+    } catch {
+      throw new CommuterModuleError("invalid_journey_search");
+    }
+  }
+
   async createSubscription(
     account: Account,
     input: NewCommuteSubscription,
+    now: Date = new Date(),
   ): Promise<CommuteSubscription> {
     requireParent(account);
     if ((await this.repository.installation(account.familyID))?.status !== "enabled") {
       throw new CommuterModuleError("module_not_enabled");
     }
-    const details = validatedSubscriptionDetails(input);
+    let details = validatedSubscriptionDetails(input);
+    if (details.scheduleOptionID) {
+      const schedule = await this.repository.caltrainSchedule();
+      const today = caltrainLocalDate(now);
+      if (!schedule || today < schedule.validFrom || today > schedule.validUntil) {
+        throw new CommuterModuleError("schedule_unavailable");
+      }
+      if (details.scheduleVersion !== schedule.version) {
+        throw new CommuterModuleError("invalid_subscription");
+      }
+      const origin = schedule.stops.find((stop) => stop.id === details.originStopID);
+      const destination = schedule.stops.find((stop) => stop.id === details.destinationStopID);
+      if (!origin || !destination) throw new CommuterModuleError("invalid_subscription");
+      const option = searchCaltrainJourneys(schedule, {
+        originStationID: origin.stationID,
+        destinationStationID: destination.stationID,
+        serviceWeekdays: details.serviceWeekdays,
+      }, today).find((candidate) => candidate.id === details.scheduleOptionID);
+      if (!option
+        || option.originStopID !== details.originStopID
+        || option.destinationStopID !== details.destinationStopID
+        || option.directionID !== details.directionID
+        || option.departureMinutes !== details.scheduledDepartureMinutes
+        || option.arrivalMinutes !== details.scheduledArrivalMinutes) {
+        throw new CommuterModuleError("invalid_subscription");
+      }
+      details = {
+        ...details,
+        routeID: "*",
+        windowStartMinutes: option.departureMinutes,
+        windowEndMinutes: Math.min(option.departureMinutes + 1, 1_440),
+      };
+    }
     const subscription: CommuteSubscription = {
       ...details,
       visibility: input.visibility,
@@ -300,7 +431,7 @@ export class CommuterModule {
       serviceWeekdays: [...new Set(details.serviceWeekdays)].sort((left, right) => left - right),
       alertKinds: [...new Set(details.alertKinds)],
       status: "active",
-      scheduledJourneyId: details.scheduledJourneyId ?? null,
+      scheduleOptionID: details.scheduleOptionID ?? null,
       scheduledDepartureMinutes: details.scheduledDepartureMinutes ?? null,
       scheduledArrivalMinutes: details.scheduledArrivalMinutes ?? null,
       scheduleVersion: details.scheduleVersion ?? null,
@@ -332,11 +463,21 @@ export class CommuterModule {
       throw new Error("Invalid Commuter provider snapshot");
     }
     const subscriptions = await this.repository.activeSubscriptionsForAgency("CT");
+    const schedule = subscriptions.some((subscription) => subscription.scheduleOptionID)
+      ? await this.repository.caltrainSchedule()
+      : null;
     const candidates: CommuteAlertIntent[] = [];
     for (const condition of conditions) {
       if (!isFresh(condition, now)) continue;
       for (const subscription of subscriptions) {
-        if (!matches(subscription, condition)) continue;
+        if (subscription.scheduleOptionID
+          && !scheduledSubscriptionIsAvailable(
+            subscription,
+            schedule,
+            caltrainLocalDate(now),
+          )) continue;
+        const matchedDelayMinutes = matchDelayMinutes(subscription, condition);
+        if (matchedDelayMinutes === null) continue;
         if (candidates.length >= 10_000) {
           throw new Error("Commuter alert fan-out limit exceeded");
         }
@@ -346,7 +487,7 @@ export class CommuterModule {
           familyID: subscription.familyID,
           conditionID: condition.id,
           kind: condition.kind,
-          delayMinutes: condition.delayMinutes,
+          delayMinutes: matchedDelayMinutes,
           expiresAt: condition.validUntil,
           audience: subscription.visibility === "personal"
             ? { kind: "member", memberID: subscription.ownerMemberID }
@@ -392,7 +533,7 @@ function validatedSubscriptionDetails(input: NewCommuteSubscription) {
 
 export function parseCommuteSubscriptionDetails(plaintext: string) {
   const parsed = subscriptionDetailsSchema.parse(JSON.parse(plaintext));
-  if (parsed.scheduledJourneyId || parsed.scheduledDepartureMinutes !== undefined || parsed.scheduledArrivalMinutes !== undefined || parsed.scheduleVersion) {
+  if (parsed.scheduleOptionID || parsed.scheduledDepartureMinutes !== undefined || parsed.scheduledArrivalMinutes !== undefined || parsed.scheduleVersion) {
     return {
       agencyID: parsed.agencyID,
       routeID: parsed.routeID,
@@ -404,7 +545,7 @@ export function parseCommuteSubscriptionDetails(plaintext: string) {
       windowEndMinutes: parsed.windowEndMinutes,
       alertKinds: parsed.alertKinds,
       minimumDelayMinutes: parsed.minimumDelayMinutes,
-      scheduledJourneyId: parsed.scheduledJourneyId ?? null,
+      scheduleOptionID: parsed.scheduleOptionID ?? null,
       scheduledDepartureMinutes: parsed.scheduledDepartureMinutes ?? null,
       scheduledArrivalMinutes: parsed.scheduledArrivalMinutes ?? null,
       scheduleVersion: parsed.scheduleVersion ?? null,
@@ -437,6 +578,19 @@ function feedStatus(
   };
 }
 
+function caltrainLocalDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => (
+    parts.find((part) => part.type === type)?.value ?? ""
+  );
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 function requireValidObservationDate(date: Date): void {
   if (!Number.isFinite(date.getTime())) throw new Error("Invalid Commuter provider observation date");
 }
@@ -450,7 +604,36 @@ function isFresh(condition: TransitCondition, now: Date): boolean {
     && validUntil >= now.getTime();
 }
 
-function matches(subscription: CommuteSubscription, condition: TransitCondition): boolean {
+function scheduledSubscriptionIsAvailable(
+  subscription: CommuteSubscription,
+  schedule: CaltrainStaticScheduleSnapshot | null,
+  serviceDate: string,
+): boolean {
+  if (!subscription.scheduleOptionID) return true;
+  if (!schedule) return false;
+  const origin = schedule.stops.find((stop) => stop.id === subscription.originStopID);
+  const destination = schedule.stops.find((stop) => stop.id === subscription.destinationStopID);
+  if (!origin || !destination) return false;
+  try {
+    return searchCaltrainJourneys(schedule, {
+      originStationID: origin.stationID,
+      destinationStationID: destination.stationID,
+      serviceWeekdays: subscription.serviceWeekdays,
+    }, serviceDate).some((option) => option.id === subscription.scheduleOptionID
+      && option.originStopID === subscription.originStopID
+      && option.destinationStopID === subscription.destinationStopID
+      && option.directionID === subscription.directionID
+      && option.departureMinutes === subscription.scheduledDepartureMinutes
+      && option.arrivalMinutes === subscription.scheduledArrivalMinutes);
+  } catch {
+    return false;
+  }
+}
+
+function matchDelayMinutes(
+  subscription: CommuteSubscription,
+  condition: TransitCondition,
+): number | null {
   const originIndex = condition.stopIDs.indexOf(subscription.originStopID);
   const destinationIndex = condition.stopIDs.indexOf(subscription.destinationStopID);
   const disruption = condition.scope === "disruption";
@@ -459,21 +642,30 @@ function matches(subscription: CommuteSubscription, condition: TransitCondition)
       || condition.stopIDs.includes(subscription.originStopID)
       || condition.stopIDs.includes(subscription.destinationStopID)
     : condition.stopIDs.length === 0 || (originIndex >= 0 && destinationIndex > originIndex);
-  const timeWithinWindow = condition.scheduledMinutes >= subscription.windowStartMinutes
-    && condition.scheduledMinutes <= subscription.windowEndMinutes;
-  const timeMatchesJourney = subscription.scheduledJourneyId
-    ? condition.scheduledMinutes === subscription.scheduledDepartureMinutes
-      && subscription.scheduledArrivalMinutes !== undefined
+  const originSchedule = condition.scheduledStops
+    ?.find((stop) => stop.stopID === subscription.originStopID);
+  const relevantScheduledMinutes = originSchedule?.scheduledMinutes ?? condition.scheduledMinutes;
+  const relevantDelayMinutes = originSchedule?.delayMinutes ?? condition.delayMinutes;
+  const timeWithinWindow = disruption && !originSchedule
+    ? true
+    : relevantScheduledMinutes >= subscription.windowStartMinutes
+      && relevantScheduledMinutes <= subscription.windowEndMinutes;
+  const timeMatchesSchedule = subscription.scheduleOptionID
+    ? disruption && !originSchedule
+      ? true
+      : relevantScheduledMinutes === subscription.scheduledDepartureMinutes
+        && subscription.scheduledArrivalMinutes !== undefined
     : true;
-  return subscription.status === "active"
+  const matches = subscription.status === "active"
     && subscription.agencyID === condition.agencyID
     && (condition.routeID === "*" || subscription.routeID === "*"
       || subscription.routeID === condition.routeID)
     && (condition.directionID === "*" || subscription.directionID === condition.directionID)
     && subscription.serviceWeekdays.includes(condition.serviceWeekday)
-    && (subscription.scheduledJourneyId ? timeMatchesJourney : timeWithinWindow)
+    && (subscription.scheduleOptionID ? timeMatchesSchedule : timeWithinWindow)
     && subscription.alertKinds.includes(condition.kind)
     && (condition.kind !== "delay" || disruption
-      || condition.delayMinutes >= subscription.minimumDelayMinutes)
+      || relevantDelayMinutes >= subscription.minimumDelayMinutes)
     && stopsMatch;
+  return matches ? relevantDelayMinutes : null;
 }

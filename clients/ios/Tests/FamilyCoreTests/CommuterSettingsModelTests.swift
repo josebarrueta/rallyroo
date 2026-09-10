@@ -106,6 +106,10 @@ private actor CommuterSettingsStoreStub: CommuterStore {
         return CaltrainCatalog(status: unavailableFeed, observedAt: nil, stops: [])
     }
 
+    func searchJourneys(_ search: CaltrainJourneySearch) -> CaltrainJourneySearchResult {
+        fatalError("Not needed by this test")
+    }
+
     func enable() -> CommuterInstallation {
         enabled += 1
         return CommuterInstallation(enabledByMemberID: "parent-1", status: .enabled)

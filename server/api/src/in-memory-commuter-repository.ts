@@ -8,6 +8,7 @@ import type {
   CommuteAlertIntent,
   CommuteSubscription,
 } from "./commuter-module.js";
+import type { CaltrainStaticScheduleSnapshot } from "./caltrain-static-schedule.js";
 
 export class InMemoryCommuterRepository implements CommuterRepository {
   private readonly installations = new Map<string, CommuterInstallation>();
@@ -16,6 +17,7 @@ export class InMemoryCommuterRepository implements CommuterRepository {
   private readonly providerFeeds = new Map<CommuterProviderFeed, CommuterProviderFeedObservation>();
   private catalogObservedAt: string | null = null;
   private catalogStops: CaltrainStop[] = [];
+  private schedule: CaltrainStaticScheduleSnapshot | null = null;
 
   async installation(familyID: string): Promise<CommuterInstallation | null> {
     return this.installations.get(familyID) ?? null;
@@ -130,6 +132,22 @@ export class InMemoryCommuterRepository implements CommuterRepository {
       observedAt: this.catalogObservedAt,
       stops: this.catalogStops.map((stop) => ({ ...stop })),
     };
+  }
+
+  async replaceCaltrainSchedule(
+    snapshot: CaltrainStaticScheduleSnapshot,
+    attemptedAt: string,
+  ): Promise<void> {
+    const priorAttempt = this.providerFeeds.get("catalog")?.lastAttemptAt;
+    if (priorAttempt && priorAttempt > attemptedAt) return;
+    this.schedule = structuredClone(snapshot);
+    this.catalogObservedAt = snapshot.observedAt;
+    this.catalogStops = snapshot.stops.map((stop) => ({ ...stop }));
+    await this.saveProviderFeedAttempt("CT", "catalog", attemptedAt, true);
+  }
+
+  async caltrainSchedule(): Promise<CaltrainStaticScheduleSnapshot | null> {
+    return this.schedule ? structuredClone(this.schedule) : null;
   }
 
   async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {

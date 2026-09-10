@@ -1,90 +1,106 @@
 import { createHash } from "node:crypto";
-import type { CaltrainStaticScheduleSnapshot, CaltrainScheduledJourney, CaltrainScheduleService } from "./caltrain-static-schedule.js";
+import type { CaltrainStaticScheduleSnapshot } from "./caltrain-static-schedule.js";
 
-export interface ScheduleSearchOptions {
-  fromStopID: string;
-  toStopID: string;
-  directionID: string;
-  weekday: number;
-  routeID?: string;
+export interface CaltrainJourneySearch {
+  originStationID: string;
+  destinationStationID: string;
+  serviceWeekdays: number[];
 }
 
-export interface JourneyOption {
+export interface CaltrainJourneyOption {
+  id: string;
+  directionID: "northbound" | "southbound";
+  originStopID: string;
+  destinationStopID: string;
   departureMinutes: number;
   arrivalMinutes: number;
-  journeyId: string;
-  serviceId: string;
+  operatingWeekdays: number[];
 }
 
-function secondsToMinutes(seconds: number): number {
-  return Math.floor(seconds / 60);
+interface MutableJourneyOption extends Omit<CaltrainJourneyOption, "id" | "operatingWeekdays"> {
+  weekdays: Set<number>;
 }
 
-function sameSchedule(
-  a: CaltrainScheduledJourney,
-  b: CaltrainScheduledJourney,
-): boolean {
-  if (a.calls.length !== b.calls.length) return false;
-  for (let i = 0; i < a.calls.length; i++) {
-    if (a.calls[i]!.stopID !== b.calls[i]!.stopID) return false;
-    if (a.calls[i]!.arrivalSeconds !== b.calls[i]!.arrivalSeconds) return false;
-    if (a.calls[i]!.departureSeconds !== b.calls[i]!.departureSeconds) return false;
-  }
-  return true;
-}
-
-function stableSha256(...parts: string[]): string {
-  return createHash("sha256").update(parts.join("\u0000")).digest("hex");
-}
-
-export function findJourneys(
+export function searchCaltrainJourneys(
   schedule: CaltrainStaticScheduleSnapshot,
-  options: ScheduleSearchOptions,
-): JourneyOption[] {
-  const targetDate = new Date(`${schedule.validFrom}T00:00:00Z`).toISOString();
-  const servicesByWeekday = new Map<number, CaltrainScheduleService[]>();
-  for (const s of schedule.services) {
-    for (const d of s.weekdays) {
-      const list = servicesByWeekday.get(d) ?? [];
-      list.push(s);
-      servicesByWeekday.set(d, list);
+  search: CaltrainJourneySearch,
+  serviceDate: string = schedule.validFrom,
+): CaltrainJourneyOption[] {
+  try {
+    const selectedDays = [...new Set(search.serviceWeekdays)].sort((left, right) => left - right);
+    if (!search.originStationID || search.originStationID.length > 300
+      || !search.destinationStationID || search.destinationStationID.length > 300
+      || search.originStationID === search.destinationStationID
+      || selectedDays.length < 1
+      || selectedDays.some((day) => !Number.isInteger(day) || day < 1 || day > 7)
+      || (selectedDays.some((day) => day <= 5) && selectedDays.some((day) => day >= 6))) {
+      throw new Error("invalid search");
     }
-  }
-  const services = servicesByWeekday.get(options.weekday) ?? [];
-  const resultMap = new Map<string, JourneyOption>();
-  for (const service of services) {
-    const inRange = schedule.validFrom <= targetDate
-      && targetDate <= schedule.validUntil;
-    if (!inRange) continue;
-    const weekServices = schedule.services.filter((svc) => svc.id === service.id);
-    const activeServices = weekServices.length;
-    if (activeServices === 0) continue;
+    const stopsByStation = new Map<string, Set<string>>();
+    for (const stop of schedule.stops) {
+      const ids = stopsByStation.get(stop.stationID) ?? new Set<string>();
+      ids.add(stop.id);
+      stopsByStation.set(stop.stationID, ids);
+    }
+    const originStopIDs = stopsByStation.get(search.originStationID);
+    const destinationStopIDs = stopsByStation.get(search.destinationStationID);
+    if (!originStopIDs || !destinationStopIDs) throw new Error("unknown station");
+
+    const servicesByID = new Map(
+      schedule.services.map((service) => [service.id, service] as const),
+    );
+    const grouped = new Map<string, MutableJourneyOption>();
     for (const journey of schedule.journeys) {
-      if (journey.serviceID !== service.id) continue;
-      if (options.routeID && journey.routeID !== options.routeID) continue;
-      const directionMatch = journey.direction === (options.directionID === "1" ? "northbound" : "southbound");
-      if (!directionMatch) continue;
-      const originIdx = journey.calls.findIndex((c) => c.stopID === options.fromStopID);
-      const destIdx = journey.calls.findIndex((c) => c.stopID === options.toStopID);
-      if (originIdx < 0 || destIdx <= originIdx) continue;
-      const departureMinutes = secondsToMinutes(journey.calls[originIdx]!.departureSeconds);
-      const arrivalMinutes = secondsToMinutes(journey.calls[destIdx]!.arrivalSeconds);
-      const scheduleKey = stableSha256(journey.id, options.fromStopID, options.toStopID);
-      const signature = JSON.stringify({
-        journeyId: journey.id,
+      const originIndex = journey.calls.findIndex((call) => originStopIDs.has(call.stopID));
+      if (originIndex < 0) continue;
+      const destinationIndex = journey.calls.findIndex((call, index) => (
+        index > originIndex && destinationStopIDs.has(call.stopID)
+      ));
+      if (destinationIndex < 0) continue;
+      const origin = journey.calls[originIndex]!;
+      const destination = journey.calls[destinationIndex]!;
+      const departureMinutes = Math.floor(origin.departureSeconds / 60) % 1_440;
+      const arrivalMinutes = Math.floor(destination.arrivalSeconds / 60) % 1_440;
+      const key = [
+        journey.direction,
+        origin.stopID,
+        destination.stopID,
+        String(departureMinutes),
+        String(arrivalMinutes),
+      ].join("\u0000");
+      const service = servicesByID.get(journey.serviceID);
+      if (!service || serviceDate < service.startsOn || serviceDate > service.endsOn) continue;
+      const option = grouped.get(key) ?? {
+        directionID: journey.direction,
+        originStopID: origin.stopID,
+        destinationStopID: destination.stopID,
         departureMinutes,
         arrivalMinutes,
-        calls: journey.calls.map((c) => ({ stopID: c.stopID, arrivalSeconds: c.arrivalSeconds, departureSeconds: c.departureSeconds })),
-      });
-      const existing = resultMap.get(scheduleKey);
-      if (!existing || signature !== JSON.stringify(existing)) {
-        const serviceId = journey.serviceID;
-        const journeyId = journey.id;
-        resultMap.set(scheduleKey, { departureMinutes, arrivalMinutes, journeyId, serviceId });
+        weekdays: new Set<number>(),
+      };
+      for (const weekday of service.weekdays) {
+        option.weekdays.add(weekday);
       }
+      grouped.set(key, option);
     }
+
+    const options = [...grouped.entries()]
+      .filter(([, option]) => selectedDays.every((day) => option.weekdays.has(day)))
+      .map(([key, option]): CaltrainJourneyOption => ({
+        id: createHash("sha256").update(`schedule\u0000${key}`, "utf8").digest("hex"),
+        directionID: option.directionID,
+        originStopID: option.originStopID,
+        destinationStopID: option.destinationStopID,
+        departureMinutes: option.departureMinutes,
+        arrivalMinutes: option.arrivalMinutes,
+        operatingWeekdays: [...option.weekdays].sort((left, right) => left - right),
+      }))
+      .sort((left, right) => left.departureMinutes - right.departureMinutes
+        || left.arrivalMinutes - right.arrivalMinutes
+        || left.id.localeCompare(right.id));
+    if (options.length > 500) throw new Error("too many options");
+    return options;
+  } catch {
+    throw new Error("Invalid Caltrain journey search");
   }
-  const optionsList = [...resultMap.values()];
-  optionsList.sort((a, b) => a.departureMinutes - b.departureMinutes);
-  return optionsList;
 }

@@ -6,6 +6,7 @@ import {
 } from "../src/commuter-module.js";
 import { InMemoryCommuterRepository } from "../src/in-memory-commuter-repository.js";
 import type { Account } from "../src/domain.js";
+import type { CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-schedule.js";
 
 const parent: Account = {
   identitySubject: "parent-subject",
@@ -30,6 +31,37 @@ const otherFamilyParent: Account = {
   familyID: "family-2",
   memberID: "outside-parent",
   role: "parent",
+};
+
+const staticSchedule: CaltrainStaticScheduleSnapshot = {
+  observedAt: "2026-09-10T00:00:00.000Z",
+  version: "schedule-v1",
+  timeZone: "America/Los_Angeles",
+  validFrom: "2026-09-01",
+  validUntil: "2026-12-31",
+  stops: [
+    {
+      id: "70171", stationID: "PA", stationName: "Palo Alto", direction: "northbound",
+      latitude: 37.443, longitude: -122.165,
+      validFrom: "2026-09-01T00:00:00.000Z", validUntil: "2026-12-31T23:59:59.999Z",
+    },
+    {
+      id: "70011", stationID: "SF", stationName: "San Francisco", direction: "northbound",
+      latitude: 37.776, longitude: -122.394,
+      validFrom: "2026-09-01T00:00:00.000Z", validUntil: "2026-12-31T23:59:59.999Z",
+    },
+  ],
+  services: [{
+    id: "a".repeat(64), weekdays: [1, 2, 3, 4, 5], startsOn: "2026-09-01", endsOn: "2026-12-31",
+    addedDates: [], removedDates: [],
+  }],
+  journeys: [{
+    id: "b".repeat(64), serviceID: "a".repeat(64), routeID: "c".repeat(64), direction: "northbound",
+    calls: [
+      { stopID: "70171", sequence: 1, arrivalSeconds: 25_140, departureSeconds: 25_200 },
+      { stopID: "70011", sequence: 2, arrivalSeconds: 27_000, departureSeconds: 27_060 },
+    ],
+  }],
 };
 
 const commute: Omit<NewCommuteSubscription, "visibility"> = {
@@ -92,6 +124,109 @@ describe("CommuterModule", () => {
     expect(await module.providerStatus(new Date("2026-09-09T15:05:00Z"))).toMatchObject({
       realtime: { state: "healthy", lastAttemptAt: "2026-09-09T15:05:00.000Z" },
     });
+  });
+
+  it("searches the last-good schedule and validates a selected train before saving", async () => {
+    const repository = new InMemoryCommuterRepository();
+    const module = new CommuterModule(repository);
+    await module.enable(parent);
+    await module.replaceSchedule(staticSchedule, new Date(staticSchedule.observedAt));
+
+    const result = await module.searchJourneys(parent, {
+      originStationID: "PA",
+      destinationStationID: "SF",
+      serviceWeekdays: [1, 4, 5],
+    }, new Date("2026-09-10T01:00:00Z"));
+    expect(result.options).toHaveLength(1);
+    const option = result.options[0]!;
+
+    const saved = await module.createSubscription(parent, {
+      ...commute,
+      visibility: "personal",
+      serviceWeekdays: [1, 4, 5],
+      directionID: option.directionID,
+      originStopID: option.originStopID,
+      destinationStopID: option.destinationStopID,
+      windowStartMinutes: option.departureMinutes,
+      windowEndMinutes: option.departureMinutes + 1,
+      scheduleOptionID: option.id,
+      scheduledDepartureMinutes: option.departureMinutes,
+      scheduledArrivalMinutes: option.arrivalMinutes,
+      scheduleVersion: result.scheduleVersion,
+    }, new Date("2026-09-10T01:00:00Z"));
+    expect(saved).toMatchObject({
+      scheduleOptionID: option.id,
+      scheduledDepartureMinutes: 420,
+      scheduledArrivalMinutes: 450,
+      serviceWeekdays: [1, 4, 5],
+    });
+    const alerts = await module.processTransitConditions([{
+      scope: "trip",
+      id: "trip:scheduled-origin-example",
+      agencyID: "CT",
+      routeID: "Local Weekday",
+      directionID: "northbound",
+      stopIDs: ["earlier-stop", "70171", "70011"],
+      serviceWeekday: 4,
+      scheduledMinutes: 390,
+      scheduledStops: [
+        { stopID: "earlier-stop", scheduledMinutes: 390, delayMinutes: 30 },
+        { stopID: "70171", scheduledMinutes: 420, delayMinutes: 16 },
+        { stopID: "70011", scheduledMinutes: 450, delayMinutes: 20 },
+      ],
+      kind: "delay",
+      delayMinutes: 30,
+      observedAt: "2026-09-10T13:55:00Z",
+      validUntil: "2026-09-10T14:10:00Z",
+    }], new Date("2026-09-10T14:00:00Z"));
+    expect(alerts).toEqual([
+      expect.objectContaining({ subscriptionID: saved.id, delayMinutes: 16 }),
+    ]);
+    const changedSchedule: CaltrainStaticScheduleSnapshot = {
+      ...staticSchedule,
+      observedAt: "2026-09-10T02:00:00.000Z",
+      journeys: [{
+        ...staticSchedule.journeys[0]!,
+        calls: [
+          { stopID: "70171", sequence: 1, arrivalSeconds: 25_500, departureSeconds: 25_560 },
+          { stopID: "70011", sequence: 2, arrivalSeconds: 27_360, departureSeconds: 27_420 },
+        ],
+      }],
+    };
+    await module.replaceSchedule(changedSchedule, new Date(changedSchedule.observedAt));
+    expect((await module.state(
+      parent,
+      new Date("2026-09-10T03:00:00Z"),
+    )).subscriptions[0]?.scheduleAvailability).toBe("needs_reselection");
+    expect(await module.processTransitConditions([{
+      ...{
+        scope: "trip" as const,
+        id: "trip:old-schedule",
+        agencyID: "CT" as const,
+        routeID: "Local Weekday",
+        directionID: "northbound",
+        stopIDs: ["70171", "70011"],
+        serviceWeekday: 4,
+        scheduledMinutes: 420,
+        scheduledStops: [{ stopID: "70171", scheduledMinutes: 420, delayMinutes: 20 }],
+        kind: "delay" as const,
+        delayMinutes: 20,
+        observedAt: "2026-09-10T14:00:00Z",
+        validUntil: "2026-09-10T14:10:00Z",
+      },
+    }], new Date("2026-09-10T14:01:00Z"))).toEqual([]);
+
+    await expect(module.createSubscription(parent, {
+      ...commute,
+      visibility: "personal",
+      scheduleOptionID: "d".repeat(64),
+      scheduledDepartureMinutes: 421,
+      scheduledArrivalMinutes: 450,
+      scheduleVersion: result.scheduleVersion,
+    }, new Date("2026-09-10T01:00:00Z"))).rejects.toEqual(new CommuterModuleError("invalid_subscription"));
+    await expect(module.searchJourneys(kid, {
+      originStationID: "PA", destinationStationID: "SF", serviceWeekdays: [1],
+    })).rejects.toEqual(new CommuterModuleError("parent_required"));
   });
 
   it("rejects kid configuration and subscriptions before installation", async () => {

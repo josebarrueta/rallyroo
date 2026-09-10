@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { parse } from "csv-parse/sync";
 import { unzipSync } from "fflate";
+import { z } from "zod";
 import type { CaltrainStop } from "./commuter-module.js";
 
 const requiredFiles = [
@@ -53,6 +54,48 @@ export interface CaltrainStaticScheduleSnapshot {
 
 type CSVRow = Record<string, string>;
 
+const storedScheduleSchema = z.object({
+  observedAt: z.string().datetime({ offset: true }),
+  version: z.string().min(1).max(200),
+  timeZone: z.literal("America/Los_Angeles"),
+  validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  validUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  stops: z.array(z.object({
+    id: z.string().min(1).max(300),
+    stationID: z.string().min(1).max(300),
+    stationName: z.string().min(1).max(300),
+    direction: z.enum(["northbound", "southbound", "unknown"]),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    validFrom: z.string().datetime({ offset: true }),
+    validUntil: z.string().datetime({ offset: true }),
+  }).strict()).min(2).max(500),
+  services: z.array(z.object({
+    id: z.string().regex(/^[a-f0-9]{64}$/),
+    weekdays: z.array(z.number().int().min(1).max(7)).max(7),
+    startsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    addedDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(2_000),
+    removedDates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(2_000),
+  }).strict()).min(1).max(5_000),
+  journeys: z.array(z.object({
+    id: z.string().regex(/^[a-f0-9]{64}$/),
+    serviceID: z.string().regex(/^[a-f0-9]{64}$/),
+    routeID: z.string().regex(/^[a-f0-9]{64}$/),
+    direction: z.enum(["northbound", "southbound"]),
+    calls: z.array(z.object({
+      stopID: z.string().min(1).max(300),
+      sequence: z.number().int().min(0).max(10_000),
+      arrivalSeconds: z.number().int().min(0).max(172_799),
+      departureSeconds: z.number().int().min(0).max(172_799),
+    }).strict()).min(2).max(500),
+  }).strict()).min(1).max(10_000),
+}).strict();
+
+export function parseStoredCaltrainStaticSchedule(value: unknown): CaltrainStaticScheduleSnapshot {
+  return storedScheduleSchema.parse(value) as CaltrainStaticScheduleSnapshot;
+}
+
 export function parseCaltrainStaticSchedule(
   archive: Uint8Array,
   observedAt: Date,
@@ -83,13 +126,16 @@ export function parseCaltrainStaticSchedule(
     const feedStartDate = feedRow.feed_start_date ?? "";
     const feedEndDate = feedRow.feed_end_date ?? "";
     if (feedRows.length !== 1 || !feedVersion || feedVersion.length > 200) throw new Error("invalid feed info");
+    requireIdentifier(feedVersion);
     const validFrom = gtfsDate(feedStartDate);
     const validUntil = gtfsDate(feedEndDate);
     if (validUntil < validFrom) throw new Error("invalid feed range");
 
     const csvRows = (rows: Uint8Array, maximum: number) => csv(rows, maximum);
     const serviceRows = csvRows(files["calendar.txt"]!, 5_000);
-    const exceptionsRows = files["calendar_dates.txt"] ? csvRows(files["calendar_dates.txt"]!, 20_000) : [];
+    const exceptionsRows = files["calendar_dates.txt"]
+      ? csv(files["calendar_dates.txt"]!, 20_000, 0)
+      : [];
     const exceptionsByService = new Map<string, { addedDates: string[]; removedDates: string[] }>();
     for (const row of exceptionsRows) {
       const serviceId = row.service_id ?? "";
@@ -108,6 +154,7 @@ export function parseCaltrainStaticSchedule(
     const services = serviceRows.map((row): CaltrainScheduleService => {
       const serviceId = row.service_id ?? "";
       requireIdentifier(serviceId);
+      if (rawToHashedService.has(serviceId)) throw new Error("duplicate service");
       const id = stableID("service", serviceId);
       rawToHashedService.set(serviceId, id);
       const weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -118,11 +165,14 @@ export function parseCaltrainStaticSchedule(
           throw new Error("invalid weekday");
         });
       const dates = exceptionsByService.get(serviceId) ?? { addedDates: [] as string[], removedDates: [] as string[] };
+      const startsOn = gtfsDate(row.start_date ?? "");
+      const endsOn = gtfsDate(row.end_date ?? "");
+      if (endsOn < startsOn) throw new Error("invalid service range");
       return {
         id,
         weekdays,
-        startsOn: gtfsDate(row.start_date ?? ""),
-        endsOn: gtfsDate(row.end_date ?? ""),
+        startsOn,
+        endsOn,
         addedDates: [...dates.addedDates].sort(),
         removedDates: [...dates.removedDates].sort(),
       };
@@ -146,7 +196,9 @@ export function parseCaltrainStaticSchedule(
       requireIdentifier(routeId);
       if (!rawToHashedService.has(serviceId) || tripByID.has(tripId)) throw new Error("invalid trip");
       const directionId = row.direction_id ?? "";
-      if (directionId !== "0" && directionId !== "1") throw new Error("invalid trip");
+      if (directionId !== "" && directionId !== "0" && directionId !== "1") {
+        throw new Error("invalid trip");
+      }
       tripByID.set(tripId, row);
     }
     const callsByTrip = new Map<string, CaltrainScheduledCall[]>();
@@ -157,11 +209,14 @@ export function parseCaltrainStaticSchedule(
       const seq = row.stop_sequence ?? "";
       const arr = row.arrival_time ?? "";
       const dep = row.departure_time ?? "";
+      const arrivalSeconds = gtfsTime(arr);
+      const departureSeconds = gtfsTime(dep);
+      if (departureSeconds < arrivalSeconds) throw new Error("invalid call times");
       const call: CaltrainScheduledCall = {
         stopID: stopId,
         sequence: boundedInteger(seq, 0, 10_000),
-        arrivalSeconds: gtfsTime(arr),
-        departureSeconds: gtfsTime(dep),
+        arrivalSeconds,
+        departureSeconds,
       };
       const calls = callsByTrip.get(tripId) ?? [];
       calls.push(call);
@@ -174,12 +229,19 @@ export function parseCaltrainStaticSchedule(
       const tripId = row.trip_id ?? "";
       const serviceId = row.service_id ?? "";
       const routeId = row.route_id ?? "";
-      const directionId = row.direction_id ?? "";
-      if (!tripId || !serviceId || !routeId || !directionId) throw new Error("invalid trip");
-      const direction = directionId === "1" ? "northbound" : "southbound";
+      if (!tripId || !serviceId || !routeId) throw new Error("invalid trip");
       const calls = (callsByTrip.get(tripId) ?? [])
         .sort((left, right) => left.sequence - right.sequence);
-      if (calls.length < 2 || new Set(calls.map((c) => c.sequence)).size !== calls.length) {
+      const firstStop = stopByID.get(calls[0]?.stopID ?? "");
+      const lastStop = stopByID.get(calls.at(-1)?.stopID ?? "");
+      const firstLatitude = Number(firstStop?.stop_lat ?? "");
+      const lastLatitude = Number(lastStop?.stop_lat ?? "");
+      if (!Number.isFinite(firstLatitude) || !Number.isFinite(lastLatitude)
+        || Math.abs(lastLatitude - firstLatitude) < 0.001) throw new Error("invalid trip direction");
+      const direction = lastLatitude > firstLatitude ? "northbound" : "southbound";
+      if (calls.length < 2 || new Set(calls.map((c) => c.sequence)).size !== calls.length
+        || calls.some((call, index) => index > 0
+          && call.arrivalSeconds < calls[index - 1]!.departureSeconds)) {
         throw new Error("invalid journey calls");
       }
       for (const call of calls) {
@@ -188,7 +250,7 @@ export function parseCaltrainStaticSchedule(
         stopDirections.set(call.stopID, dirs);
       }
       journeys.push({
-        id: stableID("trip", tripId),
+        id: caltrainJourneyID(tripId),
         serviceID: rawToHashedService.get(serviceId)!,
         routeID: stableID("route", routeId),
         direction,
@@ -196,12 +258,15 @@ export function parseCaltrainStaticSchedule(
       });
     }
 
+    const referencedStopIDs = new Set(
+      [...callsByTrip.values()].flatMap((calls) => calls.map((call) => call.stopID)),
+    );
     const stops: CaltrainStop[] = [];
     for (const row of stopRows) {
       const stopId = row.stop_id ?? "";
       const locationType = row.location_type ?? "";
       if (locationType === "1") continue;
-      if (!callsReferenceStop(stopId, callsByTrip)) continue;
+      if (!referencedStopIDs.has(stopId)) continue;
       const latitude = Number(row.stop_lat ?? "");
       const longitude = Number(row.stop_lon ?? "");
       const stopName = row.stop_name ?? "";
@@ -240,15 +305,20 @@ export function parseCaltrainStaticSchedule(
   }
 }
 
-function csv(bytes: Uint8Array, maximum: number): CSVRow[] {
+function csv(bytes: Uint8Array, maximum: number, minimum = 1): CSVRow[] {
   const rows = parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes), {
     bom: true,
     columns: true,
     skip_empty_lines: true,
     max_record_size: 10_000,
   }) as CSVRow[];
-  if (rows.length < 1 || rows.length > maximum) throw new Error("invalid CSV row count");
+  if (rows.length < minimum || rows.length > maximum) throw new Error("invalid CSV row count");
   return rows;
+}
+
+export function caltrainJourneyID(providerTripID: string): string {
+  requireIdentifier(providerTripID);
+  return stableID("trip", providerTripID);
 }
 
 function stableID(kind: string, value: string): string {
@@ -261,6 +331,12 @@ function requireIdentifier(value: string): void {
 
 function gtfsDate(value: string): string {
   if (!/^\d{8}$/.test(value)) throw new Error("invalid GTFS date");
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(4, 6));
+  const day = Number(value.slice(6, 8));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day) throw new Error("invalid GTFS date");
   return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
 }
 
@@ -281,11 +357,4 @@ function boundedInteger(value: string, minimum: number, maximum: number): number
     throw new Error("invalid integer");
   }
   return parsed;
-}
-
-function callsReferenceStop(
-  stopID: string,
-  callsByTrip: Map<string, CaltrainScheduledCall[]>,
-): boolean {
-  return [...callsByTrip.values()].some((calls) => calls.some((call) => call.stopID === stopID));
 }

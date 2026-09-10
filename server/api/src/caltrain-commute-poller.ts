@@ -16,8 +16,11 @@ export class CaltrainCommutePoller {
 
   async poll(attemptedAt: Date): Promise<CommuteAlertIntent[]> {
     const snapshot = await this.refresher.refresh(attemptedAt);
-    const catalog = await this.commuter.catalog(attemptedAt);
-    const conditions = caltrainRealtimeConditions(snapshot, catalog.stops, attemptedAt);
+    const [catalog, schedule] = await Promise.all([
+      this.commuter.catalog(attemptedAt),
+      this.commuter.providerSchedule(),
+    ]);
+    const conditions = caltrainRealtimeConditions(snapshot, catalog.stops, attemptedAt, schedule);
     return this.commuter.processTransitConditions(conditions, attemptedAt);
   }
 }

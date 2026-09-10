@@ -82,5 +82,7 @@ describe("parseCaltrainStaticSchedule", () => {
     });
     expect(schedule.journeys[0]!.id).toMatch(/^[a-f0-9]{64}$/);
     expect(schedule.journeys[0]!.serviceID).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(schedule)).not.toContain("train-101");
+    expect(JSON.stringify(schedule)).not.toContain("\"weekday\"");
   });
 });

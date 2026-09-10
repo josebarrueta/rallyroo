@@ -132,6 +132,25 @@ describe("Rallyroo API", () => {
       url: "/v1/modules/commuter",
       headers: { authorization: "Bearer parent-token" },
     })).statusCode).toBe(200);
+    const unavailableSchedule = await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/journeys/search",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        originStationID: "PA",
+        destinationStationID: "SF",
+        serviceWeekdays: [1, 4, 5],
+      },
+    });
+    expect(unavailableSchedule.statusCode).toBe(503);
+    expect(unavailableSchedule.json()).toEqual({ error: "commuter_schedule_unavailable" });
+    expect((await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/journeys/search",
+      headers: { authorization: "Bearer kid-token" },
+      payload: { originStationID: "PA", destinationStationID: "SF", serviceWeekdays: [1] },
+    })).statusCode).toBe(403);
+
     const subscriptionPayload = {
       visibility: "personal",
       agencyID: "CT",
