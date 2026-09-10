@@ -31,6 +31,7 @@ export interface FamilyMember {
   role: AccountRole;
   gradeOrBirthYear?: string | null;
   colorTag: string;
+  canDrive?: boolean;
 }
 
 export interface EventRecurrence {
@@ -50,6 +51,7 @@ export interface FamilyEvent {
   endTime: string;
   location: string | null;
   driver: string | null;
+  driverMemberID?: string | null;
   source: "manual" | "email_suggested" | "voice" | "calendar";
   status: "confirmed" | "pending_review";
   alertLeadTimeMinutes?: 0 | 5 | 15 | 60 | 1440 | null;

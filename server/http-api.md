@@ -16,6 +16,23 @@ Due reminder alerts are sent only to devices registered by the reminder's assign
 Device registration is optional, and APNs failures never roll back PostgreSQL
 source-of-truth data.
 
+## Notification inbox
+
+- `GET /v1/notifications` lists at most 100 newest durable inbox records belonging
+  to the authenticated member.
+- `PATCH /v1/notifications/{id}/read` marks only that member's record read.
+- `DELETE /v1/notifications/{id}` removes only that member's visible inbox record;
+  it terminally cancels pending delivery while retaining non-visible audit state.
+
+Both mutation routes return `204`, or `404` when the record does not belong to the member.
+
+Inbox records are distinct from APNs delivery attempts. Their presentation and typed
+opaque destination are encrypted per Family; API responses omit Family IDs and
+server-side deduplication digests. Event, Reminder, schedule-update, Commuter, driver,
+and saved-conflict producers use distinct categories. APNs work uses separate bounded
+claims, stale-claim recovery, exponential backoff, and terminal failure after ten attempts.
+Visible records expire after 180 days; member-deleted records retain audit state for 30 days.
+
 ## Synchronization
 
 - `GET /v1/changes` → `{ "version": 42 }` for the authenticated family.
@@ -131,6 +148,10 @@ personal and Family-visible commute subscriptions:
   independent.
 - `POST /v1/modules/commuter/subscriptions` creates a personal or Family subscription.
   Parents only.
+- `PUT /v1/modules/commuter/subscriptions/{id}` atomically replaces an authorized
+  subscription's configuration while preserving its identity, owner, and active/paused
+  status. Opaque schedule options and versions are revalidated; stale or fabricated
+  journeys are rejected without changing the stored subscription.
 - `PATCH /v1/modules/commuter/subscriptions/{id}` accepts an `active` or `paused`
   status. Any parent may manage Family subscriptions; personal subscriptions remain
   owner-only.

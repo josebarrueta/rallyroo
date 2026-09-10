@@ -3,10 +3,18 @@ import SwiftUI
 
 struct CommuterSettingsView: View {
     @StateObject private var model: CommuterSettingsModel
-    @State private var isAddingSubscription = false
+    @State private var subscriptionEditor: CommuteSubscriptionEditor?
     @State private var isConfirmingRemoval = false
+    private let initialSubscriptionID: String?
+    private let canManageFamilySettings: Bool
 
-    init(store: any CommuterStore) {
+    init(
+        store: any CommuterStore,
+        initialSubscriptionID: String? = nil,
+        canManageFamilySettings: Bool = true
+    ) {
+        self.initialSubscriptionID = initialSubscriptionID
+        self.canManageFamilySettings = canManageFamilySettings
         _model = StateObject(wrappedValue: CommuterSettingsModel(store: store))
     }
 
@@ -35,7 +43,15 @@ struct CommuterSettingsView: View {
             }
         }
         .navigationTitle("Commuter")
-        .task { await model.load() }
+        .task {
+            await model.load()
+            if let initialSubscriptionID,
+               let subscription = model.state?.subscriptions.first(where: {
+                   $0.id.uuidString.lowercased() == initialSubscriptionID.lowercased()
+               }) {
+                subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
+            }
+        }
         .refreshable { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
             Task { await model.load() }
@@ -71,11 +87,18 @@ struct CommuterSettingsView: View {
         } message: {
             Text("All commute alerts will be deleted. Events created from commute plans are not affected.")
         }
-        .sheet(isPresented: $isAddingSubscription) {
+        .sheet(item: $subscriptionEditor) { editor in
             AddCommuteSubscriptionView(
                 stops: model.catalog?.stops ?? [],
+                subscription: editor.subscription,
+                allowsFamilyVisibility: canManageFamilySettings,
                 onSearch: { search in await model.searchJourneys(search) },
-                onSave: { draft in await model.createSubscription(draft) }
+                onSave: { draft in
+                    if let subscription = editor.subscription {
+                        return await model.updateSubscription(subscription, with: draft)
+                    }
+                    return await model.createSubscription(draft)
+                }
             )
         }
     }
@@ -87,27 +110,23 @@ struct CommuterSettingsView: View {
             case .enabled:
                 Label("Enabled", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Button("Disable Commuter") {
-                    Task { _ = await model.disable() }
-                }
-                Button("Remove Commuter", role: .destructive) {
-                    isConfirmingRemoval = true
+                if canManageFamilySettings {
+                    Button("Disable Commuter") { Task { _ = await model.disable() } }
+                    Button("Remove Commuter", role: .destructive) { isConfirmingRemoval = true }
                 }
             case .disabled:
                 Label("Disabled — alerts are paused", systemImage: "pause.circle.fill")
                     .foregroundStyle(.orange)
-                Button("Enable Commuter") {
-                    Task { _ = await model.enable() }
-                }
-                Button("Remove Commuter", role: .destructive) {
-                    isConfirmingRemoval = true
+                if canManageFamilySettings {
+                    Button("Enable Commuter") { Task { _ = await model.enable() } }
+                    Button("Remove Commuter", role: .destructive) { isConfirmingRemoval = true }
                 }
             case nil:
                 Text("Enable Caltrain commute alerts for this Family. Configuration is shared, while each alert can be personal or Family-visible.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Enable Commuter") {
-                    Task { _ = await model.enable() }
+                if canManageFamilySettings {
+                    Button("Enable Commuter") { Task { _ = await model.enable() } }
                 }
             }
         }
@@ -162,7 +181,7 @@ struct CommuterSettingsView: View {
                 Spacer()
                 if state.installation?.status == .enabled {
                     Button {
-                        isAddingSubscription = true
+                        subscriptionEditor = CommuteSubscriptionEditor(subscription: nil)
                     } label: {
                         Image(systemName: "plus.circle.fill")
                     }
@@ -188,6 +207,11 @@ struct CommuterSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
+                if canManageFamilySettings || subscription.visibility == .personal {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.tertiary)
+                }
             }
             Text(subscriptionSummary(subscription))
                 .font(.subheadline)
@@ -204,15 +228,27 @@ struct CommuterSettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .swipeActions(edge: .leading) {
-            Button(subscription.status == .active ? "Pause" : "Resume") {
-                Task { _ = await model.toggleStatus(of: subscription) }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if canManageFamilySettings || subscription.visibility == .personal {
+                subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
             }
-            .tint(subscription.status == .active ? .orange : .green)
+        }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens this commute alert for editing")
+        .swipeActions(edge: .leading) {
+            if canManageFamilySettings || subscription.visibility == .personal {
+                Button(subscription.status == .active ? "Pause" : "Resume") {
+                    Task { _ = await model.toggleStatus(of: subscription) }
+                }
+                .tint(subscription.status == .active ? .orange : .green)
+            }
         }
         .swipeActions {
-            Button("Delete", role: .destructive) {
-                Task { _ = await model.remove(subscription) }
+            if canManageFamilySettings || subscription.visibility == .personal {
+                Button("Delete", role: .destructive) {
+                    Task { _ = await model.remove(subscription) }
+                }
             }
         }
     }
@@ -246,8 +282,15 @@ struct CommuterSettingsView: View {
     }
 }
 
+private struct CommuteSubscriptionEditor: Identifiable {
+    let id = UUID()
+    let subscription: CommuteSubscription?
+}
+
 private struct AddCommuteSubscriptionView: View {
     let stops: [CaltrainStop]
+    let subscription: CommuteSubscription?
+    let allowsFamilyVisibility: Bool
     let onSearch: (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?
     let onSave: (CommuteSubscriptionDraft) async -> Bool
 
@@ -260,6 +303,25 @@ private struct AddCommuteSubscriptionView: View {
     @State private var isSearching = false
     @State private var isSaving = false
     @State private var saveFailed = false
+    @State private var didPrepareForEditing = false
+
+    init(
+        stops: [CaltrainStop],
+        subscription: CommuteSubscription? = nil,
+        allowsFamilyVisibility: Bool = true,
+        onSearch: @escaping (CaltrainJourneySearch) async -> CaltrainJourneySearchResult?,
+        onSave: @escaping (CommuteSubscriptionDraft) async -> Bool
+    ) {
+        self.stops = stops
+        self.subscription = subscription
+        self.allowsFamilyVisibility = allowsFamilyVisibility
+        self.onSearch = onSearch
+        self.onSave = onSave
+        _visibility = State(initialValue: subscription?.visibility ?? .personal)
+        _alertDelays = State(initialValue: subscription?.alertKinds.contains(.delay) ?? true)
+        _alertCancellations = State(initialValue: subscription?.alertKinds.contains(.cancellation) ?? true)
+        _minimumDelayMinutes = State(initialValue: subscription?.minimumDelayMinutes ?? 15)
+    }
 
     var body: some View {
         NavigationStack {
@@ -267,14 +329,14 @@ private struct AddCommuteSubscriptionView: View {
                 Section("Trip") {
                     Picker("From", selection: originBinding) {
                         Text("Select a station").tag("")
-                        ForEach(stationStops) { stop in
-                            Text(stop.stationName).tag(stop.stationID)
+                        ForEach(stationChoices) { station in
+                            Text(station.name).tag(station.id)
                         }
                     }
                     Picker("To", selection: destinationBinding) {
                         Text("Select a station").tag("")
-                        ForEach(destinationStops) { stop in
-                            Text(stop.stationName).tag(stop.stationID)
+                        ForEach(destinationChoices) { station in
+                            Text(station.name).tag(station.id)
                         }
                     }
                     .disabled(selection.originStationID == nil)
@@ -313,30 +375,17 @@ private struct AddCommuteSubscriptionView: View {
                         Text("No train runs at the same scheduled time on every selected day.")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(selection.journeyOptions) { option in
-                            Button {
-                                selection.selectJourney(option)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(formatMinutes(option.departureMinutes))
-                                            .font(.headline)
-                                        Text("Arrives \(formatMinutes(option.arrivalMinutes))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if selection.selectedJourney?.id == option.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(AppTheme.purple)
-                                    }
-                                }
+                        Picker("Departure", selection: journeyBinding) {
+                            Text("Select a train").tag("")
+                            ForEach(selection.journeyOptions) { option in
+                                Text(
+                                    "\(formatMinutes(option.departureMinutes)) · arrives \(formatMinutes(option.arrivalMinutes))"
+                                )
+                                .tag(option.id)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(
-                                "Departs \(formatMinutes(option.departureMinutes)), arrives \(formatMinutes(option.arrivalMinutes))"
-                            )
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityHint("Choose a scheduled origin departure")
                     }
                     if let health = selection.scheduleStatus?.state,
                        health == .degraded || health == .stale {
@@ -345,8 +394,8 @@ private struct AddCommuteSubscriptionView: View {
                             .foregroundStyle(.orange)
                     }
                     if let selected = selection.selectedJourney {
-                        LabeledContent("Departure", value: formatMinutes(selected.departureMinutes))
                         LabeledContent("Arrival", value: formatMinutes(selected.arrivalMinutes))
+                            .accessibilityHint("Arrival is determined by the selected train")
                     }
                 }
 
@@ -370,7 +419,9 @@ private struct AddCommuteSubscriptionView: View {
                 Section("Visibility") {
                     Picker("Visibility", selection: $visibility) {
                         Text("Personal").tag(CommuteSubscriptionVisibility.personal)
-                        Text("Family").tag(CommuteSubscriptionVisibility.family)
+                        if allowsFamilyVisibility {
+                            Text("Family").tag(CommuteSubscriptionVisibility.family)
+                        }
                     }
                     .pickerStyle(.segmented)
                     Text(visibility == .personal
@@ -387,8 +438,14 @@ private struct AddCommuteSubscriptionView: View {
                     }
                 }
             }
-            .navigationTitle("Add commute alert")
+            .navigationTitle(subscription == nil ? "Add commute alert" : "Edit commute alert")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                guard !didPrepareForEditing, let subscription else { return }
+                didPrepareForEditing = true
+                selection.prepareForEditing(subscription, stops: stops)
+                refreshJourneys()
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -417,6 +474,16 @@ private struct AddCommuteSubscriptionView: View {
             set: { value in
                 selection.selectDestination(value.isEmpty ? nil : value)
                 refreshJourneys()
+            }
+        )
+    }
+
+    private var journeyBinding: Binding<String> {
+        Binding(
+            get: { selection.selectedJourney?.id ?? "" },
+            set: { journeyID in
+                guard let option = selection.journeyOptions.first(where: { $0.id == journeyID }) else { return }
+                selection.selectJourney(option)
             }
         )
     }
@@ -456,15 +523,12 @@ private struct AddCommuteSubscriptionView: View {
         }
     }
 
-    private var stationStops: [CaltrainStop] {
-        var seen = Set<String>()
-        return stops
-            .sorted { $0.stationName.localizedCaseInsensitiveCompare($1.stationName) == .orderedAscending }
-            .filter { seen.insert($0.stationID).inserted }
+    private var stationChoices: [CaltrainStationChoice] {
+        CommuterScheduleSelection.stationChoices(from: stops)
     }
 
-    private var destinationStops: [CaltrainStop] {
-        stationStops.filter { $0.stationID != selection.originStationID }
+    private var destinationChoices: [CaltrainStationChoice] {
+        stationChoices.filter { $0.id != selection.originStationID }
     }
 
     private var canSave: Bool {

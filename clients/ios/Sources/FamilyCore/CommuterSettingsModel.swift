@@ -99,6 +99,23 @@ public final class CommuterSettingsModel: ObservableObject {
     }
 
     @discardableResult
+    public func updateSubscription(
+        _ subscription: CommuteSubscription,
+        with draft: CommuteSubscriptionDraft
+    ) async -> Bool {
+        guard beginMutation() else { return false }
+        defer { isMutating = false }
+        do {
+            _ = try await store.updateSubscription(draft, for: subscription)
+            await reloadAfterMutation()
+            return true
+        } catch {
+            errorMessage = "The commute alert could not be updated."
+            return false
+        }
+    }
+
+    @discardableResult
     public func toggleStatus(of subscription: CommuteSubscription) async -> Bool {
         guard beginMutation() else { return false }
         defer { isMutating = false }

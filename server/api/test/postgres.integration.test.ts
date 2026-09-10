@@ -9,6 +9,7 @@ import { CommuterModule } from "../src/commuter-module.js";
 import type { CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-schedule.js";
 import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
+import { NotificationCenterModule } from "../src/notification-center.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -149,6 +150,57 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect((await repository.caltrainSchedule())?.version).toBe("integration-v1");
   });
 
+  it("persists encrypted member inbox records with idempotent replay", async () => {
+    const repository = repositoryForTest();
+    const app = buildApp({ identityProvider, repository });
+    await app.inject({
+      method: "POST", url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    await app.close();
+    const account = await repository.accountForIdentity("integration-parent");
+    expect(account).not.toBeNull();
+    const center = new NotificationCenterModule(repository);
+    const intent = {
+      familyID: account!.familyID,
+      recipientMemberIDs: [account!.memberID],
+      kind: "schedule_update" as const,
+      deduplicationKey: "event-1:update-1",
+      title: "Private family title",
+      body: "Private family details",
+      destination: { kind: "event" as const, id: "event-1" },
+      occurredAt: new Date("2030-09-10T16:00:00Z"),
+    };
+
+    const first = await center.record(intent);
+    const replay = await center.record(intent);
+    expect(replay[0]?.id).toBe(first[0]?.id);
+    const rawPool = new Pool({ connectionString: databaseURL });
+    const raw = await rawPool.query<{ details_ciphertext: string }>(
+      "SELECT details_ciphertext FROM member_notification_inbox WHERE id = $1", [first[0]!.id],
+    );
+    await rawPool.end();
+    expect(raw.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
+    expect(raw.rows[0]?.details_ciphertext).not.toContain("Private family");
+    expect((await center.list(account!))[0]).toMatchObject({
+      title: "Private family title", body: "Private family details", readAt: null,
+    });
+    const claimAt = new Date(Date.now() + 60_000);
+    const [claim] = await repository.claimNotificationDeliveries(claimAt, 10, [first[0]!.id]);
+    expect(claim?.record.id).toBe(first[0]!.id);
+    await repository.releaseNotificationDelivery(
+      claim!.record.id, claim!.claimedAt, "provider_unavailable", claimAt,
+    );
+    expect(await repository.claimNotificationDeliveries(claimAt, 10, [first[0]!.id])).toEqual([]);
+    const [retry] = await repository.claimNotificationDeliveries(
+      new Date(claimAt.getTime() + 60 * 60_000), 10, [first[0]!.id],
+    );
+    expect(retry?.attemptCount).toBe(2);
+    await repository.completeNotificationDelivery(
+      retry!.record.id, retry!.claimedAt, "delivered", new Date(claimAt.getTime() + 60 * 60_000),
+    );
+  });
+
   it("persists encrypted Commuter state and durable alert deduplication", async () => {
     const writerRepository = repositoryForTest();
     const app = buildApp({
@@ -196,7 +248,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     const reader = new CommuterModule(readerRepository);
     expect((await reader.state(account!)).subscriptions).toEqual([subscription]);
     const condition = {
-      id: "trip-123:2026-09-09",
+      id: "trip-123:2030-09-09",
       agencyID: "CT" as const,
       routeID: "caltrain-local",
       directionID: "northbound",
@@ -205,12 +257,12 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       scheduledMinutes: 480,
       kind: "delay" as const,
       delayMinutes: 20,
-      observedAt: "2026-09-09T14:59:00Z",
-      validUntil: "2026-09-10T15:02:00Z",
+      observedAt: "2030-09-09T14:59:00Z",
+      validUntil: "2030-09-10T15:02:00Z",
     };
     expect(await writer.processTransitConditions(
       [condition],
-      new Date("2026-09-09T15:00:00Z"),
+      new Date("2030-09-09T15:00:00Z"),
     )).toHaveLength(1);
     const alertPool = new Pool({ connectionString: databaseURL });
     const storedAlert = await alertPool.query<{ details_ciphertext: string; status: string }>(
@@ -222,7 +274,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(storedAlert.rows[0]?.details_ciphertext).not.toContain(condition.id);
     expect(storedAlert.rows[0]?.status).toBe("pending");
 
-    const dispatchAt = new Date(Date.now() + 60_000);
+    const dispatchAt = new Date("2030-09-09T15:01:00Z");
     const expiredAlertID = randomUUID();
     await writerRepository.saveAlertsIfAbsent([{
       id: expiredAlertID,

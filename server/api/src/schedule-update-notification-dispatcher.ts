@@ -3,6 +3,7 @@ import type {
   ScheduleUpdateNotificationOutcome,
 } from "./event-mutation-persistence.js";
 import type { PushNotificationProvider } from "./push-notification-provider.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 export interface ScheduleUpdateNotificationRecipients {
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
@@ -14,6 +15,7 @@ interface ScheduleUpdateNotificationDispatcherDependencies {
   pushNotificationProvider: PushNotificationProvider;
   now?: () => Date;
   sendTimeoutMilliseconds?: number;
+  notificationCenter?: NotificationCenterModule;
 }
 
 export class ScheduleUpdateNotificationDispatcher {
@@ -36,6 +38,32 @@ export class ScheduleUpdateNotificationDispatcher {
     );
     const outcomes: ScheduleUpdateNotificationOutcome[] = [];
     for (const notification of claimed) {
+      if (this.dependencies.notificationCenter) {
+        try {
+          const delivery = await this.dependencies.notificationCenter.recordAndDispatch({
+            familyID: notification.familyID,
+            recipientMemberIDs: notification.participantIDs,
+            kind: "schedule_update",
+            deduplicationKey: notification.id,
+            title: notification.title,
+            body: notification.body,
+            destination: { kind: "event", id: notification.eventID },
+            occurredAt: this.now(),
+          });
+          const outcome = delivery.outcomes.every((item) => item === "no_recipient")
+            ? "noRecipients" : "sent";
+          await this.dependencies.persistence.completeScheduleUpdateNotification(
+            notification, outcome, this.now(),
+          );
+          outcomes.push(outcome);
+        } catch {
+          await this.dependencies.persistence.releaseScheduleUpdateNotification(
+            notification, "provider_unavailable",
+          );
+          outcomes.push("queuedForRetry");
+        }
+        continue;
+      }
       const tokens = await this.dependencies.recipients.deviceTokensForMembers(
         notification.familyID,
         notification.participantIDs,

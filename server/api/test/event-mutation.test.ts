@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { EventMutationModule } from "../src/event-mutation.js";
+import { EventMutationError, EventMutationModule } from "../src/event-mutation.js";
 import { InMemoryRallyrooRepository } from "../src/in-memory-repository.js";
 import { ScheduleUpdateNotificationDispatcher } from "../src/schedule-update-notification-dispatcher.js";
 import type { Account, FamilyEvent } from "../src/domain.js";
+import { NotificationCenterModule } from "../src/notification-center.js";
+import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
 
 const account: Account = {
   identitySubject: "parent-subject",
@@ -139,5 +141,77 @@ describe("EventMutationModule", () => {
     expect(sent).toEqual([["kid-token"]]);
     expect((await module.save({ account, event, idempotencyKey, notifyParticipants: true })).notificationOutcome)
       .toBe("sent");
+  });
+
+  it("requires an eligible driver and records an idempotent driver inbox notification", async () => {
+    const persistence = repository();
+    const inboxRepository = new InMemoryNotificationCenterRepository();
+    const notificationCenter = new NotificationCenterModule(inboxRepository);
+    const module = new EventMutationModule({ persistence, importedEvents, notificationCenter });
+    await expect(module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555560",
+      notifyParticipants: false,
+    })).rejects.toEqual(new EventMutationError("invalid_driver", 400));
+
+    await persistence.saveMember({
+      id: "kid-1", familyID: "family-1", name: "Emma", role: "kid",
+      colorTag: "purple", canDrive: true,
+    });
+    await expect(module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555561",
+      notifyParticipants: false,
+    })).resolves.toMatchObject({ conflicts: [] });
+    await module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555561",
+      notifyParticipants: false,
+    });
+    expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" })).toEqual([
+      expect.objectContaining({ kind: "driver_assignment", destination: { kind: "event", id: event.id } }),
+    ]);
+    await module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1", title: "Updated title" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555564",
+      notifyParticipants: false,
+    });
+    expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" }))
+      .toHaveLength(1);
+  });
+
+  it("detects a double-booked driver by stable member identity", async () => {
+    const persistence = repository();
+    const module = new EventMutationModule({ persistence, importedEvents });
+    const first: FamilyEvent = {
+      ...event, participantIDs: [], kidID: null, driverMemberID: "parent-1",
+    };
+    await module.save({
+      account, event: first,
+      idempotencyKey: "55555555-5555-4555-8555-555555555562",
+      notifyParticipants: false,
+    });
+    const second: FamilyEvent = {
+      ...first,
+      id: "44444444-4444-4444-8444-444444444446",
+      title: "School pickup",
+    };
+
+    const result = await module.save({
+      account, event: second,
+      idempotencyKey: "55555555-5555-4555-8555-555555555563",
+      notifyParticipants: false,
+    });
+
+    expect(result.conflicts).toEqual([{
+      kind: "double_booked_driver",
+      memberID: "parent-1",
+      driver: null,
+      eventIDs: [first.id, second.id],
+    }]);
   });
 });

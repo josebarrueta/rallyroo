@@ -3,13 +3,18 @@ import UIKit
 @preconcurrency import UserNotifications
 import FamilyCore
 
+private enum AppTab: Hashable { case schedule, reminders, family, alerts, settings }
+
 @main
 struct FamilyActivityCoordinatorApp: App {
     @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushNotificationDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab: AppTab = .schedule
+    @State private var unreadAlertCount = 0
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
+    private let inboxStore: any NotificationInboxStore
     private let reminderStore: any ReminderStore
     private let reminderAlertScheduler: (any ReminderAlertScheduler)?
     private let eventAlertScheduler: (any EventAlertScheduler)?
@@ -49,6 +54,7 @@ struct FamilyActivityCoordinatorApp: App {
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
             commuterStore = nil
+            inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -97,6 +103,12 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            inboxStore = RemoteNotificationInboxStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport,
+                cacheURL: AppStorage.remoteNotificationsCacheURL,
+                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+            )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
     }
@@ -107,7 +119,7 @@ struct FamilyActivityCoordinatorApp: App {
                 authentication: authentication,
                 onSessionEnded: { try? await eventStore.clearCache() }
             ) { session, signOut, deleteAccount in
-                TabView {
+                TabView(selection: $selectedTab) {
                     WeeklyScheduleView(
                         eventStore: eventStore,
                         memberStore: memberStore,
@@ -116,9 +128,13 @@ struct FamilyActivityCoordinatorApp: App {
                         locationSearch: locationSearch,
                         alertScheduler: eventAlertScheduler,
                         scheduleDraftExtractor: scheduleDraftExtractor,
-                        reminderStore: reminderStore
+                        reminderStore: reminderStore,
+                        currentMemberID: session.accountID,
+                        calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
+                        commuterStore: commuterStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
+                    .tag(AppTab.schedule)
                     RemindersView(
                         store: reminderStore,
                         memberStore: memberStore,
@@ -126,6 +142,7 @@ struct FamilyActivityCoordinatorApp: App {
                         session: session
                     )
                     .tabItem { Label("Reminders", systemImage: "checklist") }
+                    .tag(AppTab.reminders)
                     if session.role == .parent {
                         FamilyMembersView(
                             memberStore: memberStore,
@@ -135,25 +152,59 @@ struct FamilyActivityCoordinatorApp: App {
                             invitationStore: invitationStore
                         )
                             .tabItem { Label("Family", systemImage: "person.2") }
-                        NotificationsView(notificationStore: notificationStore)
-                            .tabItem { Label("Alerts", systemImage: "bell") }
+                            .tag(AppTab.family)
                     }
+                    NotificationsView(
+                        inboxStore: inboxStore,
+                        conflictStore: notificationStore,
+                        onUnreadCountChanged: { unreadAlertCount = $0 }
+                    )
+                    .tabItem { Label("Alerts", systemImage: "bell") }
+                    .badge(unreadAlertCount)
+                    .tag(AppTab.alerts)
                     SettingsView(
                         dataIsSynced: dataIsSynced,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
-                        commuterStore: session.role == .parent ? commuterStore : nil,
+                        commuterStore: commuterStore,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )
                     .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(AppTab.settings)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                    guard let destination = note.object as? InboxNotificationDestination else { return }
+                    switch destination.kind {
+                    case .event: selectedTab = .schedule
+                    case .reminder: selectedTab = .reminders
+                    case .commuteSubscription, .settings: selectedTab = .settings
+                    }
                 }
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
                 .task { await monitorFamilyChanges() }
+                .task {
+                    unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                        .filter { $0.readAt == nil }.count
+                }
                 .task { await synchronizeCalendars(for: session.role) }
                 .task { await requestPushNotifications() }
+                .onReceive(NotificationCenter.default.publisher(for: .didDeliverLocalInboxNotification)) { notification in
+                    guard let item = notification.object as? InboxNotification else { return }
+                    Task {
+                        try? await inboxStore.ingest(item)
+                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                            .filter { $0.readAt == nil }.count
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .notificationInboxDidChange)) { _ in
+                    Task {
+                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
+                            .filter { $0.readAt == nil }.count
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .didRegisterDeviceToken)) { notification in
                     guard let token = notification.object as? String else { return }
                     Task { try? await deviceRegistrationStore?.register(token: token) }
@@ -233,6 +284,14 @@ enum AppStorage {
 
     static var remoteEventsCacheURL: URL {
         storageDirectory.appendingPathComponent("remote-events-cache").appendingPathExtension("json")
+    }
+
+    static var localInboxURL: URL {
+        storageDirectory.appendingPathComponent("notification-inbox").appendingPathExtension("json")
+    }
+
+    static var remoteNotificationsCacheURL: URL {
+        storageDirectory.appendingPathComponent("remote-notifications-cache").appendingPathExtension("json")
     }
 
     static var notificationsURL: URL {

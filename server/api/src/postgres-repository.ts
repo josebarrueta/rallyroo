@@ -28,6 +28,10 @@ import {
 } from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 import type {
+  MemberInboxRecord,
+  NotificationCenterRepository,
+} from "./notification-center.js";
+import type {
   CalendarSource,
   CalendarSourceRepository,
   ImportedCalendarEvent,
@@ -48,7 +52,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -101,7 +105,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
 
       if (remaining() > 0) {
         const members = await client.query<MemberRow>(
-          `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+          `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
            FROM family_members
            WHERE name NOT LIKE 'rr1.%'
               OR (grade_or_birth_year IS NOT NULL AND grade_or_birth_year NOT LIKE 'rr1.%')
@@ -144,7 +148,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       if (remaining() > 0) {
         const events = await client.query<EventRow>(
           `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                  end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                  end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
            FROM events
            WHERE title NOT LIKE 'rr1.%'
               OR (location IS NOT NULL AND location NOT LIKE 'rr1.%')
@@ -1397,6 +1401,14 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return result.rows.map((row) => row.token);
   }
 
+  async memberIDsForFamily(familyID: string): Promise<string[]> {
+    const result = await this.pool.query<{ id: string }>(
+      "SELECT id FROM family_members WHERE family_id = $1 ORDER BY id",
+      [familyID],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
   async deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]> {
     if (memberIDs.length === 0) return [];
     const result = await this.pool.query<{ token: string }>(
@@ -1409,7 +1421,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
     const result = await this.pool.query<EventRow>(
       `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-              end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+              end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
@@ -1454,12 +1466,12 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       }
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
          FROM events WHERE family_id = $1 ORDER BY start_time`,
         [familyID],
       );
       const members = await client.query<MemberRow>(
-        `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+        `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
          FROM family_members WHERE family_id = $1 ORDER BY name`,
         [familyID],
       );
@@ -1473,13 +1485,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query(
           `INSERT INTO events (
              family_id, id, title, kid_id, participant_ids, start_time, end_time,
-             location, driver, source, status, alert_lead_time_minutes, recurrence
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (family_id, id) DO UPDATE SET
              title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
              participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
              end_time=EXCLUDED.end_time, location=EXCLUDED.location,
-             driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+             driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
              alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
              recurrence=EXCLUDED.recurrence`,
           eventValues(protectedEvent),
@@ -1648,13 +1660,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query(
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
-         location, driver, source, status, alert_lead_time_minutes, recurrence
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
          end_time=EXCLUDED.end_time, location=EXCLUDED.location,
-         driver=EXCLUDED.driver, source=EXCLUDED.source, status=EXCLUDED.status,
+         driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence`,
       eventValues(protectedEvent),
@@ -1671,7 +1683,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       await client.query("BEGIN");
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
          FROM events
          WHERE alert_lead_time_minutes IS NOT NULL
            AND start_time <= $1::timestamptz + interval '1 day'
@@ -2004,9 +2016,167 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
+  async saveInboxRecordsIfAbsent(records: MemberInboxRecord[]): Promise<MemberInboxRecord[]> {
+    if (records.length === 0) return [];
+    const protectedRecords = await Promise.all(records.map(async (record) => ({
+      record,
+      details: await this.familyDataProtector.protect(
+        record.familyID,
+        `member_notification_inbox/${record.id}/details`,
+        JSON.stringify({ title: record.title, body: record.body, destination: record.destination }),
+      ),
+    })));
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const { record, details } of protectedRecords) {
+        await client.query(
+          `INSERT INTO member_notification_inbox
+             (id, family_id, member_id, kind, deduplication_digest, occurred_at, read_at, details_ciphertext)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (family_id, member_id, deduplication_digest) DO NOTHING`,
+          [record.id, record.familyID, record.memberID, record.kind, record.deduplicationDigest,
+            record.occurredAt.toISOString(), record.readAt?.toISOString() ?? null, details],
+        );
+      }
+      const rows = await client.query<MemberInboxRow>(
+        `SELECT id::text, family_id, member_id, kind, deduplication_digest,
+                occurred_at, read_at, details_ciphertext
+         FROM member_notification_inbox
+         WHERE family_id = $1 AND deduplication_digest = ANY($2::text[])
+         ORDER BY occurred_at DESC, id`,
+        [records[0]!.familyID, records.map((record) => record.deduplicationDigest)],
+      );
+      await client.query(
+        `INSERT INTO member_notification_delivery (notification_id)
+         SELECT unnest($1::uuid[]) ON CONFLICT (notification_id) DO NOTHING`,
+        [rows.rows.map((row) => row.id)],
+      );
+      await client.query("COMMIT");
+      return Promise.all(rows.rows.map((row) => this.inboxRecordFromRow(row)));
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async inboxRecords(familyID: string, memberID: string, limit: number): Promise<MemberInboxRecord[]> {
+    const result = await this.pool.query<MemberInboxRow>(
+      `SELECT id::text, family_id, member_id, kind, deduplication_digest,
+              occurred_at, read_at, details_ciphertext
+       FROM member_notification_inbox
+       WHERE family_id = $1 AND member_id = $2 AND deleted_at IS NULL
+       ORDER BY occurred_at DESC, id LIMIT $3`,
+      [familyID, memberID, limit],
+    );
+    return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
+  }
+
+  async claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]) {
+    const result = await this.pool.query<MemberInboxRow & { attempt_count: number; claimed_at: Date | string }>(
+      `WITH due AS (
+         SELECT notification_id FROM member_notification_delivery
+         WHERE ((status = 'pending' AND next_attempt_at <= $1)
+            OR (status = 'claimed' AND claimed_at < $1 - interval '5 minutes'))
+           AND ($3::uuid[] IS NULL OR notification_id = ANY($3::uuid[]))
+         ORDER BY next_attempt_at, notification_id FOR UPDATE SKIP LOCKED LIMIT $2
+       ), claimed AS (
+         UPDATE member_notification_delivery d SET status = 'claimed', claimed_at = $1,
+           attempt_count = attempt_count + 1
+         FROM due WHERE d.notification_id = due.notification_id
+         RETURNING d.notification_id, d.attempt_count, d.claimed_at
+       )
+       SELECT i.id::text, i.family_id, i.member_id, i.kind, i.deduplication_digest,
+              i.occurred_at, i.read_at, i.details_ciphertext, c.attempt_count, c.claimed_at
+       FROM claimed c JOIN member_notification_inbox i ON i.id = c.notification_id`,
+      [now.toISOString(), limit, recordIDs ?? null],
+    );
+    return Promise.all(result.rows.map(async (row) => ({
+      record: await this.inboxRecordFromRow(row),
+      attemptCount: row.attempt_count,
+      claimedAt: new Date(row.claimed_at),
+    })));
+  }
+
+  async completeNotificationDelivery(
+    recordID: string, claimedAt: Date, outcome: "delivered" | "no_recipient", completedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE member_notification_delivery SET status = $3, delivered_at = $4, claimed_at = NULL
+       WHERE notification_id = $1::uuid AND status = 'claimed' AND claimed_at = $2`,
+      [recordID, claimedAt.toISOString(), outcome, completedAt.toISOString()],
+    );
+  }
+
+  async releaseNotificationDelivery(
+    recordID: string, claimedAt: Date, errorCategory: string, releasedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE member_notification_delivery SET
+         status = CASE WHEN attempt_count >= 10 THEN 'terminal_failure' ELSE 'pending' END,
+         next_attempt_at = $4::timestamptz + make_interval(secs => LEAST(3600, 5 * power(2, LEAST(attempt_count, 9)))::int),
+         claimed_at = NULL, last_error_category = $3
+       WHERE notification_id = $1::uuid AND status = 'claimed' AND claimed_at = $2`,
+      [recordID, claimedAt.toISOString(), errorCategory, releasedAt.toISOString()],
+    );
+  }
+
+  async notificationDeliveryOutcomes(recordIDs: string[]) {
+    if (recordIDs.length === 0) return [];
+    const result = await this.pool.query<{ status: "pending" | "claimed" | "delivered" | "no_recipient" | "terminal_failure" }>(
+      `SELECT status FROM member_notification_delivery
+       WHERE notification_id = ANY($1::uuid[]) ORDER BY notification_id`,
+      [recordIDs],
+    );
+    return result.rows.map((row) => row.status);
+  }
+
+  async pruneNotificationInbox(now: Date, limit: number): Promise<number> {
+    const result = await this.pool.query(
+      `WITH expired AS (
+         SELECT id FROM member_notification_inbox
+         WHERE (deleted_at IS NOT NULL AND deleted_at < $1 - interval '30 days')
+            OR occurred_at < $1 - interval '180 days'
+         ORDER BY COALESCE(deleted_at, occurred_at), id LIMIT $2
+       )
+       DELETE FROM member_notification_inbox i USING expired
+       WHERE i.id = expired.id RETURNING i.id`,
+      [now.toISOString(), limit],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async deleteInboxRecord(familyID: string, memberID: string, recordID: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `WITH deleted AS (
+         UPDATE member_notification_inbox SET deleted_at = now()
+         WHERE family_id = $1 AND member_id = $2 AND id = $3::uuid AND deleted_at IS NULL
+         RETURNING id
+       )
+       UPDATE member_notification_delivery d SET status = 'terminal_failure',
+         claimed_at = NULL, last_error_category = 'member_deleted'
+       FROM deleted WHERE d.notification_id = deleted.id RETURNING d.notification_id`,
+      [familyID, memberID, recordID],
+    );
+    return result.rowCount === 1;
+  }
+
+  async markInboxRecordRead(
+    familyID: string, memberID: string, recordID: string, readAt: Date,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE member_notification_inbox SET read_at = COALESCE(read_at, $4)
+       WHERE family_id = $1 AND member_id = $2 AND id = $3::uuid RETURNING id`,
+      [familyID, memberID, recordID, readAt.toISOString()],
+    );
+    return result.rowCount === 1;
+  }
+
   async membersForFamily(familyID: string): Promise<FamilyMember[]> {
     const result = await this.pool.query<MemberRow>(
-      `SELECT family_id, id, name, role, grade_or_birth_year, color_tag
+      `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
        FROM family_members WHERE family_id = $1 ORDER BY name`,
       [familyID],
     );
@@ -2028,15 +2198,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         member.gradeOrBirthYear,
       );
     await this.pool.query(
-      `INSERT INTO family_members (family_id, id, name, role, grade_or_birth_year, color_tag)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO family_members (family_id, id, name, role, grade_or_birth_year, color_tag, can_drive)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (family_id, id) DO UPDATE SET
          name=EXCLUDED.name, role=EXCLUDED.role,
          grade_or_birth_year=EXCLUDED.grade_or_birth_year,
-         color_tag=EXCLUDED.color_tag`,
+         color_tag=EXCLUDED.color_tag, can_drive=EXCLUDED.can_drive`,
       [
         member.familyID, member.id, protectedName, member.role,
-        protectedGradeOrBirthYear, member.colorTag,
+        protectedGradeOrBirthYear, member.colorTag, member.canDrive ?? false,
       ],
     );
   }
@@ -2151,6 +2321,25 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     }
     if (row.result !== null) return row.result;
     throw new Error("Event mutation result has no payload");
+  }
+
+  private async inboxRecordFromRow(row: MemberInboxRow): Promise<MemberInboxRecord> {
+    const plaintext = await this.familyDataProtector.reveal(
+      row.family_id,
+      `member_notification_inbox/${row.id}/details`,
+      row.details_ciphertext,
+    );
+    const details = JSON.parse(plaintext) as Pick<MemberInboxRecord, "title" | "body" | "destination">;
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      memberID: row.member_id,
+      kind: row.kind,
+      deduplicationDigest: row.deduplication_digest,
+      occurredAt: new Date(row.occurred_at),
+      readAt: row.read_at === null ? null : new Date(row.read_at),
+      ...details,
+    };
   }
 
   private async memberFromRow(row: MemberRow): Promise<FamilyMember> {
@@ -2401,10 +2590,22 @@ interface EventRow {
   end_time: Date | string;
   location: string | null;
   driver: string | null;
+  driver_member_id: string | null;
   source: FamilyEvent["source"];
   status: FamilyEvent["status"];
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
+}
+
+interface MemberInboxRow {
+  id: string;
+  family_id: string;
+  member_id: string;
+  kind: MemberInboxRecord["kind"];
+  deduplication_digest: string;
+  occurred_at: Date | string;
+  read_at: Date | string | null;
+  details_ciphertext: string;
 }
 
 interface EventMutationResultRow {
@@ -2473,6 +2674,7 @@ interface MemberRow {
   role: AccountRole;
   grade_or_birth_year: string | null;
   color_tag: string;
+  can_drive: boolean;
 }
 
 function calendarSourceFromRow(row: CalendarSourceRow): CalendarSource {
@@ -2508,6 +2710,7 @@ function memberFromRow(row: MemberRow): FamilyMember {
     name: row.name,
     role: row.role,
     colorTag: row.color_tag,
+    canDrive: row.can_drive,
     ...(row.grade_or_birth_year !== null ? { gradeOrBirthYear: row.grade_or_birth_year } : {}),
   };
 }
@@ -2515,7 +2718,7 @@ function memberFromRow(row: MemberRow): FamilyMember {
 function eventValues(event: FamilyEvent): unknown[] {
   return [
     event.familyID, event.id, event.title, event.kidID, event.participantIDs,
-    event.startTime, event.endTime, event.location, event.driver,
+    event.startTime, event.endTime, event.location, event.driver, event.driverMemberID ?? null,
     event.source, event.status, event.alertLeadTimeMinutes ?? null,
     event.recurrence ? JSON.stringify(event.recurrence) : null,
   ];
@@ -2532,6 +2735,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
     endTime: asISOString(row.end_time),
     location: row.location,
     driver: row.driver,
+    driverMemberID: row.driver_member_id,
     source: row.source,
     status: row.status,
     alertLeadTimeMinutes: row.alert_lead_time_minutes,

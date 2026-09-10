@@ -13,6 +13,18 @@ public enum CommuteScheduleDayGroup: String, CaseIterable, Sendable {
     }
 }
 
+public struct CaltrainStationChoice: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let latitude: Double
+
+    public init(id: String, name: String, latitude: Double) {
+        self.id = id
+        self.name = name
+        self.latitude = latitude
+    }
+}
+
 public struct CommuterScheduleSearchIntent: Equatable, Sendable {
     public let request: CaltrainJourneySearch
     fileprivate let generation: UInt
@@ -37,6 +49,21 @@ public final class CommuterScheduleSelection: ObservableObject {
         dayGroup?.weekdays ?? []
     }
 
+    public static func stationChoices(from stops: [CaltrainStop]) -> [CaltrainStationChoice] {
+        Dictionary(grouping: stops, by: \CaltrainStop.stationID)
+            .compactMap { stationID, platforms in
+                guard !stationID.isEmpty, !platforms.isEmpty else { return nil }
+                let names = platforms.map { canonicalStationName($0.stationName) }.filter { !$0.isEmpty }
+                guard let name = names.sorted(by: stationNamePrecedes).first else { return nil }
+                let latitude = platforms.map(\.latitude).reduce(0, +) / Double(platforms.count)
+                return CaltrainStationChoice(id: stationID, name: name, latitude: latitude)
+            }
+            .sorted {
+                if $0.latitude != $1.latitude { return $0.latitude > $1.latitude }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+    }
+
     public var searchIntent: CommuterScheduleSearchIntent? {
         guard let request = searchRequest else { return nil }
         return CommuterScheduleSearchIntent(request: request, generation: generation)
@@ -54,6 +81,43 @@ public final class CommuterScheduleSelection: ObservableObject {
             destinationStationID: destinationStationID,
             serviceWeekdays: selectedWeekdays.sorted()
         )
+    }
+
+    public func prepareForEditing(_ subscription: CommuteSubscription, stops: [CaltrainStop]) {
+        generation &+= 1
+        originStationID = stops.first { $0.id == subscription.originStopID }?.stationID
+        destinationStationID = stops.first { $0.id == subscription.destinationStopID }?.stationID
+        let weekdays = Set(subscription.serviceWeekdays)
+        if weekdays.isSubset(of: Set(CommuteScheduleDayGroup.weekdays.weekdays)) {
+            dayGroup = .weekdays
+        } else if weekdays.isSubset(of: Set(CommuteScheduleDayGroup.weekends.weekdays)) {
+            dayGroup = .weekends
+        } else {
+            dayGroup = nil
+        }
+        selectedWeekdays = weekdays
+        journeyOptions = []
+        selectedJourney = nil
+        scheduleStatus = nil
+        scheduleVersion = nil
+        guard subscription.scheduleAvailability != .needsReselection,
+              let optionID = subscription.scheduleOptionID,
+              let departureMinutes = subscription.scheduledDepartureMinutes,
+              let arrivalMinutes = subscription.scheduledArrivalMinutes,
+              let version = subscription.scheduleVersion
+        else { return }
+        let option = CaltrainJourneyOption(
+            id: optionID,
+            directionID: subscription.directionID,
+            originStopID: subscription.originStopID,
+            destinationStopID: subscription.destinationStopID,
+            departureMinutes: departureMinutes,
+            arrivalMinutes: arrivalMinutes,
+            operatingWeekdays: subscription.serviceWeekdays
+        )
+        scheduleVersion = version
+        journeyOptions = [option]
+        selectedJourney = option
     }
 
     public func selectOrigin(_ stationID: String?) {
@@ -91,12 +155,23 @@ public final class CommuterScheduleSelection: ObservableObject {
         for intent: CommuterScheduleSearchIntent
     ) {
         guard intent.generation == generation, intent.request == searchRequest else { return }
+        let previouslySelectedJourneyID = selectedJourney?.id
         scheduleVersion = result.scheduleVersion
         scheduleStatus = result.status
-        journeyOptions = result.options.filter { option in
-            selectedWeekdays.isSubset(of: Set(option.operatingWeekdays))
-        }
-        selectedJourney = nil
+        journeyOptions = result.options
+            .filter { option in
+                selectedWeekdays.isSubset(of: Set(option.operatingWeekdays))
+            }
+            .sorted {
+                if $0.departureMinutes != $1.departureMinutes {
+                    return $0.departureMinutes < $1.departureMinutes
+                }
+                if $0.arrivalMinutes != $1.arrivalMinutes {
+                    return $0.arrivalMinutes < $1.arrivalMinutes
+                }
+                return $0.id < $1.id
+            }
+        selectedJourney = journeyOptions.first { $0.id == previouslySelectedJourneyID }
     }
 
     public func selectJourney(_ option: CaltrainJourneyOption) {
@@ -140,6 +215,26 @@ public final class CommuterScheduleSelection: ObservableObject {
         selectedJourney = nil
         scheduleStatus = nil
         scheduleVersion = nil
+    }
+
+    private static func canonicalStationName(_ name: String) -> String {
+        name
+            .replacingOccurrences(
+                of: #"\s+Caltrain Station(?:\s+(?:Northbound|Southbound))?$"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: #"\s+(?:Northbound|Southbound)$"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func stationNamePrecedes(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs.count != rhs.count { return lhs.count < rhs.count }
+        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
     }
 
     private func normalized(_ value: String?) -> String? {

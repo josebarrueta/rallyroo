@@ -32,6 +32,7 @@ import {
   scheduleDraftResultSchema,
   type ScheduleDraftExtractor,
 } from "./schedule-draft-extractor.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -48,6 +49,7 @@ const eventSchema = z.object({
   endTime: z.string().datetime(),
   location: z.string().nullable().default(null),
   driver: z.string().nullable().default(null),
+  driverMemberID: z.string().trim().min(1).nullable().default(null),
   source: z.enum(["manual", "email_suggested", "voice"]),
   status: z.enum(["confirmed", "pending_review"]),
   alertLeadTimeMinutes: z.union([
@@ -64,6 +66,8 @@ const eventSchema = z.object({
   }).refine((recurrence) => recurrence.frequency === "weekly" || recurrence.weekdays === undefined, {
     message: "weekdays are supported only for weekly recurrence",
   }).nullable().optional(),
+}).refine((event) => !(event.driverMemberID && event.driver), {
+  message: "driverMemberID and driver cannot both be set",
 }).refine((event) => new Date(event.endTime) > new Date(event.startTime), {
   message: "endTime must follow startTime",
 }).refine((event) => !event.recurrence || (
@@ -115,6 +119,7 @@ const memberSchema = z.object({
   role: z.enum(["parent", "kid"]),
   gradeOrBirthYear: z.string().nullable().optional(),
   colorTag: z.string().min(1),
+  canDrive: z.boolean().default(false),
 });
 
 const calendarSourceVisibilitySchema = z.object({
@@ -186,6 +191,7 @@ interface Dependencies {
   readinessCheck?: () => Promise<void>;
   rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts", RouteRateLimit>>;
   metrics?: RallyrooMetrics;
+  notificationCenter?: NotificationCenterModule;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -202,6 +208,7 @@ export function buildApp({
   readinessCheck = async () => {},
   rateLimits = {},
   metrics = new RallyrooMetrics(),
+  notificationCenter,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -216,6 +223,7 @@ export function buildApp({
     persistence: repository,
     recipients: repository,
     pushNotificationProvider,
+    ...(notificationCenter ? { notificationCenter } : {}),
   });
   const eventMutations = new EventMutationModule({
     persistence: repository,
@@ -224,6 +232,7 @@ export function buildApp({
       sharedEvents: (familyID) => calendarSources?.sharedEvents(familyID) ?? Promise.resolve([]),
     },
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
+    ...(notificationCenter ? { notificationCenter } : {}),
   });
   const app = Fastify({ logger });
   fastifyRateLimit(
@@ -657,6 +666,30 @@ export function buildApp({
     }
   });
 
+  app.put("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    const parsed = commuterSubscriptionSchema.safeParse(request.body);
+    if (!parsed.success || parsed.data.originStopID === parsed.data.destinationStopID
+      || parsed.data.windowEndMinutes <= parsed.data.windowStartMinutes) {
+      return reply.code(400).send({ error: "invalid_commuter_subscription" });
+    }
+    const parsedID = commuterSubscriptionIDSchema.safeParse((request.params as { id: string }).id);
+    if (!parsedID.success) return reply.code(400).send({ error: "invalid_commuter_subscription_id" });
+    const existing = (await commuter.state(account)).subscriptions
+      .find((subscription) => subscription.id === parsedID.data);
+    try {
+      const subscription = await commuter.updateSubscription(account, parsedID.data, parsed.data);
+      if (existing?.visibility === "family" || subscription.visibility === "family") {
+        await repository.markFamilyChanged(account.familyID);
+      }
+      return clientCommuteSubscription(subscription);
+    } catch (error) {
+      return commuterErrorReply(error, reply);
+    }
+  });
+
   app.patch("/v1/modules/commuter/subscriptions/:id", async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
@@ -851,6 +884,38 @@ export function buildApp({
     return reply.code(204).send();
   });
 
+  app.get("/v1/notifications", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const records = await notificationCenter.list(account);
+    return records.map(({ familyID: _familyID, memberID: _memberID,
+      deduplicationDigest: _deduplicationDigest, ...record }) => record);
+  });
+
+  app.patch("/v1/notifications/:id/read", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const id = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(400).send({ error: "invalid_notification_id" });
+    }
+    return await notificationCenter.markRead(account, id)
+      ? reply.code(204).send()
+      : reply.code(404).send({ error: "notification_not_found" });
+  });
+
+  app.delete("/v1/notifications/:id", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const id = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(400).send({ error: "invalid_notification_id" });
+    }
+    return await notificationCenter.delete(account, id)
+      ? reply.code(204).send()
+      : reply.code(404).send({ error: "notification_not_found" });
+  });
+
   app.get("/v1/changes", async (request) => {
     const account = requiredAccount(request);
     return { version: await repository.familyChangeVersion(account.familyID) };
@@ -946,7 +1011,9 @@ export function buildApp({
     if (!account) return;
     const memberID = (request.params as { id: string }).id;
     const events = await repository.eventsForFamily(account.familyID);
-    if (events.some((event) => event.participantIDs.includes(memberID))) {
+    if (events.some((event) =>
+      event.participantIDs.includes(memberID) || event.driverMemberID === memberID
+    )) {
       return reply.code(409).send({ error: "member_has_scheduled_events" });
     }
     const reminders = await repository.remindersForFamily(account.familyID);

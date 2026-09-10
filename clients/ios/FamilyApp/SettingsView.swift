@@ -33,6 +33,8 @@ struct SettingsView: View {
     @State private var isConfirmingAccountDeletion = false
     @State private var isDeletingAccount = false
     @State private var accountDeletionError: String?
+    @State private var linkedCommuteSubscriptionID: String?
+    @State private var isOpeningLinkedCommute = false
 
     var body: some View {
         NavigationStack {
@@ -65,7 +67,10 @@ struct SettingsView: View {
                 if let commuterStore {
                     Section("Transit") {
                         NavigationLink("Commuter module") {
-                            CommuterSettingsView(store: commuterStore)
+                            CommuterSettingsView(
+                                store: commuterStore,
+                                canManageFamilySettings: memberStore != nil
+                            )
                         }
                         Text("Get alerts for Caltrain delays and cancellations.")
                             .font(.caption)
@@ -91,6 +96,24 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                guard let destination = note.object as? InboxNotificationDestination,
+                      destination.kind == .commuteSubscription,
+                      commuterStore != nil else { return }
+                linkedCommuteSubscriptionID = destination.id
+                isOpeningLinkedCommute = true
+            }
+            .sheet(isPresented: $isOpeningLinkedCommute) {
+                if let commuterStore {
+                    NavigationStack {
+                        CommuterSettingsView(
+                            store: commuterStore,
+                            initialSubscriptionID: linkedCommuteSubscriptionID,
+                            canManageFamilySettings: memberStore != nil
+                        )
+                    }
+                }
+            }
             .confirmationDialog(
                 "Sign out of Rallyroo?",
                 isPresented: $isConfirmingSignOut,
@@ -147,24 +170,48 @@ struct SettingsView: View {
     }
 }
 
-private struct CalendarSourcesView: View {
+struct CalendarSourcesView: View {
     let store: any CalendarSourceStore
     let memberStore: any FamilyMemberStore
     let currentMemberID: String?
+    let initialSourceID: String?
     @State private var sources: [CalendarSourceConnection] = []
     @State private var members: [FamilyMember] = []
     @State private var isAdding = false
     @State private var errorMessage: String?
 
+    init(
+        store: any CalendarSourceStore,
+        memberStore: any FamilyMemberStore,
+        currentMemberID: String?,
+        initialSourceID: String? = nil
+    ) {
+        self.store = store
+        self.memberStore = memberStore
+        self.currentMemberID = currentMemberID
+        self.initialSourceID = initialSourceID
+    }
+
     var body: some View {
         List {
+            Text("Calendar imports are one-way and read-only in Rallyroo. Changes must be made in the source calendar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
             }
             ForEach(sources) { source in
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(source.name).font(.headline)
+                    HStack {
+                        Text(source.name).font(.headline)
+                        if source.id.uuidString.lowercased() == initialSourceID?.lowercased() {
+                            Spacer()
+                            Label("Selected event source", systemImage: "link")
+                                .font(.caption2)
+                                .foregroundStyle(AppTheme.purple)
+                        }
+                    }
                     Text(participantNames(for: source))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

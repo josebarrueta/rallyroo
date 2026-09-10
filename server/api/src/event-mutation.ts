@@ -6,6 +6,7 @@ import type {
   EventMutationResult,
   ScheduleUpdateNotificationOutcome,
 } from "./event-mutation-persistence.js";
+import type { NotificationCenterModule, NotificationIntent } from "./notification-center.js";
 
 export interface ImportedEventReader {
   visibleEvents(familyID: string, memberID: string): Promise<FamilyEvent[]>;
@@ -14,7 +15,7 @@ export interface ImportedEventReader {
 
 export class EventMutationError extends Error {
   constructor(
-    readonly code: "parent_role_required" | "imported_event_read_only" | "unknown_participant",
+    readonly code: "parent_role_required" | "imported_event_read_only" | "unknown_participant" | "invalid_driver",
     readonly statusCode: 400 | 403 | 409,
   ) {
     super(code);
@@ -31,6 +32,7 @@ export class EventMutationModule {
     persistence: EventMutationPersistence;
     importedEvents: ImportedEventReader;
     notificationDispatcher?: ScheduleUpdateNotificationDispatch;
+    notificationCenter?: NotificationCenterModule;
   }) {}
 
   async delete(input: {
@@ -74,8 +76,14 @@ export class EventMutationModule {
       input.account.familyID,
       input.idempotencyKey,
     );
-    if (previous) return this.deliverImmediately(previous);
+    if (previous) {
+      for (const change of previous.driverChanges ?? []) {
+        await this.recordDriverChange(input, change, false);
+      }
+      return this.deliverImmediately(previous);
+    }
     const eventID = input.event.id.toLowerCase();
+    let driverChanges: Array<{ memberID: string; change: "assigned" | "removed" }> = [];
     const [visibleImportedEvents, sharedImportedEvents] = await Promise.all([
       this.dependencies.importedEvents.visibleEvents(input.account.familyID, input.account.memberID),
       this.dependencies.importedEvents.sharedEvents(input.account.familyID),
@@ -97,7 +105,24 @@ export class EventMutationModule {
         if (referencedMemberIDs.some((memberID) => !memberIDs.has(memberID))) {
           throw new EventMutationError("unknown_participant", 400);
         }
+        if (input.event.driverMemberID && input.event.driver) {
+          throw new EventMutationError("invalid_driver", 400);
+        }
+        if (input.event.driverMemberID) {
+          const driverMember = members.find((member) => member.id === input.event.driverMemberID);
+          if (!driverMember || (driverMember.role === "kid" && driverMember.canDrive !== true)) {
+            throw new EventMutationError("invalid_driver", 400);
+          }
+        }
         const existingEvent = events.find((candidate) => candidate.id.toLowerCase() === eventID);
+        if (input.event.driverMemberID !== existingEvent?.driverMemberID) {
+          driverChanges = [
+            ...(existingEvent?.driverMemberID && existingEvent.driverMemberID !== input.account.memberID
+              ? [{ memberID: existingEvent.driverMemberID, change: "removed" as const }] : []),
+            ...(input.event.driverMemberID && input.event.driverMemberID !== input.account.memberID
+              ? [{ memberID: input.event.driverMemberID, change: "assigned" as const }] : []),
+          ];
+        }
         const recurrence = preserveWeeklyWeekdays(input.event.recurrence, existingEvent?.recurrence);
         const event: FamilyEvent = {
           ...input.event,
@@ -111,7 +136,9 @@ export class EventMutationModule {
           ...nativeOthers,
           ...sharedImportedEvents,
         ]);
-        const participantIDs = event.participantIDs.filter((id) => id !== input.account.memberID);
+        const participantIDs = event.participantIDs.filter((id) =>
+          id !== input.account.memberID && id !== event.driverMemberID
+        );
         const shouldNotify = input.notifyParticipants && participantIDs.length > 0;
         return {
           action: { kind: "save", event },
@@ -121,6 +148,7 @@ export class EventMutationModule {
               ? (shouldNotify ? "queuedForRetry" : "noRecipients")
               : "notRequested",
             ...(shouldNotify ? { notificationID } : {}),
+            ...(driverChanges.length > 0 ? { driverChanges } : {}),
           },
           ...(shouldNotify ? {
             notification: {
@@ -136,7 +164,36 @@ export class EventMutationModule {
         };
       },
     );
+    for (const change of storedResult.driverChanges ?? []) {
+      await this.recordDriverChange(input, change);
+    }
     return this.deliverImmediately(storedResult);
+  }
+
+  private async recordDriverChange(input: {
+    account: Account;
+    event: FamilyEvent;
+    idempotencyKey: string;
+  }, driverChange: { memberID: string; change: "assigned" | "removed" }, dispatchImmediately = true): Promise<void> {
+    const title = driverChange.change === "assigned" ? "You're assigned to drive" : "Driver assignment changed";
+    const body = driverChange.change === "assigned"
+      ? `${input.event.title} has you listed as the driver.`
+      : `You are no longer listed as the driver for ${input.event.title}.`;
+    const intent: NotificationIntent = {
+      familyID: input.account.familyID,
+      recipientMemberIDs: [driverChange.memberID],
+      kind: "driver_assignment",
+      deduplicationKey: `${input.idempotencyKey}:${driverChange.memberID}:${driverChange.change}`,
+      title,
+      body,
+      destination: { kind: "event", id: input.event.id.toLowerCase() },
+      occurredAt: new Date(),
+    };
+    if (dispatchImmediately) {
+      await this.dependencies.notificationCenter?.recordAndDispatch(intent);
+    } else {
+      await this.dependencies.notificationCenter?.record(intent);
+    }
   }
 
   private async deliverImmediately(storedResult: {
@@ -201,7 +258,15 @@ export function detectEventConflicts(
         driver: null,
         eventIDs: [existing.id, event.id],
       });
-    } else if (event.driver && event.driver === existing.driver) {
+    } else if (event.driverMemberID && event.driverMemberID === existing.driverMemberID) {
+      conflicts.push({
+        kind: "double_booked_driver",
+        memberID: event.driverMemberID,
+        driver: null,
+        eventIDs: [existing.id, event.id],
+      });
+    } else if (!event.driverMemberID && !existing.driverMemberID
+      && event.driver && event.driver === existing.driver) {
       conflicts.push({
         kind: "double_booked_driver",
         memberID: null,

@@ -1,5 +1,6 @@
 import type { CommuteAlertKind } from "./commuter-module.js";
 import type { PushNotificationProvider } from "./push-notification-provider.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 export interface ClaimedCommuteAlert {
   id: string;
@@ -16,6 +17,7 @@ export interface CommuterAlertDeliveryRepository {
   claimDueCommuteAlerts(now: Date, limit: number): Promise<ClaimedCommuteAlert[]>;
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
   deviceTokensForFamily(familyID: string): Promise<string[]>;
+  memberIDsForFamily?(familyID: string): Promise<string[]>;
   markCommuteAlertDelivered(alert: ClaimedCommuteAlert, deliveredAt: Date): Promise<void>;
   releaseCommuteAlertClaim(alert: ClaimedCommuteAlert, releasedAt: Date): Promise<void>;
 }
@@ -25,6 +27,7 @@ interface Dependencies {
   pushNotificationProvider: PushNotificationProvider;
   batchSize?: number;
   sendTimeoutMilliseconds?: number;
+  notificationCenter?: NotificationCenterModule;
 }
 
 export class CommuterAlertDispatcher {
@@ -41,6 +44,26 @@ export class CommuterAlertDispatcher {
     const failures: unknown[] = [];
     for (const alert of alerts) {
       try {
+        const recipientMemberIDs = alert.audience.kind === "member"
+          ? [alert.audience.memberID]
+          : await this.dependencies.repository.memberIDsForFamily?.(alert.familyID) ?? [];
+        if (this.dependencies.notificationCenter && recipientMemberIDs.length === 0) {
+          throw new Error("commuter_notification_recipients_unavailable");
+        }
+        if (this.dependencies.notificationCenter) {
+          await this.dependencies.notificationCenter.recordAndDispatch({
+            familyID: alert.familyID,
+            recipientMemberIDs,
+            kind: "commute_disruption",
+            deduplicationKey: alert.id,
+            title: alert.kind === "delay" ? "Caltrain commute delayed" : "Caltrain commute canceled",
+            body: notificationBody(alert),
+            destination: { kind: "commute_subscription", id: alert.subscriptionID },
+            occurredAt: now,
+          });
+          await this.dependencies.repository.markCommuteAlertDelivered(alert, now);
+          continue;
+        }
         const tokens = alert.audience.kind === "member"
           ? await this.dependencies.repository.deviceTokensForMembers(
             alert.familyID,

@@ -11,13 +11,37 @@ public struct FamilyMember: Codable, Equatable, Identifiable, Sendable {
     public var role: FamilyMemberRole
     public var gradeOrBirthYear: String?
     public var colorTag: String
+    public var canDrive: Bool
 
-    public init(id: KidID, name: String, role: FamilyMemberRole, gradeOrBirthYear: String? = nil, colorTag: String) {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, role, gradeOrBirthYear, colorTag, canDrive
+    }
+
+    public init(
+        id: KidID,
+        name: String,
+        role: FamilyMemberRole,
+        gradeOrBirthYear: String? = nil,
+        colorTag: String,
+        canDrive: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.role = role
         self.gradeOrBirthYear = gradeOrBirthYear
         self.colorTag = colorTag
+        self.canDrive = role == .kid && canDrive
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(KidID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        role = try container.decode(FamilyMemberRole.self, forKey: .role)
+        gradeOrBirthYear = try container.decodeIfPresent(String.self, forKey: .gradeOrBirthYear)
+        colorTag = try container.decode(String.self, forKey: .colorTag)
+        let decodedCanDrive = try container.decodeIfPresent(Bool.self, forKey: .canDrive) ?? false
+        canDrive = role == .kid && decodedCanDrive
     }
 }
 
