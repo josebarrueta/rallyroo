@@ -15,6 +15,7 @@ struct WeeklyScheduleView: View {
     @State private var isAddingEvent = false
     @State private var editingEvent: FamilyEvent?
     @State private var linkedEvent: FamilyEvent?
+    @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
     @State private var scheduleUpdateNotice: String?
@@ -103,6 +104,21 @@ struct WeeklyScheduleView: View {
             .navigationTitle("Rallyroo")
             .task { await loadConnectionSummaries() }
             .toolbar { toolbarContent }
+            .sheet(isPresented: Binding(
+                get: { linkedCalendarSourceID != nil },
+                set: { if !$0 { linkedCalendarSourceID = nil } }
+            )) {
+                if let calendarSourceStore {
+                    NavigationStack {
+                        CalendarSourcesView(
+                            store: calendarSourceStore,
+                            memberStore: memberStore,
+                            currentMemberID: currentMemberID,
+                            initialSourceID: linkedCalendarSourceID
+                        )
+                    }
+                }
+            }
             .sheet(item: $linkedEvent) { event in
                 NavigationStack {
                     List {
@@ -282,9 +298,13 @@ struct WeeklyScheduleView: View {
                                 )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if allowsEditing && !viewModel.isShowingCachedEvents
-                                        && !occurrence.sourceEvent.isReadOnly {
-                                        editingEvent = occurrence.sourceEvent
+                                    if allowsEditing && !viewModel.isShowingCachedEvents {
+                                        if occurrence.sourceEvent.isReadOnly,
+                                           calendarSourceStore != nil {
+                                            linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
+                                        } else {
+                                            editingEvent = occurrence.sourceEvent
+                                        }
                                     }
                                 }
                             }
