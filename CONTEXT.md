@@ -40,6 +40,18 @@ _Avoid_: Per-assignee completion
 The optional supported interval before a reminder's due instant or an event occurrence's start when the responsible members should be notified. Reminder alerts go to assignees; event alerts go to participants.
 _Avoid_: Event duration, snooze
 
+**Notification intent**:
+A typed, durable request to create one authorized Member inbox record and eligible channel-delivery work per recipient. It has a stable deduplication key and is recorded atomically with the authoritative domain change when one exists.
+_Avoid_: APNs payload, delivery receipt, transient banner
+
+**Member inbox record**:
+Durable user-visible notification state belonging to exactly one Member, with independent read state and a typed opaque destination. Its existence does not claim that APNs or local delivery succeeded.
+_Avoid_: Push history, Family-wide alert, delivery attempt
+
+**Channel delivery**:
+A bounded, retryable attempt to present a Member inbox record through APNs or on-device local notification scheduling. Delivery state is separate from inbox/read state.
+_Avoid_: Notification intent, member inbox record
+
 **Schedule update notification**:
 A durable, one-time notification intent recorded atomically when a parent saves an event and explicitly chooses to notify its participants. Delivery is attempted promptly and retried after provider failure. It summarizes the saved series once, excludes the saving parent, and is separate from occurrence-based event alerts.
 _Avoid_: Event alert, reminder alert, best-effort push
