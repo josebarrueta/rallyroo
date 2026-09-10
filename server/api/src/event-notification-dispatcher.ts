@@ -48,9 +48,13 @@ export class EventNotificationDispatcher {
     const notifications = await this.repository.claimDueEventNotifications(now, this.batchSize);
     const results = await Promise.allSettled(notifications.map(async ({ event, occurrenceStart }) => {
       try {
+        const recipientMemberIDs = [...new Set([
+          ...event.participantIDs,
+          ...(event.driverMemberID ? [event.driverMemberID] : []),
+        ])];
         await this.dependencies.notificationCenter?.record({
           familyID: event.familyID,
-          recipientMemberIDs: event.participantIDs,
+          recipientMemberIDs,
           kind: "event_occurrence",
           deduplicationKey: `${event.id}:${occurrenceStart}`,
           title: event.title,
@@ -60,7 +64,7 @@ export class EventNotificationDispatcher {
         });
         const tokens = await this.repository.deviceTokensForMembers(
           event.familyID,
-          event.participantIDs,
+          recipientMemberIDs,
         );
         if (tokens.length > 0) {
           await this.pushNotificationProvider.send(tokens, {

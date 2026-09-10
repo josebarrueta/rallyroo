@@ -180,8 +180,13 @@ describe("EventMutationModule", () => {
     expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" })).toEqual([
       expect.objectContaining({ kind: "driver_assignment", destination: { kind: "event", id: event.id } }),
     ]);
-    expect(driverDeliveries).toHaveLength(2);
-    expect(new Set(driverDeliveries.map((delivery) => delivery.recordID)).size).toBe(1);
+    await module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1", title: "Updated title" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555564",
+      notifyParticipants: false,
+    });
+    expect(driverDeliveries).toHaveLength(1);
     expect(driverDeliveries[0]?.memberID).toBe("kid-1");
   });
 

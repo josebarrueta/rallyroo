@@ -80,11 +80,9 @@ export class EventMutationModule {
       input.account.familyID,
       input.idempotencyKey,
     );
-    if (previous) {
-      await this.recordDriverAssignment(input);
-      return this.deliverImmediately(previous);
-    }
+    if (previous) return this.deliverImmediately(previous);
     const eventID = input.event.id.toLowerCase();
+    let newlyAssignedDriverMemberID: string | undefined;
     const [visibleImportedEvents, sharedImportedEvents] = await Promise.all([
       this.dependencies.importedEvents.visibleEvents(input.account.familyID, input.account.memberID),
       this.dependencies.importedEvents.sharedEvents(input.account.familyID),
@@ -116,6 +114,11 @@ export class EventMutationModule {
           }
         }
         const existingEvent = events.find((candidate) => candidate.id.toLowerCase() === eventID);
+        if (input.event.driverMemberID
+          && input.event.driverMemberID !== existingEvent?.driverMemberID
+          && input.event.driverMemberID !== input.account.memberID) {
+          newlyAssignedDriverMemberID = input.event.driverMemberID;
+        }
         const recurrence = preserveWeeklyWeekdays(input.event.recurrence, existingEvent?.recurrence);
         const event: FamilyEvent = {
           ...input.event,
@@ -156,7 +159,9 @@ export class EventMutationModule {
         };
       },
     );
-    await this.recordDriverAssignment(input);
+    if (newlyAssignedDriverMemberID) {
+      await this.recordDriverAssignment(input, newlyAssignedDriverMemberID);
+    }
     return this.deliverImmediately(storedResult);
   }
 
@@ -164,9 +169,7 @@ export class EventMutationModule {
     account: Account;
     event: FamilyEvent;
     idempotencyKey: string;
-  }): Promise<void> {
-    const driverMemberID = input.event.driverMemberID;
-    if (!driverMemberID) return;
+  }, driverMemberID: string): Promise<void> {
     const title = "You're assigned to drive";
     const body = `${input.event.title} has you listed as the driver.`;
     const [record] = await this.dependencies.notificationCenter?.record({

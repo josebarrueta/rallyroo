@@ -16,10 +16,11 @@ const event: FamilyEvent = {
   source: "manual",
   status: "confirmed",
   alertLeadTimeMinutes: 15,
+  driverMemberID: "driver-1",
 };
 
 describe("EventNotificationDispatcher", () => {
-  it("sends due event alerts only to participant devices", async () => {
+  it("sends one occurrence alert to participants and the assigned driver", async () => {
     const requestedMembers: string[][] = [];
     const pushes: Array<{ tokens: string[]; title: string; body: string; data?: Record<string, string> }> = [];
     const marked: string[] = [];
@@ -42,7 +43,7 @@ describe("EventNotificationDispatcher", () => {
 
     await dispatcher.dispatchDue(new Date("2026-09-06T17:45:00.000Z"));
 
-    expect(requestedMembers).toEqual([["kid-1", "parent-1"]]);
+    expect(requestedMembers).toEqual([["kid-1", "parent-1", "driver-1"]]);
     expect(pushes).toEqual([{
       tokens: ["participant-device"],
       title: "Soccer practice",
