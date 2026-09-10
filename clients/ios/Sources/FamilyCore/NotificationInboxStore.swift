@@ -51,18 +51,35 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
     private let notificationsURL: URL
     private let transport: any HTTPTransport
     private let decoder: JSONDecoder
+    private let encoder: JSONEncoder
+    private let cacheURL: URL?
+    private let accountID: @Sendable () async throws -> String?
 
-    public init(baseURL: URL, transport: any HTTPTransport = URLSessionHTTPTransport()) {
+    public init(
+        baseURL: URL,
+        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        cacheURL: URL? = nil,
+        accountID: @escaping @Sendable () async throws -> String? = { nil }
+    ) {
         notificationsURL = baseURL.appending(path: "v1/notifications")
         self.transport = transport
-        decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        self.cacheURL = cacheURL
+        self.accountID = accountID
+        decoder = JSONDecoder(); encoder = JSONEncoder()
+        decoder.dateDecodingStrategy = .iso8601; encoder.dateEncodingStrategy = .iso8601
     }
 
     public func notifications() async throws -> [InboxNotification] {
-        let response = try await transport.send(HTTPRequest(method: .get, url: notificationsURL))
-        try response.requireSuccess()
-        return try decoder.decode([InboxNotification].self, from: response.body)
+        do {
+            let response = try await transport.send(HTTPRequest(method: .get, url: notificationsURL))
+            try response.requireSuccess()
+            let records = try decoder.decode([InboxNotification].self, from: response.body)
+            try await saveCache(records)
+            return records
+        } catch {
+            guard let cached = try await cachedNotifications() else { throw error }
+            return cached
+        }
     }
 
     public func markRead(id: UUID) async throws {
@@ -71,5 +88,35 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
             url: notificationsURL.appending(path: id.uuidString).appending(path: "read")
         ))
         try response.requireSuccess()
+        if var cached = try await cachedNotifications(),
+           let index = cached.firstIndex(where: { $0.id == id }) {
+            let item = cached[index]
+            cached[index] = InboxNotification(
+                id: item.id, kind: item.kind, title: item.title, body: item.body,
+                destination: item.destination, occurredAt: item.occurredAt, readAt: .now
+            )
+            try await saveCache(cached)
+        }
     }
+
+    private func saveCache(_ records: [InboxNotification]) async throws {
+        guard let cacheURL, let account = try await accountID() else { return }
+        let envelope = InboxCacheEnvelope(accountID: account, records: records)
+        try FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try encoder.encode(envelope).write(to: cacheURL, options: .atomic)
+    }
+
+    private func cachedNotifications() async throws -> [InboxNotification]? {
+        guard let cacheURL, let account = try await accountID(),
+              FileManager.default.fileExists(atPath: cacheURL.path) else { return nil }
+        let envelope = try decoder.decode(InboxCacheEnvelope.self, from: Data(contentsOf: cacheURL))
+        return envelope.accountID == account ? envelope.records : nil
+    }
+}
+
+private struct InboxCacheEnvelope: Codable {
+    let accountID: String
+    let records: [InboxNotification]
 }

@@ -10,6 +10,7 @@ struct FamilyActivityCoordinatorApp: App {
     @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushNotificationDelegate
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .schedule
+    @State private var unreadAlertCount = 0
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
@@ -104,7 +105,9 @@ struct FamilyActivityCoordinatorApp: App {
             )
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
-                transport: authenticatedTransport
+                transport: authenticatedTransport,
+                cacheURL: AppStorage.remoteNotificationsCacheURL,
+                accountID: { try await remoteAuthentication.currentSession()?.accountID }
             )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
@@ -153,9 +156,11 @@ struct FamilyActivityCoordinatorApp: App {
                     }
                     NotificationsView(
                         inboxStore: inboxStore,
-                        conflictStore: notificationStore
+                        conflictStore: notificationStore,
+                        onUnreadCountChanged: { unreadAlertCount = $0 }
                     )
                     .tabItem { Label("Alerts", systemImage: "bell") }
+                    .badge(unreadAlertCount)
                     .tag(AppTab.alerts)
                     SettingsView(
                         dataIsSynced: dataIsSynced,
@@ -261,6 +266,10 @@ enum AppStorage {
 
     static var remoteEventsCacheURL: URL {
         storageDirectory.appendingPathComponent("remote-events-cache").appendingPathExtension("json")
+    }
+
+    static var remoteNotificationsCacheURL: URL {
+        storageDirectory.appendingPathComponent("remote-notifications-cache").appendingPathExtension("json")
     }
 
     static var notificationsURL: URL {

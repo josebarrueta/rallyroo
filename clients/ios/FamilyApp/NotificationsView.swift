@@ -4,6 +4,7 @@ import FamilyCore
 struct NotificationsView: View {
     let inboxStore: any NotificationInboxStore
     let conflictStore: any ConflictNotificationStore
+    let onUnreadCountChanged: (Int) -> Void
     @State private var inbox: [InboxNotification] = []
     @State private var conflicts: [ConflictNotification] = []
     @State private var isLoading = true
@@ -97,6 +98,7 @@ struct NotificationsView: View {
             async let local = conflictStore.notifications()
             inbox = try await remote
             conflicts = try await local
+            onUnreadCountChanged(inbox.filter { $0.readAt == nil }.count)
             errorMessage = nil
         } catch {
             conflicts = (try? await conflictStore.notifications()) ?? conflicts
