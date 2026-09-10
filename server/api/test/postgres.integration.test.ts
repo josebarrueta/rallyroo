@@ -9,6 +9,7 @@ import { CommuterModule } from "../src/commuter-module.js";
 import type { CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-schedule.js";
 import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
+import { NotificationCenterModule } from "../src/notification-center.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -147,6 +148,43 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       "2026-08-09T00:00:00.000Z",
     );
     expect((await repository.caltrainSchedule())?.version).toBe("integration-v1");
+  });
+
+  it("persists encrypted member inbox records with idempotent replay", async () => {
+    const repository = repositoryForTest();
+    const app = buildApp({ identityProvider, repository });
+    await app.inject({
+      method: "POST", url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    await app.close();
+    const account = await repository.accountForIdentity("integration-parent");
+    expect(account).not.toBeNull();
+    const center = new NotificationCenterModule(repository);
+    const intent = {
+      familyID: account!.familyID,
+      recipientMemberIDs: [account!.memberID],
+      kind: "schedule_update" as const,
+      deduplicationKey: "event-1:update-1",
+      title: "Private family title",
+      body: "Private family details",
+      destination: { kind: "event" as const, id: "event-1" },
+      occurredAt: new Date("2030-09-10T16:00:00Z"),
+    };
+
+    const first = await center.record(intent);
+    const replay = await center.record(intent);
+    expect(replay[0]?.id).toBe(first[0]?.id);
+    const rawPool = new Pool({ connectionString: databaseURL });
+    const raw = await rawPool.query<{ details_ciphertext: string }>(
+      "SELECT details_ciphertext FROM member_notification_inbox WHERE id = $1", [first[0]!.id],
+    );
+    await rawPool.end();
+    expect(raw.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
+    expect(raw.rows[0]?.details_ciphertext).not.toContain("Private family");
+    expect((await center.list(account!))[0]).toMatchObject({
+      title: "Private family title", body: "Private family details", readAt: null,
+    });
   });
 
   it("persists encrypted Commuter state and durable alert deduplication", async () => {

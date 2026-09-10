@@ -25,6 +25,7 @@ import { RallyrooMetrics } from "./metrics.js";
 import { OllamaScheduleDraftExtractor } from "./ollama-schedule-draft-extractor.js";
 import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
+import { NotificationCenterModule } from "./notification-center.js";
 import { EventNotificationDispatcher } from "./event-notification-dispatcher.js";
 import { ReminderNotificationDispatcher } from "./reminder-notification-dispatcher.js";
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
@@ -67,23 +68,28 @@ await repository.validateFamilyDataEncryption();
 const apnsPushNotificationProvider = APNSPushNotificationProvider.fromEnvironment();
 const pushNotificationProvider = apnsPushNotificationProvider
   ?? new NoopPushNotificationProvider();
+const notificationCenter = new NotificationCenterModule(repository);
 const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
   repository,
   pushNotificationProvider,
+  notificationCenter,
 });
 const eventNotificationDispatcher = new EventNotificationDispatcher({
   repository,
   pushNotificationProvider,
+  notificationCenter,
 });
 const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispatcher({
   persistence: repository,
   recipients: repository,
   pushNotificationProvider,
+  notificationCenter,
 });
 const commuterAlertDispatcher = apnsPushNotificationProvider
   ? new CommuterAlertDispatcher({
     repository,
     pushNotificationProvider: apnsPushNotificationProvider,
+    notificationCenter,
   })
   : undefined;
 const calendarEncryptionKey = configuredSecret("CALENDAR_SOURCE_ENCRYPTION_KEY");
@@ -129,6 +135,7 @@ const app = buildApp({
   pushNotificationProvider,
   readinessCheck: () => repository.checkReadiness(),
   metrics,
+  notificationCenter,
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),

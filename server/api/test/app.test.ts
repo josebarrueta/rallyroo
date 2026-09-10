@@ -10,6 +10,8 @@ import { CalendarSourceModule } from "../src/calendar-source-module.js";
 import { InMemoryCalendarSourceRepository } from "../src/in-memory-calendar-source-repository.js";
 import { CommuterModule } from "../src/commuter-module.js";
 import { InMemoryCommuterRepository } from "../src/in-memory-commuter-repository.js";
+import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
+import { NotificationCenterModule } from "../src/notification-center.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -123,6 +125,32 @@ function repository() {
 }
 
 describe("Rallyroo API", () => {
+  it("lists and marks only the authenticated member's inbox records", async () => {
+    const notificationCenter = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
+    const [record] = await notificationCenter.record({
+      familyID: "family-1", recipientMemberIDs: ["parent-1"], kind: "schedule_update",
+      deduplicationKey: "update-1", title: "Schedule updated", body: "Open Rallyroo.",
+      destination: { kind: "event", id: "event-1" }, occurredAt: new Date("2030-09-10T16:00:00Z"),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), notificationCenter });
+
+    const parentList = await app.inject({
+      method: "GET", url: "/v1/notifications", headers: { authorization: "Bearer parent-token" },
+    });
+    expect(parentList.statusCode).toBe(200);
+    expect(parentList.json()).toEqual([expect.objectContaining({ id: record!.id, title: "Schedule updated" })]);
+    expect(JSON.stringify(parentList.json())).not.toContain("deduplicationDigest");
+    expect((await app.inject({
+      method: "PATCH", url: `/v1/notifications/${record!.id}/read`,
+      headers: { authorization: "Bearer kid-token" },
+    })).statusCode).toBe(404);
+    expect((await app.inject({
+      method: "PATCH", url: `/v1/notifications/${record!.id}/read`,
+      headers: { authorization: "Bearer parent-token" },
+    })).statusCode).toBe(204);
+    await app.close();
+  });
+
   it("exposes parent-managed Commuter state without leaking personal subscriptions", async () => {
     const commuter = new CommuterModule(new InMemoryCommuterRepository());
     const app = buildApp({ identityProvider, repository: repository(), commuter });

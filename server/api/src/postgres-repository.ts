@@ -28,6 +28,10 @@ import {
 } from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 import type {
+  MemberInboxRecord,
+  NotificationCenterRepository,
+} from "./notification-center.js";
+import type {
   CalendarSource,
   CalendarSourceRepository,
   ImportedCalendarEvent,
@@ -48,7 +52,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -1397,6 +1401,14 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return result.rows.map((row) => row.token);
   }
 
+  async memberIDsForFamily(familyID: string): Promise<string[]> {
+    const result = await this.pool.query<{ id: string }>(
+      "SELECT id FROM family_members WHERE family_id = $1 ORDER BY id",
+      [familyID],
+    );
+    return result.rows.map((row) => row.id);
+  }
+
   async deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]> {
     if (memberIDs.length === 0) return [];
     const result = await this.pool.query<{ token: string }>(
@@ -2004,6 +2016,70 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
+  async saveInboxRecordsIfAbsent(records: MemberInboxRecord[]): Promise<MemberInboxRecord[]> {
+    if (records.length === 0) return [];
+    const protectedRecords = await Promise.all(records.map(async (record) => ({
+      record,
+      details: await this.familyDataProtector.protect(
+        record.familyID,
+        `member_notification_inbox/${record.id}/details`,
+        JSON.stringify({ title: record.title, body: record.body, destination: record.destination }),
+      ),
+    })));
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const { record, details } of protectedRecords) {
+        await client.query(
+          `INSERT INTO member_notification_inbox
+             (id, family_id, member_id, kind, deduplication_digest, occurred_at, read_at, details_ciphertext)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (family_id, member_id, deduplication_digest) DO NOTHING`,
+          [record.id, record.familyID, record.memberID, record.kind, record.deduplicationDigest,
+            record.occurredAt.toISOString(), record.readAt?.toISOString() ?? null, details],
+        );
+      }
+      const rows = await client.query<MemberInboxRow>(
+        `SELECT id::text, family_id, member_id, kind, deduplication_digest,
+                occurred_at, read_at, details_ciphertext
+         FROM member_notification_inbox
+         WHERE family_id = $1 AND deduplication_digest = ANY($2::text[])
+         ORDER BY occurred_at DESC, id`,
+        [records[0]!.familyID, records.map((record) => record.deduplicationDigest)],
+      );
+      await client.query("COMMIT");
+      return Promise.all(rows.rows.map((row) => this.inboxRecordFromRow(row)));
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async inboxRecords(familyID: string, memberID: string, limit: number): Promise<MemberInboxRecord[]> {
+    const result = await this.pool.query<MemberInboxRow>(
+      `SELECT id::text, family_id, member_id, kind, deduplication_digest,
+              occurred_at, read_at, details_ciphertext
+       FROM member_notification_inbox
+       WHERE family_id = $1 AND member_id = $2
+       ORDER BY occurred_at DESC, id LIMIT $3`,
+      [familyID, memberID, limit],
+    );
+    return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
+  }
+
+  async markInboxRecordRead(
+    familyID: string, memberID: string, recordID: string, readAt: Date,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE member_notification_inbox SET read_at = COALESCE(read_at, $4)
+       WHERE family_id = $1 AND member_id = $2 AND id = $3::uuid RETURNING id`,
+      [familyID, memberID, recordID, readAt.toISOString()],
+    );
+    return result.rowCount === 1;
+  }
+
   async membersForFamily(familyID: string): Promise<FamilyMember[]> {
     const result = await this.pool.query<MemberRow>(
       `SELECT family_id, id, name, role, grade_or_birth_year, color_tag, can_drive
@@ -2151,6 +2227,25 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     }
     if (row.result !== null) return row.result;
     throw new Error("Event mutation result has no payload");
+  }
+
+  private async inboxRecordFromRow(row: MemberInboxRow): Promise<MemberInboxRecord> {
+    const plaintext = await this.familyDataProtector.reveal(
+      row.family_id,
+      `member_notification_inbox/${row.id}/details`,
+      row.details_ciphertext,
+    );
+    const details = JSON.parse(plaintext) as Pick<MemberInboxRecord, "title" | "body" | "destination">;
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      memberID: row.member_id,
+      kind: row.kind,
+      deduplicationDigest: row.deduplication_digest,
+      occurredAt: new Date(row.occurred_at),
+      readAt: row.read_at === null ? null : new Date(row.read_at),
+      ...details,
+    };
   }
 
   private async memberFromRow(row: MemberRow): Promise<FamilyMember> {
@@ -2406,6 +2501,17 @@ interface EventRow {
   status: FamilyEvent["status"];
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
+}
+
+interface MemberInboxRow {
+  id: string;
+  family_id: string;
+  member_id: string;
+  kind: MemberInboxRecord["kind"];
+  deduplication_digest: string;
+  occurred_at: Date | string;
+  read_at: Date | string | null;
+  details_ciphertext: string;
 }
 
 interface EventMutationResultRow {

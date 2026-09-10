@@ -1,5 +1,6 @@
 import type { FamilyEvent } from "./domain.js";
 import type { PushNotificationProvider } from "./push-notification-provider.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 export interface DueEventNotification {
   event: FamilyEvent;
@@ -27,23 +28,36 @@ interface Dependencies {
   repository: EventNotificationRepository;
   pushNotificationProvider: PushNotificationProvider;
   batchSize?: number;
+  notificationCenter?: NotificationCenterModule;
 }
 
 export class EventNotificationDispatcher {
   private readonly repository: EventNotificationRepository;
   private readonly pushNotificationProvider: PushNotificationProvider;
   private readonly batchSize: number;
+  private readonly dependencies: Dependencies;
 
-  constructor({ repository, pushNotificationProvider, batchSize = 100 }: Dependencies) {
-    this.repository = repository;
-    this.pushNotificationProvider = pushNotificationProvider;
-    this.batchSize = batchSize;
+  constructor(dependencies: Dependencies) {
+    this.dependencies = dependencies;
+    this.repository = dependencies.repository;
+    this.pushNotificationProvider = dependencies.pushNotificationProvider;
+    this.batchSize = dependencies.batchSize ?? 100;
   }
 
   async dispatchDue(now = new Date()): Promise<void> {
     const notifications = await this.repository.claimDueEventNotifications(now, this.batchSize);
     const results = await Promise.allSettled(notifications.map(async ({ event, occurrenceStart }) => {
       try {
+        await this.dependencies.notificationCenter?.record({
+          familyID: event.familyID,
+          recipientMemberIDs: event.participantIDs,
+          kind: "event_occurrence",
+          deduplicationKey: `${event.id}:${occurrenceStart}`,
+          title: event.title,
+          body: alertBody(event.alertLeadTimeMinutes),
+          destination: { kind: "event", id: event.id },
+          occurredAt: now,
+        });
         const tokens = await this.repository.deviceTokensForMembers(
           event.familyID,
           event.participantIDs,

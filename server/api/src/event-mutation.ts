@@ -6,6 +6,7 @@ import type {
   EventMutationResult,
   ScheduleUpdateNotificationOutcome,
 } from "./event-mutation-persistence.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 export interface ImportedEventReader {
   visibleEvents(familyID: string, memberID: string): Promise<FamilyEvent[]>;
@@ -31,6 +32,7 @@ export class EventMutationModule {
     persistence: EventMutationPersistence;
     importedEvents: ImportedEventReader;
     notificationDispatcher?: ScheduleUpdateNotificationDispatch;
+    notificationCenter?: NotificationCenterModule;
   }) {}
 
   async delete(input: {
@@ -74,7 +76,10 @@ export class EventMutationModule {
       input.account.familyID,
       input.idempotencyKey,
     );
-    if (previous) return this.deliverImmediately(previous);
+    if (previous) {
+      await this.recordDriverAssignment(input);
+      return this.deliverImmediately(previous);
+    }
     const eventID = input.event.id.toLowerCase();
     const [visibleImportedEvents, sharedImportedEvents] = await Promise.all([
       this.dependencies.importedEvents.visibleEvents(input.account.familyID, input.account.memberID),
@@ -120,7 +125,9 @@ export class EventMutationModule {
           ...nativeOthers,
           ...sharedImportedEvents,
         ]);
-        const participantIDs = event.participantIDs.filter((id) => id !== input.account.memberID);
+        const participantIDs = event.participantIDs.filter((id) =>
+          id !== input.account.memberID && id !== event.driverMemberID
+        );
         const shouldNotify = input.notifyParticipants && participantIDs.length > 0;
         return {
           action: { kind: "save", event },
@@ -145,7 +152,27 @@ export class EventMutationModule {
         };
       },
     );
+    await this.recordDriverAssignment(input);
     return this.deliverImmediately(storedResult);
+  }
+
+  private async recordDriverAssignment(input: {
+    account: Account;
+    event: FamilyEvent;
+    idempotencyKey: string;
+  }): Promise<void> {
+    const driverMemberID = input.event.driverMemberID;
+    if (!driverMemberID) return;
+    await this.dependencies.notificationCenter?.record({
+      familyID: input.account.familyID,
+      recipientMemberIDs: [driverMemberID],
+      kind: "driver_assignment",
+      deduplicationKey: `${input.idempotencyKey}:${driverMemberID}`,
+      title: "You're assigned to drive",
+      body: `${input.event.title} has you listed as the driver.`,
+      destination: { kind: "event", id: input.event.id.toLowerCase() },
+      occurredAt: new Date(),
+    });
   }
 
   private async deliverImmediately(storedResult: {

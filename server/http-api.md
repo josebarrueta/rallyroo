@@ -16,6 +16,18 @@ Due reminder alerts are sent only to devices registered by the reminder's assign
 Device registration is optional, and APNs failures never roll back PostgreSQL
 source-of-truth data.
 
+## Notification inbox
+
+- `GET /v1/notifications` lists at most 100 newest durable inbox records belonging
+  to the authenticated member.
+- `PATCH /v1/notifications/{id}/read` marks only that member's record read and
+  returns `204`, or `404` when it does not belong to them.
+
+Inbox records are distinct from APNs delivery attempts. Their presentation and typed
+opaque destination are encrypted per Family; API responses omit Family IDs and
+server-side deduplication digests. Event, Reminder, schedule-update, Commuter, driver,
+and saved-conflict producers use distinct categories.
+
 ## Synchronization
 
 - `GET /v1/changes` → `{ "version": 42 }` for the authenticated family.

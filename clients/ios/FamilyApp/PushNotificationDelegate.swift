@@ -1,5 +1,6 @@
 import UIKit
 @preconcurrency import UserNotifications
+import FamilyCore
 
 final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func application(
@@ -25,8 +26,31 @@ final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcu
     ) {
         completionHandler([.banner, .sound, .badge])
     }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+        let data = response.notification.request.content.userInfo
+        let destination: InboxNotificationDestination?
+        if let id = data["eventID"] as? String {
+            destination = .init(kind: .event, id: id)
+        } else if let id = data["reminderID"] as? String {
+            destination = .init(kind: .reminder, id: id)
+        } else if let id = data["subscriptionID"] as? String {
+            destination = .init(kind: .commuteSubscription, id: id)
+        } else {
+            destination = nil
+        }
+        if let destination {
+            NotificationCenter.default.post(name: .openNotificationDestination, object: destination)
+        }
+    }
 }
 
 extension Notification.Name {
     static let didRegisterDeviceToken = Notification.Name("didRegisterDeviceToken")
+    static let openNotificationDestination = Notification.Name("openNotificationDestination")
 }

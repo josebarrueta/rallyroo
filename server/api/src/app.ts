@@ -32,6 +32,7 @@ import {
   scheduleDraftResultSchema,
   type ScheduleDraftExtractor,
 } from "./schedule-draft-extractor.js";
+import type { NotificationCenterModule } from "./notification-center.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -190,6 +191,7 @@ interface Dependencies {
   readinessCheck?: () => Promise<void>;
   rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts", RouteRateLimit>>;
   metrics?: RallyrooMetrics;
+  notificationCenter?: NotificationCenterModule;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -206,6 +208,7 @@ export function buildApp({
   readinessCheck = async () => {},
   rateLimits = {},
   metrics = new RallyrooMetrics(),
+  notificationCenter,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -220,6 +223,7 @@ export function buildApp({
     persistence: repository,
     recipients: repository,
     pushNotificationProvider,
+    ...(notificationCenter ? { notificationCenter } : {}),
   });
   const eventMutations = new EventMutationModule({
     persistence: repository,
@@ -228,6 +232,7 @@ export function buildApp({
       sharedEvents: (familyID) => calendarSources?.sharedEvents(familyID) ?? Promise.resolve([]),
     },
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
+    ...(notificationCenter ? { notificationCenter } : {}),
   });
   const app = Fastify({ logger });
   fastifyRateLimit(
@@ -877,6 +882,26 @@ export function buildApp({
       (request.params as { token: string }).token,
     );
     return reply.code(204).send();
+  });
+
+  app.get("/v1/notifications", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const records = await notificationCenter.list(account);
+    return records.map(({ familyID: _familyID, memberID: _memberID,
+      deduplicationDigest: _deduplicationDigest, ...record }) => record);
+  });
+
+  app.patch("/v1/notifications/:id/read", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const id = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(400).send({ error: "invalid_notification_id" });
+    }
+    return await notificationCenter.markRead(account, id)
+      ? reply.code(204).send()
+      : reply.code(404).send({ error: "notification_not_found" });
   });
 
   app.get("/v1/changes", async (request) => {

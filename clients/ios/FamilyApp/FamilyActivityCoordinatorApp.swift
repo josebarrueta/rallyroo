@@ -3,13 +3,17 @@ import UIKit
 @preconcurrency import UserNotifications
 import FamilyCore
 
+private enum AppTab: Hashable { case schedule, reminders, family, alerts, settings }
+
 @main
 struct FamilyActivityCoordinatorApp: App {
     @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushNotificationDelegate
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab: AppTab = .schedule
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
+    private let inboxStore: any NotificationInboxStore
     private let reminderStore: any ReminderStore
     private let reminderAlertScheduler: (any ReminderAlertScheduler)?
     private let eventAlertScheduler: (any EventAlertScheduler)?
@@ -49,6 +53,7 @@ struct FamilyActivityCoordinatorApp: App {
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
             commuterStore = nil
+            inboxStore = EmptyNotificationInboxStore()
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -97,6 +102,10 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            inboxStore = RemoteNotificationInboxStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
     }
@@ -107,7 +116,7 @@ struct FamilyActivityCoordinatorApp: App {
                 authentication: authentication,
                 onSessionEnded: { try? await eventStore.clearCache() }
             ) { session, signOut, deleteAccount in
-                TabView {
+                TabView(selection: $selectedTab) {
                     WeeklyScheduleView(
                         eventStore: eventStore,
                         memberStore: memberStore,
@@ -122,6 +131,7 @@ struct FamilyActivityCoordinatorApp: App {
                         commuterStore: session.role == .parent ? commuterStore : nil
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
+                    .tag(AppTab.schedule)
                     RemindersView(
                         store: reminderStore,
                         memberStore: memberStore,
@@ -129,6 +139,7 @@ struct FamilyActivityCoordinatorApp: App {
                         session: session
                     )
                     .tabItem { Label("Reminders", systemImage: "checklist") }
+                    .tag(AppTab.reminders)
                     if session.role == .parent {
                         FamilyMembersView(
                             memberStore: memberStore,
@@ -138,9 +149,14 @@ struct FamilyActivityCoordinatorApp: App {
                             invitationStore: invitationStore
                         )
                             .tabItem { Label("Family", systemImage: "person.2") }
-                        NotificationsView(notificationStore: notificationStore)
-                            .tabItem { Label("Alerts", systemImage: "bell") }
+                            .tag(AppTab.family)
                     }
+                    NotificationsView(
+                        inboxStore: inboxStore,
+                        conflictStore: notificationStore
+                    )
+                    .tabItem { Label("Alerts", systemImage: "bell") }
+                    .tag(AppTab.alerts)
                     SettingsView(
                         dataIsSynced: dataIsSynced,
                         currentMemberID: session.accountID,
@@ -151,6 +167,15 @@ struct FamilyActivityCoordinatorApp: App {
                         onDeleteAccount: deleteAccount
                     )
                     .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(AppTab.settings)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                    guard let destination = note.object as? InboxNotificationDestination else { return }
+                    switch destination.kind {
+                    case .event: selectedTab = .schedule
+                    case .reminder: selectedTab = .reminders
+                    case .commuteSubscription, .settings: selectedTab = .settings
+                    }
                 }
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.

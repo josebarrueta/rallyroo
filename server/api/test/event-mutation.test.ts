@@ -3,6 +3,8 @@ import { EventMutationError, EventMutationModule } from "../src/event-mutation.j
 import { InMemoryRallyrooRepository } from "../src/in-memory-repository.js";
 import { ScheduleUpdateNotificationDispatcher } from "../src/schedule-update-notification-dispatcher.js";
 import type { Account, FamilyEvent } from "../src/domain.js";
+import { NotificationCenterModule } from "../src/notification-center.js";
+import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
 
 const account: Account = {
   identitySubject: "parent-subject",
@@ -141,9 +143,11 @@ describe("EventMutationModule", () => {
       .toBe("sent");
   });
 
-  it("requires a driver to be a parent or driving-enabled kid", async () => {
+  it("requires an eligible driver and records an idempotent driver inbox notification", async () => {
     const persistence = repository();
-    const module = new EventMutationModule({ persistence, importedEvents });
+    const inboxRepository = new InMemoryNotificationCenterRepository();
+    const notificationCenter = new NotificationCenterModule(inboxRepository);
+    const module = new EventMutationModule({ persistence, importedEvents, notificationCenter });
     await expect(module.save({
       account,
       event: { ...event, driverMemberID: "kid-1" },
@@ -161,6 +165,15 @@ describe("EventMutationModule", () => {
       idempotencyKey: "55555555-5555-4555-8555-555555555561",
       notifyParticipants: false,
     })).resolves.toMatchObject({ conflicts: [] });
+    await module.save({
+      account,
+      event: { ...event, driverMemberID: "kid-1" },
+      idempotencyKey: "55555555-5555-4555-8555-555555555561",
+      notifyParticipants: false,
+    });
+    expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" })).toEqual([
+      expect.objectContaining({ kind: "driver_assignment", destination: { kind: "event", id: event.id } }),
+    ]);
   });
 
   it("detects a double-booked driver by stable member identity", async () => {
