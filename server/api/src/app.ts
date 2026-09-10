@@ -233,6 +233,16 @@ export function buildApp({
     },
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
     ...(notificationCenter ? { notificationCenter } : {}),
+    deliverDriverAssignment: async ({ familyID, memberID, recordID, title, body, eventID }) => {
+      const tokens = await repository.deviceTokensForMembers(familyID, [memberID]);
+      if (tokens.length === 0) return;
+      await pushNotificationProvider.send(tokens, {
+        title,
+        body,
+        data: { eventID, notificationID: recordID },
+        collapseID: recordID,
+      });
+    },
   });
   const app = Fastify({ logger });
   fastifyRateLimit(

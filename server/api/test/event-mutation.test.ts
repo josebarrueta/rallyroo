@@ -147,7 +147,13 @@ describe("EventMutationModule", () => {
     const persistence = repository();
     const inboxRepository = new InMemoryNotificationCenterRepository();
     const notificationCenter = new NotificationCenterModule(inboxRepository);
-    const module = new EventMutationModule({ persistence, importedEvents, notificationCenter });
+    const driverDeliveries: Array<{ memberID: string; recordID: string }> = [];
+    const module = new EventMutationModule({
+      persistence, importedEvents, notificationCenter,
+      deliverDriverAssignment: async ({ memberID, recordID }) => {
+        driverDeliveries.push({ memberID, recordID });
+      },
+    });
     await expect(module.save({
       account,
       event: { ...event, driverMemberID: "kid-1" },
@@ -174,6 +180,9 @@ describe("EventMutationModule", () => {
     expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" })).toEqual([
       expect.objectContaining({ kind: "driver_assignment", destination: { kind: "event", id: event.id } }),
     ]);
+    expect(driverDeliveries).toHaveLength(2);
+    expect(new Set(driverDeliveries.map((delivery) => delivery.recordID)).size).toBe(1);
+    expect(driverDeliveries[0]?.memberID).toBe("kid-1");
   });
 
   it("detects a double-booked driver by stable member identity", async () => {

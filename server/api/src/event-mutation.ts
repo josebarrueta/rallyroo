@@ -33,6 +33,10 @@ export class EventMutationModule {
     importedEvents: ImportedEventReader;
     notificationDispatcher?: ScheduleUpdateNotificationDispatch;
     notificationCenter?: NotificationCenterModule;
+    deliverDriverAssignment?: (input: {
+      familyID: string; memberID: string; recordID: string;
+      title: string; body: string; eventID: string;
+    }) => Promise<void>;
   }) {}
 
   async delete(input: {
@@ -163,16 +167,28 @@ export class EventMutationModule {
   }): Promise<void> {
     const driverMemberID = input.event.driverMemberID;
     if (!driverMemberID) return;
-    await this.dependencies.notificationCenter?.record({
+    const title = "You're assigned to drive";
+    const body = `${input.event.title} has you listed as the driver.`;
+    const [record] = await this.dependencies.notificationCenter?.record({
       familyID: input.account.familyID,
       recipientMemberIDs: [driverMemberID],
       kind: "driver_assignment",
       deduplicationKey: `${input.idempotencyKey}:${driverMemberID}`,
-      title: "You're assigned to drive",
-      body: `${input.event.title} has you listed as the driver.`,
+      title,
+      body,
       destination: { kind: "event", id: input.event.id.toLowerCase() },
       occurredAt: new Date(),
-    });
+    }) ?? [];
+    if (record && this.dependencies.deliverDriverAssignment) {
+      await this.dependencies.deliverDriverAssignment({
+        familyID: input.account.familyID,
+        memberID: driverMemberID,
+        recordID: record.id,
+        title,
+        body,
+        eventID: input.event.id.toLowerCase(),
+      });
+    }
   }
 
   private async deliverImmediately(storedResult: {
