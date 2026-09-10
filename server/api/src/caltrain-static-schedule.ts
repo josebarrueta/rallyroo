@@ -178,6 +178,27 @@ export function parseCaltrainStaticSchedule(
       };
     });
 
+    // Caltrain and similar feeds use calendar_dates.txt to introduce services
+    // that have no calendar.txt row: one-off event or special services that run
+    // only on their listed added dates. Synthesize them so their trips validate
+    // without a regular weekday. A service that only removes a non-existent
+    // service (exception_type 2, no added dates) is a no-op and is ignored.
+    for (const [rawServiceId, exceptionDates] of exceptionsByService) {
+      if (rawToHashedService.has(rawServiceId)) continue;
+      if (exceptionDates.addedDates.length === 0) continue;
+      requireIdentifier(rawServiceId);
+      const synthesizedDates = [...exceptionDates.addedDates].sort();
+      rawToHashedService.set(rawServiceId, stableID("service", rawServiceId));
+      services.push({
+        id: stableID("service", rawServiceId),
+        weekdays: [],
+        startsOn: synthesizedDates[0]!,
+        endsOn: synthesizedDates[synthesizedDates.length - 1]!,
+        addedDates: synthesizedDates,
+        removedDates: [...exceptionDates.removedDates].sort(),
+        });
+      }
+
     const stopRows = csvRows(files["stops.txt"]!, 5_000);
     const stopByID = new Map<string, CSVRow>();
     for (const row of stopRows) {

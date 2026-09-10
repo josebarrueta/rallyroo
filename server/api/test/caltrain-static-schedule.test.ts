@@ -85,4 +85,66 @@ describe("parseCaltrainStaticSchedule", () => {
     expect(JSON.stringify(schedule)).not.toContain("train-101");
     expect(JSON.stringify(schedule)).not.toContain("\"weekday\"");
   });
+  it("synthesizes exception-only services that have no calendar row", () => {
+     // Real-world Caltrain feed shape: a service_id may exist only in
+     // calendar_dates.txt with added dates and no calendar.txt row (a one-off
+     // event or special service). Those services must not invalidate the feed.
+    const zip = zipSync({
+       "agency.txt": strToU8([
+         "agency_id,agency_name,agency_url,agency_timezone",
+         "CT,Caltrain,https://www.caltrain.com,America/Los_Angeles",
+         ].join("\n")),
+       "feed_info.txt": strToU8([
+         "feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date,feed_version",
+         "Caltrain,https://www.caltrain.com,en,20260901,20261231,fixture-events",
+         ].join("\n")),
+       "stops.txt": strToU8([
+         "stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station",
+         "MV,Mountain View,37.394,-122.076,1,",
+         "70211,Mountain View,37.394,-122.076,0,MV",
+         "PA,Palo Alto,37.443,-122.165,1,",
+         "70171,Palo Alto,37.443,-122.165,0,PA",
+         ].join("\n")),
+       "trips.txt": strToU8([
+         "route_id,service_id,trip_id,direction_id,trip_headsign",
+         "Local,event,train-901,1,San Francisco",
+         ].join("\n")),
+       "stop_times.txt": strToU8([
+         "trip_id,arrival_time,departure_time,stop_id,stop_sequence",
+         "train-901,09:00:00,09:01:00,70211,1",
+         "train-901,09:14:00,09:15:00,70171,2",
+         ].join("\n")),
+       "calendar.txt": strToU8([
+         "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date",
+         "weekday,1,1,1,1,1,0,0,20260901,20261231",
+         ].join("\n")),
+       "calendar_dates.txt": strToU8([
+         "service_id,date,exception_type",
+         "event,20261218,1",
+         "event,20261231,1",
+         ].join("\n")),
+       });
+
+    const schedule = parseCaltrainStaticSchedule(
+      zip,
+      new Date("2026-09-10T00:00:00Z"),
+      );
+
+    const eventService = schedule.services.find((service) => (
+      service.addedDates.includes("2026-12-18")
+      ));
+    expect(eventService).toBeDefined();
+    expect(eventService).toMatchObject({
+      weekdays: [],
+      startsOn: "2026-12-18",
+      endsOn: "2026-12-31",
+      addedDates: ["2026-12-18", "2026-12-31"],
+      removedDates: [],
+       });
+    expect(eventService!.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(schedule.journeys).toHaveLength(1);
+    expect(schedule.journeys[0]!.serviceID).toBe(eventService!.id);
+    });
+
+
 });
