@@ -14,6 +14,7 @@ struct WeeklyScheduleView: View {
     @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
     @State private var editingEvent: FamilyEvent?
+    @State private var linkedEvent: FamilyEvent?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
     @State private var scheduleUpdateNotice: String?
@@ -90,10 +91,31 @@ struct WeeklyScheduleView: View {
                     .onReceive(NotificationCenter.default.publisher(for: .scheduleUpdateNotice)) { notification in
                         scheduleUpdateNotice = notification.userInfo?["message"] as? String
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                        guard let destination = note.object as? InboxNotificationDestination,
+                              destination.kind == .event else { return }
+                        Task {
+                            await viewModel.loadEvents()
+                            linkedEvent = viewModel.events.first { $0.id.uuidString.lowercased() == destination.id.lowercased() }
+                        }
+                    }
             }
             .navigationTitle("Rallyroo")
             .task { await loadConnectionSummaries() }
             .toolbar { toolbarContent }
+            .sheet(item: $linkedEvent) { event in
+                NavigationStack {
+                    List {
+                        Section("Event") {
+                            Text(event.title).font(.headline)
+                            LabeledContent("Starts", value: event.startTime.formatted())
+                            LabeledContent("Ends", value: event.endTime.formatted())
+                            if let location = event.location { LabeledContent("Location", value: location) }
+                        }
+                    }
+                    .navigationTitle("Event details")
+                }
+            }
             .sheet(isPresented: $isAddingEvent) {
                 AddEventSheet(members: viewModel.members, locationSearch: locationSearch) { event, notifyParticipants, idempotencyKey in
                     try await viewModel.addEvent(

@@ -33,6 +33,8 @@ struct SettingsView: View {
     @State private var isConfirmingAccountDeletion = false
     @State private var isDeletingAccount = false
     @State private var accountDeletionError: String?
+    @State private var linkedCommuteSubscriptionID: String?
+    @State private var isOpeningLinkedCommute = false
 
     var body: some View {
         NavigationStack {
@@ -91,6 +93,23 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                guard let destination = note.object as? InboxNotificationDestination,
+                      destination.kind == .commuteSubscription,
+                      commuterStore != nil else { return }
+                linkedCommuteSubscriptionID = destination.id
+                isOpeningLinkedCommute = true
+            }
+            .sheet(isPresented: $isOpeningLinkedCommute) {
+                if let commuterStore {
+                    NavigationStack {
+                        CommuterSettingsView(
+                            store: commuterStore,
+                            initialSubscriptionID: linkedCommuteSubscriptionID
+                        )
+                    }
+                }
+            }
             .confirmationDialog(
                 "Sign out of Rallyroo?",
                 isPresented: $isConfirmingSignOut,

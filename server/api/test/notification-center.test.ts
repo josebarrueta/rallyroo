@@ -41,4 +41,28 @@ describe("NotificationCenterModule", () => {
     expect(await center.markRead(kid, kidItem.id, new Date("2026-09-10T16:01:00Z"))).toBe(true);
     expect((await center.list(kid))[0]?.readAt).toEqual(new Date("2026-09-10T16:01:00Z"));
   });
+
+  it("preserves one inbox record and retries channel delivery after provider failure", async () => {
+    const repository = new InMemoryNotificationCenterRepository();
+    let shouldFail = true;
+    const sent: string[][] = [];
+    const center = new NotificationCenterModule(repository, {
+      send: async (tokens) => {
+        if (shouldFail) throw new Error("provider unavailable");
+        sent.push(tokens);
+      },
+    });
+    const intent = {
+      familyID: "family-1", recipientMemberIDs: ["kid-1"], kind: "reminder_occurrence" as const,
+      deduplicationKey: "reminder-1:occurrence-1", title: "Permission slip", body: "Reminder due.",
+      destination: { kind: "reminder" as const, id: "reminder-1" }, occurredAt: new Date(),
+    };
+
+    await expect(center.recordAndDispatch(intent)).rejects.toThrow("Notification delivery failed");
+    expect(await center.list(kid)).toHaveLength(1);
+    shouldFail = false;
+    await center.recordAndDispatch(intent);
+    expect(await center.list(kid)).toHaveLength(1);
+    expect(sent).toEqual([["token:kid-1"]]);
+  });
 });

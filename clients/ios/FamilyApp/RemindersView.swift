@@ -10,6 +10,7 @@ struct RemindersView: View {
     @State private var reminders: [FamilyReminder] = []
     @State private var members: [FamilyMember] = []
     @State private var editingReminder: FamilyReminder?
+    @State private var linkedReminder: FamilyReminder?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -58,6 +59,28 @@ struct RemindersView: View {
             .task { await load() }
             .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
                 Task { await load() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                guard let destination = note.object as? InboxNotificationDestination,
+                      destination.kind == .reminder else { return }
+                Task {
+                    await load()
+                    linkedReminder = reminders.first {
+                        $0.id.uuidString.lowercased() == destination.id.lowercased()
+                    }
+                }
+            }
+            .sheet(item: $linkedReminder) { reminder in
+                NavigationStack {
+                    List {
+                        Section("Reminder") {
+                            Text(reminder.title).font(.headline)
+                            LabeledContent("Due", value: reminder.dueAt.formatted())
+                            LabeledContent("Status", value: reminder.status == .completed ? "Completed" : "Open")
+                        }
+                    }
+                    .navigationTitle("Reminder details")
+                }
             }
             .sheet(item: $editingReminder) { reminder in
                 ReminderEditorSheet(reminder: reminder, members: availableMembers) { reminder in

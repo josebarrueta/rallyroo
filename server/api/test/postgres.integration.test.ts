@@ -185,6 +185,20 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect((await center.list(account!))[0]).toMatchObject({
       title: "Private family title", body: "Private family details", readAt: null,
     });
+    const claimAt = new Date(Date.now() + 60_000);
+    const [claim] = await repository.claimNotificationDeliveries(claimAt, 10, [first[0]!.id]);
+    expect(claim?.record.id).toBe(first[0]!.id);
+    await repository.releaseNotificationDelivery(
+      claim!.record.id, claim!.claimedAt, "provider_unavailable", claimAt,
+    );
+    expect(await repository.claimNotificationDeliveries(claimAt, 10, [first[0]!.id])).toEqual([]);
+    const [retry] = await repository.claimNotificationDeliveries(
+      new Date(claimAt.getTime() + 60 * 60_000), 10, [first[0]!.id],
+    );
+    expect(retry?.attemptCount).toBe(2);
+    await repository.completeNotificationDelivery(
+      retry!.record.id, retry!.claimedAt, "delivered", new Date(claimAt.getTime() + 60 * 60_000),
+    );
   });
 
   it("persists encrypted Commuter state and durable alert deduplication", async () => {

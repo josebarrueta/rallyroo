@@ -20,13 +20,18 @@ source-of-truth data.
 
 - `GET /v1/notifications` lists at most 100 newest durable inbox records belonging
   to the authenticated member.
-- `PATCH /v1/notifications/{id}/read` marks only that member's record read and
-  returns `204`, or `404` when it does not belong to them.
+- `PATCH /v1/notifications/{id}/read` marks only that member's record read.
+- `DELETE /v1/notifications/{id}` removes only that member's visible inbox record;
+  it terminally cancels pending delivery while retaining non-visible audit state.
+
+Both mutation routes return `204`, or `404` when the record does not belong to the member.
 
 Inbox records are distinct from APNs delivery attempts. Their presentation and typed
 opaque destination are encrypted per Family; API responses omit Family IDs and
 server-side deduplication digests. Event, Reminder, schedule-update, Commuter, driver,
-and saved-conflict producers use distinct categories.
+and saved-conflict producers use distinct categories. APNs work uses separate bounded
+claims, stale-claim recovery, exponential backoff, and terminal failure after ten attempts.
+Visible records expire after 180 days; member-deleted records retain audit state for 30 days.
 
 ## Synchronization
 

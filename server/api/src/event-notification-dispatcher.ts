@@ -52,16 +52,20 @@ export class EventNotificationDispatcher {
           ...event.participantIDs,
           ...(event.driverMemberID ? [event.driverMemberID] : []),
         ])];
-        await this.dependencies.notificationCenter?.record({
-          familyID: event.familyID,
-          recipientMemberIDs,
-          kind: "event_occurrence",
-          deduplicationKey: `${event.id}:${occurrenceStart}`,
-          title: event.title,
-          body: alertBody(event.alertLeadTimeMinutes),
-          destination: { kind: "event", id: event.id },
-          occurredAt: now,
-        });
+        if (this.dependencies.notificationCenter) {
+          await this.dependencies.notificationCenter.recordAndDispatch({
+            familyID: event.familyID,
+            recipientMemberIDs,
+            kind: "event_occurrence",
+            deduplicationKey: `${event.id}:${occurrenceStart}`,
+            title: event.title,
+            body: alertBody(event.alertLeadTimeMinutes),
+            destination: { kind: "event", id: event.id },
+            occurredAt: now,
+          });
+          await this.repository.markEventNotificationSent(event.familyID, event.id, occurrenceStart, now);
+          return;
+        }
         const tokens = await this.repository.deviceTokensForMembers(
           event.familyID,
           recipientMemberIDs,

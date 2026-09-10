@@ -39,12 +39,60 @@ public struct InboxNotification: Codable, Equatable, Identifiable, Sendable {
 public protocol NotificationInboxStore: Sendable {
     func notifications() async throws -> [InboxNotification]
     func markRead(id: UUID) async throws
+    func delete(id: UUID) async throws
+    func ingest(_ notification: InboxNotification) async throws
 }
 
 public actor EmptyNotificationInboxStore: NotificationInboxStore {
     public init() {}
     public func notifications() async throws -> [InboxNotification] { [] }
     public func markRead(id: UUID) async throws {}
+    public func delete(id: UUID) async throws {}
+    public func ingest(_ notification: InboxNotification) async throws {}
+}
+
+public actor LocalNotificationInboxStore: NotificationInboxStore {
+    private let storageURL: URL
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+    public init(storageURL: URL) {
+        self.storageURL = storageURL
+        encoder = JSONEncoder(); decoder = JSONDecoder()
+        encoder.dateEncodingStrategy = .iso8601; decoder.dateDecodingStrategy = .iso8601
+    }
+    public func notifications() async throws -> [InboxNotification] {
+        guard FileManager.default.fileExists(atPath: storageURL.path) else { return [] }
+        return try decoder.decode([InboxNotification].self, from: Data(contentsOf: storageURL))
+            .sorted { $0.occurredAt > $1.occurredAt }
+    }
+    public func markRead(id: UUID) async throws {
+        var records = try await notifications()
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        let item = records[index]
+        records[index] = InboxNotification(
+            id: item.id, kind: item.kind, title: item.title, body: item.body,
+            destination: item.destination, occurredAt: item.occurredAt, readAt: item.readAt ?? .now
+        )
+        try persist(records)
+    }
+    public func delete(id: UUID) async throws {
+        var records = try await notifications()
+        records.removeAll { $0.id == id }
+        try persist(records)
+    }
+    public func ingest(_ notification: InboxNotification) async throws {
+        var records = try await notifications()
+        guard !records.contains(where: { $0.id == notification.id }) else { return }
+        records.append(notification)
+        records = Array(records.sorted { $0.occurredAt > $1.occurredAt }.prefix(500))
+        try persist(records)
+    }
+    private func persist(_ records: [InboxNotification]) throws {
+        try FileManager.default.createDirectory(
+            at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try encoder.encode(records).write(to: storageURL, options: .atomic)
+    }
 }
 
 public actor RemoteNotificationInboxStore: NotificationInboxStore {
@@ -79,6 +127,19 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
         } catch {
             guard let cached = try await cachedNotifications() else { throw error }
             return cached
+        }
+    }
+
+    public func ingest(_ notification: InboxNotification) async throws {}
+
+    public func delete(id: UUID) async throws {
+        let response = try await transport.send(HTTPRequest(
+            method: .delete, url: notificationsURL.appending(path: id.uuidString)
+        ))
+        try response.requireSuccess()
+        if var cached = try await cachedNotifications() {
+            cached.removeAll { $0.id == id }
+            try await saveCache(cached)
         }
     }
 

@@ -50,16 +50,20 @@ export class CommuterAlertDispatcher {
         if (this.dependencies.notificationCenter && recipientMemberIDs.length === 0) {
           throw new Error("commuter_notification_recipients_unavailable");
         }
-        await this.dependencies.notificationCenter?.record({
-          familyID: alert.familyID,
-          recipientMemberIDs,
-          kind: "commute_disruption",
-          deduplicationKey: alert.id,
-          title: alert.kind === "delay" ? "Caltrain commute delayed" : "Caltrain commute canceled",
-          body: notificationBody(alert),
-          destination: { kind: "commute_subscription", id: alert.subscriptionID },
-          occurredAt: now,
-        });
+        if (this.dependencies.notificationCenter) {
+          await this.dependencies.notificationCenter.recordAndDispatch({
+            familyID: alert.familyID,
+            recipientMemberIDs,
+            kind: "commute_disruption",
+            deduplicationKey: alert.id,
+            title: alert.kind === "delay" ? "Caltrain commute delayed" : "Caltrain commute canceled",
+            body: notificationBody(alert),
+            destination: { kind: "commute_subscription", id: alert.subscriptionID },
+            occurredAt: now,
+          });
+          await this.dependencies.repository.markCommuteAlertDelivered(alert, now);
+          continue;
+        }
         const tokens = alert.audience.kind === "member"
           ? await this.dependencies.repository.deviceTokensForMembers(
             alert.familyID,

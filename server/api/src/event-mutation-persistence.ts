@@ -13,6 +13,7 @@ export interface EventMutationResult {
 
 export interface StoredEventMutationResult extends EventMutationResult {
   notificationID?: string;
+  driverAssignmentMemberID?: string;
 }
 
 export interface EventMutationSnapshot {

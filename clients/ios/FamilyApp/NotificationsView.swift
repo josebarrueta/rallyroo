@@ -36,6 +36,10 @@ struct NotificationsView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                .onDelete { offsets in
+                    let ids = offsets.map { inbox[$0].id }
+                    Task { await delete(ids) }
+                }
                 ForEach(conflicts.reversed()) { conflict in
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -103,6 +107,16 @@ struct NotificationsView: View {
         } catch {
             conflicts = (try? await conflictStore.notifications()) ?? conflicts
             errorMessage = "Couldn't refresh alerts. Showing what is available."
+        }
+    }
+
+    @MainActor private func delete(_ ids: [UUID]) async {
+        do {
+            for id in ids { try await inboxStore.delete(id: id) }
+            inbox.removeAll { ids.contains($0.id) }
+            onUnreadCountChanged(inbox.filter { $0.readAt == nil }.count)
+        } catch {
+            errorMessage = "Couldn't delete this alert."
         }
     }
 

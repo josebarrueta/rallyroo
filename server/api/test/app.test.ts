@@ -148,6 +148,14 @@ describe("Rallyroo API", () => {
       method: "PATCH", url: `/v1/notifications/${record!.id}/read`,
       headers: { authorization: "Bearer parent-token" },
     })).statusCode).toBe(204);
+    expect((await app.inject({
+      method: "DELETE", url: `/v1/notifications/${record!.id}`,
+      headers: { authorization: "Bearer kid-token" },
+    })).statusCode).toBe(404);
+    expect((await app.inject({
+      method: "DELETE", url: `/v1/notifications/${record!.id}`,
+      headers: { authorization: "Bearer parent-token" },
+    })).statusCode).toBe(204);
     await app.close();
   });
 

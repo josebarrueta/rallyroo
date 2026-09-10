@@ -54,7 +54,7 @@ struct FamilyActivityCoordinatorApp: App {
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
             commuterStore = nil
-            inboxStore = EmptyNotificationInboxStore()
+            inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -187,6 +187,10 @@ struct FamilyActivityCoordinatorApp: App {
                 .task { await monitorFamilyChanges() }
                 .task { await synchronizeCalendars(for: session.role) }
                 .task { await requestPushNotifications() }
+                .onReceive(NotificationCenter.default.publisher(for: .didDeliverLocalInboxNotification)) { notification in
+                    guard let item = notification.object as? InboxNotification else { return }
+                    Task { try? await inboxStore.ingest(item) }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .didRegisterDeviceToken)) { notification in
                     guard let token = notification.object as? String else { return }
                     Task { try? await deviceRegistrationStore?.register(token: token) }
@@ -266,6 +270,10 @@ enum AppStorage {
 
     static var remoteEventsCacheURL: URL {
         storageDirectory.appendingPathComponent("remote-events-cache").appendingPathExtension("json")
+    }
+
+    static var localInboxURL: URL {
+        storageDirectory.appendingPathComponent("notification-inbox").appendingPathExtension("json")
     }
 
     static var remoteNotificationsCacheURL: URL {

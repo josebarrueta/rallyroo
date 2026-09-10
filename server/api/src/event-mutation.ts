@@ -6,7 +6,7 @@ import type {
   EventMutationResult,
   ScheduleUpdateNotificationOutcome,
 } from "./event-mutation-persistence.js";
-import type { NotificationCenterModule } from "./notification-center.js";
+import type { NotificationCenterModule, NotificationIntent } from "./notification-center.js";
 
 export interface ImportedEventReader {
   visibleEvents(familyID: string, memberID: string): Promise<FamilyEvent[]>;
@@ -33,10 +33,6 @@ export class EventMutationModule {
     importedEvents: ImportedEventReader;
     notificationDispatcher?: ScheduleUpdateNotificationDispatch;
     notificationCenter?: NotificationCenterModule;
-    deliverDriverAssignment?: (input: {
-      familyID: string; memberID: string; recordID: string;
-      title: string; body: string; eventID: string;
-    }) => Promise<void>;
   }) {}
 
   async delete(input: {
@@ -80,7 +76,12 @@ export class EventMutationModule {
       input.account.familyID,
       input.idempotencyKey,
     );
-    if (previous) return this.deliverImmediately(previous);
+    if (previous) {
+      if (previous.driverAssignmentMemberID) {
+        await this.recordDriverAssignment(input, previous.driverAssignmentMemberID, false);
+      }
+      return this.deliverImmediately(previous);
+    }
     const eventID = input.event.id.toLowerCase();
     let newlyAssignedDriverMemberID: string | undefined;
     const [visibleImportedEvents, sharedImportedEvents] = await Promise.all([
@@ -144,6 +145,9 @@ export class EventMutationModule {
               ? (shouldNotify ? "queuedForRetry" : "noRecipients")
               : "notRequested",
             ...(shouldNotify ? { notificationID } : {}),
+            ...(newlyAssignedDriverMemberID ? {
+              driverAssignmentMemberID: newlyAssignedDriverMemberID,
+            } : {}),
           },
           ...(shouldNotify ? {
             notification: {
@@ -159,8 +163,8 @@ export class EventMutationModule {
         };
       },
     );
-    if (newlyAssignedDriverMemberID) {
-      await this.recordDriverAssignment(input, newlyAssignedDriverMemberID);
+    if (storedResult.driverAssignmentMemberID) {
+      await this.recordDriverAssignment(input, storedResult.driverAssignmentMemberID);
     }
     return this.deliverImmediately(storedResult);
   }
@@ -169,10 +173,10 @@ export class EventMutationModule {
     account: Account;
     event: FamilyEvent;
     idempotencyKey: string;
-  }, driverMemberID: string): Promise<void> {
+  }, driverMemberID: string, dispatchImmediately = true): Promise<void> {
     const title = "You're assigned to drive";
     const body = `${input.event.title} has you listed as the driver.`;
-    const [record] = await this.dependencies.notificationCenter?.record({
+    const intent: NotificationIntent = {
       familyID: input.account.familyID,
       recipientMemberIDs: [driverMemberID],
       kind: "driver_assignment",
@@ -181,16 +185,11 @@ export class EventMutationModule {
       body,
       destination: { kind: "event", id: input.event.id.toLowerCase() },
       occurredAt: new Date(),
-    }) ?? [];
-    if (record && this.dependencies.deliverDriverAssignment) {
-      await this.dependencies.deliverDriverAssignment({
-        familyID: input.account.familyID,
-        memberID: driverMemberID,
-        recordID: record.id,
-        title,
-        body,
-        eventID: input.event.id.toLowerCase(),
-      });
+    };
+    if (dispatchImmediately) {
+      await this.dependencies.notificationCenter?.recordAndDispatch(intent);
+    } else {
+      await this.dependencies.notificationCenter?.record(intent);
     }
   }
 

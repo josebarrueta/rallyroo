@@ -2047,6 +2047,11 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          ORDER BY occurred_at DESC, id`,
         [records[0]!.familyID, records.map((record) => record.deduplicationDigest)],
       );
+      await client.query(
+        `INSERT INTO member_notification_delivery (notification_id)
+         SELECT unnest($1::uuid[]) ON CONFLICT (notification_id) DO NOTHING`,
+        [rows.rows.map((row) => row.id)],
+      );
       await client.query("COMMIT");
       return Promise.all(rows.rows.map((row) => this.inboxRecordFromRow(row)));
     } catch (error) {
@@ -2062,11 +2067,90 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       `SELECT id::text, family_id, member_id, kind, deduplication_digest,
               occurred_at, read_at, details_ciphertext
        FROM member_notification_inbox
-       WHERE family_id = $1 AND member_id = $2
+       WHERE family_id = $1 AND member_id = $2 AND deleted_at IS NULL
        ORDER BY occurred_at DESC, id LIMIT $3`,
       [familyID, memberID, limit],
     );
     return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
+  }
+
+  async claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]) {
+    const result = await this.pool.query<MemberInboxRow & { attempt_count: number; claimed_at: Date | string }>(
+      `WITH due AS (
+         SELECT notification_id FROM member_notification_delivery
+         WHERE ((status = 'pending' AND next_attempt_at <= $1)
+            OR (status = 'claimed' AND claimed_at < $1 - interval '5 minutes'))
+           AND ($3::uuid[] IS NULL OR notification_id = ANY($3::uuid[]))
+         ORDER BY next_attempt_at, notification_id FOR UPDATE SKIP LOCKED LIMIT $2
+       ), claimed AS (
+         UPDATE member_notification_delivery d SET status = 'claimed', claimed_at = $1,
+           attempt_count = attempt_count + 1
+         FROM due WHERE d.notification_id = due.notification_id
+         RETURNING d.notification_id, d.attempt_count, d.claimed_at
+       )
+       SELECT i.id::text, i.family_id, i.member_id, i.kind, i.deduplication_digest,
+              i.occurred_at, i.read_at, i.details_ciphertext, c.attempt_count, c.claimed_at
+       FROM claimed c JOIN member_notification_inbox i ON i.id = c.notification_id`,
+      [now.toISOString(), limit, recordIDs ?? null],
+    );
+    return Promise.all(result.rows.map(async (row) => ({
+      record: await this.inboxRecordFromRow(row),
+      attemptCount: row.attempt_count,
+      claimedAt: new Date(row.claimed_at),
+    })));
+  }
+
+  async completeNotificationDelivery(
+    recordID: string, claimedAt: Date, outcome: "delivered" | "no_recipient", completedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE member_notification_delivery SET status = $3, delivered_at = $4, claimed_at = NULL
+       WHERE notification_id = $1::uuid AND status = 'claimed' AND claimed_at = $2`,
+      [recordID, claimedAt.toISOString(), outcome, completedAt.toISOString()],
+    );
+  }
+
+  async releaseNotificationDelivery(
+    recordID: string, claimedAt: Date, errorCategory: string, releasedAt: Date,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE member_notification_delivery SET
+         status = CASE WHEN attempt_count >= 10 THEN 'terminal_failure' ELSE 'pending' END,
+         next_attempt_at = $4::timestamptz + make_interval(secs => LEAST(3600, 5 * power(2, LEAST(attempt_count, 9)))::int),
+         claimed_at = NULL, last_error_category = $3
+       WHERE notification_id = $1::uuid AND status = 'claimed' AND claimed_at = $2`,
+      [recordID, claimedAt.toISOString(), errorCategory, releasedAt.toISOString()],
+    );
+  }
+
+  async pruneNotificationInbox(now: Date, limit: number): Promise<number> {
+    const result = await this.pool.query(
+      `WITH expired AS (
+         SELECT id FROM member_notification_inbox
+         WHERE (deleted_at IS NOT NULL AND deleted_at < $1 - interval '30 days')
+            OR occurred_at < $1 - interval '180 days'
+         ORDER BY COALESCE(deleted_at, occurred_at), id LIMIT $2
+       )
+       DELETE FROM member_notification_inbox i USING expired
+       WHERE i.id = expired.id RETURNING i.id`,
+      [now.toISOString(), limit],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  async deleteInboxRecord(familyID: string, memberID: string, recordID: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `WITH deleted AS (
+         UPDATE member_notification_inbox SET deleted_at = now()
+         WHERE family_id = $1 AND member_id = $2 AND id = $3::uuid AND deleted_at IS NULL
+         RETURNING id
+       )
+       UPDATE member_notification_delivery d SET status = 'terminal_failure',
+         claimed_at = NULL, last_error_category = 'member_deleted'
+       FROM deleted WHERE d.notification_id = deleted.id RETURNING d.notification_id`,
+      [familyID, memberID, recordID],
+    );
+    return result.rowCount === 1;
   }
 
   async markInboxRecordRead(

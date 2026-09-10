@@ -5,8 +5,10 @@ struct CommuterSettingsView: View {
     @StateObject private var model: CommuterSettingsModel
     @State private var subscriptionEditor: CommuteSubscriptionEditor?
     @State private var isConfirmingRemoval = false
+    private let initialSubscriptionID: String?
 
-    init(store: any CommuterStore) {
+    init(store: any CommuterStore, initialSubscriptionID: String? = nil) {
+        self.initialSubscriptionID = initialSubscriptionID
         _model = StateObject(wrappedValue: CommuterSettingsModel(store: store))
     }
 
@@ -35,7 +37,15 @@ struct CommuterSettingsView: View {
             }
         }
         .navigationTitle("Commuter")
-        .task { await model.load() }
+        .task {
+            await model.load()
+            if let initialSubscriptionID,
+               let subscription = model.state?.subscriptions.first(where: {
+                   $0.id.uuidString.lowercased() == initialSubscriptionID.lowercased()
+               }) {
+                subscriptionEditor = CommuteSubscriptionEditor(subscription: subscription)
+            }
+        }
         .refreshable { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
             Task { await model.load() }

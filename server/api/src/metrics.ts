@@ -33,6 +33,12 @@ export class RallyrooMetrics implements Telemetry {
     labelNames: ["cache", "result"],
     registers: [this.registry],
   });
+  private readonly notificationDeliveryDuration = new Histogram({
+    name: "rallyroo_notification_delivery_duration_seconds",
+    help: "Notification delivery attempts by bounded category and outcome",
+    labelNames: ["category", "outcome"],
+    registers: [this.registry],
+  });
   private readonly providerDuration = new Histogram({
     name: "rallyroo_provider_request_duration_seconds",
     help: "External provider request duration",
@@ -47,6 +53,12 @@ export class RallyrooMetrics implements Telemetry {
 
   observeCache(cache: string, result: CacheResult): void {
     this.cacheOperations.inc({ cache, result });
+  }
+
+  observeNotificationDelivery(
+    category: string, outcome: "delivered" | "no_recipient" | "failure", durationSeconds: number,
+  ): void {
+    this.notificationDeliveryDuration.observe({ category, outcome }, durationSeconds);
   }
 
   observeProvider(provider: string, result: ProviderResult, durationSeconds: number): void {

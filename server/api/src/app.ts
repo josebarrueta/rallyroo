@@ -233,16 +233,6 @@ export function buildApp({
     },
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
     ...(notificationCenter ? { notificationCenter } : {}),
-    deliverDriverAssignment: async ({ familyID, memberID, recordID, title, body, eventID }) => {
-      const tokens = await repository.deviceTokensForMembers(familyID, [memberID]);
-      if (tokens.length === 0) return;
-      await pushNotificationProvider.send(tokens, {
-        title,
-        body,
-        data: { eventID, notificationID: recordID },
-        collapseID: recordID,
-      });
-    },
   });
   const app = Fastify({ logger });
   fastifyRateLimit(
@@ -910,6 +900,18 @@ export function buildApp({
       return reply.code(400).send({ error: "invalid_notification_id" });
     }
     return await notificationCenter.markRead(account, id)
+      ? reply.code(204).send()
+      : reply.code(404).send({ error: "notification_not_found" });
+  });
+
+  app.delete("/v1/notifications/:id", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const id = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(400).send({ error: "invalid_notification_id" });
+    }
+    return await notificationCenter.delete(account, id)
       ? reply.code(204).send()
       : reply.code(404).send({ error: "notification_not_found" });
   });

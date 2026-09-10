@@ -26,7 +26,11 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
         content.title = reminder.title
         content.body = "Reminder due. Open Rallyroo to review."
         content.sound = .default
-        content.userInfo = ["reminderID": reminder.id.uuidString]
+        content.userInfo = [
+            "reminderID": reminder.id.uuidString,
+            "notificationID": UUID().uuidString,
+            "notificationKind": "reminder_occurrence",
+        ]
         let interval = max(1, fireAt.timeIntervalSinceNow)
         try await notificationCenter.add(UNNotificationRequest(
             identifier: identifier(for: reminder),
@@ -64,6 +68,8 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
             content.userInfo = [
                 "eventID": event.id.uuidString,
                 "occurrenceStart": occurrence.event.startTime.ISO8601Format(),
+                "notificationID": UUID().uuidString,
+                "notificationKind": "event_occurrence",
             ]
             try await notificationCenter.add(UNNotificationRequest(
                 identifier: identifier(for: event, occurrenceStart: occurrence.event.startTime),

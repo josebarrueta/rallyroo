@@ -33,16 +33,20 @@ export class ReminderNotificationDispatcher {
     const reminders = await this.repository.claimDueReminderNotifications(now, this.batchSize);
     const results = await Promise.allSettled(reminders.map(async (reminder) => {
       try {
-        await this.dependencies.notificationCenter?.record({
-          familyID: reminder.familyID,
-          recipientMemberIDs: reminder.assigneeIDs,
-          kind: "reminder_occurrence",
-          deduplicationKey: reminder.id,
-          title: reminder.title,
-          body: "Reminder due. Open Rallyroo to review.",
-          destination: { kind: "reminder", id: reminder.id },
-          occurredAt: now,
-        });
+        if (this.dependencies.notificationCenter) {
+          await this.dependencies.notificationCenter.recordAndDispatch({
+            familyID: reminder.familyID,
+            recipientMemberIDs: reminder.assigneeIDs,
+            kind: "reminder_occurrence",
+            deduplicationKey: reminder.id,
+            title: reminder.title,
+            body: "Reminder due. Open Rallyroo to review.",
+            destination: { kind: "reminder", id: reminder.id },
+            occurredAt: now,
+          });
+          await this.repository.markReminderNotificationSent(reminder.familyID, reminder.id, now);
+          return;
+        }
         const tokens = await this.repository.deviceTokensForMembers(
           reminder.familyID,
           reminder.assigneeIDs,
