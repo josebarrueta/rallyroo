@@ -157,40 +157,6 @@ public actor RemoteEventStore: EventStore {
         )
     }
 
-
-    public func updateOccurrences(
-         _ upserts: [FamilyEvent],
-        deleteIDs: [String],
-        notifyParticipants: Bool,
-        idempotencyKey: UUID
-    ) async throws -> EventMutationResult {
-        struct RecurringEditRequest: Codable {
-            let upserts: [FamilyEvent]
-            let deleteIDs: [String]
-            let notifyParticipants: Bool
-        }
-        let recurringEditURL = eventsURL.appending(path: "recurring-edit")
-        let body = try encoder.encode(RecurringEditRequest(
-            upserts: upserts,
-            deleteIDs: deleteIDs,
-            notifyParticipants: notifyParticipants
-        ))
-        let response = try await transport.send(HTTPRequest(
-            method: .post,
-            url: recurringEditURL,
-            headers: [
-                "Content-Type": "application/json",
-                "Idempotency-Key": idempotencyKey.uuidString.lowercased(),
-            ],
-            body: body
-        ))
-        try response.requireSuccess()
-        let payload = try decoder.decode(SaveResponse.self, from: response.body)
-        return EventMutationResult(
-            conflicts: payload.conflicts.compactMap { $0.eventConflict },
-            notificationOutcome: payload.notificationOutcome ?? .notRequested
-        )
-    }
     public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {
         let response = try await transport.send(HTTPRequest(
             method: .delete,

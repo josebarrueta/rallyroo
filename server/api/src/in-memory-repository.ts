@@ -293,16 +293,6 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
       );
       if (index >= 0) this.events[index] = structuredClone(action.event);
       else this.events.push(structuredClone(action.event));
-    } else if (action.kind === "recurringEdit") {
-      const deleteIDs = new Set(action.deleteIDs.map((id) => id.toLowerCase()));
-      removeWhere(this.events, (event) => event.familyID === familyID && deleteIDs.has(event.id));
-      for (const upsert of action.upserts) {
-        const index = this.events.findIndex((candidate) =>
-          candidate.familyID === familyID && candidate.id === upsert.id
-        );
-        if (index >= 0) this.events[index] = structuredClone(upsert);
-        else this.events.push(structuredClone(upsert));
-      }
     } else {
       removeWhere(this.events, (event) => event.familyID === familyID && event.id === action.eventID);
     }

@@ -211,46 +211,11 @@ final class RemoteEventStoreTests: XCTestCase {
         XCTAssertEqual(json["alertLeadTimeMinutes"] as? Int, 0)
     }
 
-
-    func testPostsRecurringEditThroughTheRemoteAPI() async throws {
-        let transport = RecordingHTTPTransport(
-            responses: [HTTPResponse(
-                statusCode: 200,
-                body: Data("{\"conflicts\":[],\"notificationOutcome\":\"queuedForRetry\"}".utf8)
-             )]
-         )
-        let store = RemoteEventStore(
-            baseURL: URL(string: "https://api.example.com")!,
-           transport: transport
-        )
-        let idempotencyKey = UUID(uuidString: "65555555-5555-4555-8555-555555555555")!
-        let upsert = sampleEvent()
-        let deleteTarget = UUID()
-
-        let result = try await store.updateOccurrences(
-             [upsert],
-            deleteIDs: [deleteTarget.uuidString],
-             notifyParticipants: true,
-              idempotencyKey: idempotencyKey
-            )
-
-        XCTAssertEqual(result, EventMutationResult(conflicts: [], notificationOutcome: .queuedForRetry))
-        let requests = await transport.recordedRequests()
-        XCTAssertEqual(requests.first?.method, .post)
-        XCTAssertTrue(requests.first?.url.path.hasSuffix("/v1/events/recurring-edit") == true)
-        XCTAssertEqual(requests.first?.headers["Idempotency-Key"], idempotencyKey.uuidString.lowercased())
-        let body = try XCTUnwrap(requests.first?.body)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual((json["upserts"] as? [Any])?.count, 1)
-        XCTAssertEqual(json["deleteIDs"] as? [String], [deleteTarget.uuidString])
-        XCTAssertEqual(json["notifyParticipants"] as? Bool, true)
-     }
-
-       private func temporaryCacheURL() -> URL {
+    private func temporaryCacheURL() -> URL {
         FileManager.default.temporaryDirectory
-             .appending(path: UUID().uuidString)
-             .appending(path: "events-cache.json")
-           }
+            .appending(path: UUID().uuidString)
+            .appending(path: "events-cache.json")
+    }
 
     private func sampleEvent() -> FamilyEvent {
         FamilyEvent(
