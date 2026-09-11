@@ -147,6 +147,83 @@ final class ScheduleDraftIntakeTests: XCTestCase {
     }
 
     @MainActor
+    func testSpeechReminderDraftRoutesThroughReminderPersistence() async throws {
+        let speech = TestSpeechCapture()
+        let persistence = TestDraftPersistence()
+        let extractor = QueueDraftExtractor(results: [.success([reminderDraft(title: "Charge phone")])])
+        let intake = ScheduleDraftIntake(
+              extractor: extractor,
+              speech: speech,
+              imageRecognizer: TestImageRecognizer(text: ""),
+              persistence: persistence,
+              pauseDelay: .milliseconds(20)
+               )
+
+        intake.toggleVoiceCapture()
+        speech.emit("Charge phone tomorrow at six")
+
+        try await eventually { intake.drafts.first?.kind == .reminder }
+        XCTAssertEqual(intake.drafts[0].kind, .reminder)
+        XCTAssertEqual(intake.drafts[0].title, "Charge phone")
+
+        intake.saveSelected(notifyParticipants: true)
+        try await eventually { intake.didComplete }
+
+        XCTAssertEqual(persistence.reminderAttempts.count, 1)
+        XCTAssertEqual(persistence.reminderAttempts[0].title, "Charge phone")
+        XCTAssertEqual(persistence.eventAttempts.count, 0)
+     }
+
+    @MainActor
+    func testMixedBatchRoutesEventsAndRemindersToCorrectPaths() async throws {
+        let persistence = TestDraftPersistence()
+        let intake = makeIntake(
+            extractor: QueueDraftExtractor(results: [
+                .success([
+                    eventDraft(title: "Piano lesson"),
+                    reminderDraft(title: "Charge phone"),
+                ])
+            ]),
+            persistence: persistence
+        )
+        intake.inputText = "Piano lesson and charge phone"
+        intake.extract()
+        try await eventually { intake.drafts.count == 2 }
+
+        intake.saveSelected(notifyParticipants: true)
+        try await eventually { intake.didComplete }
+
+        XCTAssertEqual(persistence.eventAttempts.count, 1)
+        XCTAssertEqual(persistence.reminderAttempts.count, 1)
+        XCTAssertEqual(persistence.eventAttempts[0].eventID, intake.drafts[0].entityID)
+        XCTAssertEqual(persistence.reminderAttempts[0].reminderID, intake.drafts[1].entityID)
+    }
+
+    @MainActor
+    func testPartialRetryDoesNotDuplicateSuccessfulReminder() async throws {
+        let persistence = TestDraftPersistence(failFirstReminderOnce: true)
+        let intake = makeIntake(
+            extractor: QueueDraftExtractor(results: []),
+            persistence: persistence
+        )
+        let reminder = EditableScheduleDraft(reminderDraft(title: "Pay bills"))
+        intake.drafts = [reminder]
+
+        intake.saveSelected(notifyParticipants: true)
+        try await eventually { intake.phase == .idle }
+
+        XCTAssertTrue(intake.drafts[0].isSelected)
+        XCTAssertFalse(intake.didComplete)
+
+        intake.saveSelected(notifyParticipants: true)
+        try await eventually { intake.didComplete }
+
+        XCTAssertEqual(persistence.reminderAttempts.count, 2)
+        XCTAssertEqual(persistence.reminderAttempts.map(\.reminderID), [reminder.entityID, reminder.entityID])
+        XCTAssertEqual(persistence.reminderAttempts.map(\.title), ["Pay bills", "Pay bills"])
+    }
+
+    @MainActor
     private func makeIntake(
         extractor: QueueDraftExtractor,
         persistence: TestDraftPersistence = TestDraftPersistence()
@@ -188,6 +265,21 @@ private func eventDraft(title: String) -> ScheduleDraft {
     )
 }
 
+private func reminderDraft(title: String) -> ScheduleDraft {
+    ScheduleDraft(
+        kind: .reminder,
+        title: title,
+        memberIDs: [KidID(rawValue: "kid-1")],
+        startTime: nil,
+        endTime: nil,
+        dueAt: Date(timeIntervalSince1970: 1_800_003_600),
+        location: nil,
+        alertLeadTimeMinutes: 0,
+        clarification: nil,
+        confidence: 0.9
+    )
+}
+
 @MainActor
 private final class TestSpeechCapture: ScheduleSpeechCapture {
     private var onTranscript: (@MainActor @Sendable (String) -> Void)?
@@ -208,6 +300,8 @@ private final class TestSpeechCapture: ScheduleSpeechCapture {
     func emit(_ transcript: String) {
         onTranscript?(transcript)
     }
+     func updateLocale(_ locale: Locale) {
+         }
 }
 
 private actor QueueDraftExtractor: ScheduleDraftExtractor {
@@ -272,16 +366,23 @@ private struct TestImageRecognizer: ScheduleImageTextRecognition {
 
 @MainActor
 private final class TestDraftPersistence: ScheduleDraftPersistence {
-    struct Attempt: Equatable {
+    struct EventAttempt: Equatable {
         let eventID: UUID
         let idempotencyKey: UUID
     }
+    struct ReminderAttempt: Equatable {
+        let reminderID: UUID
+        let title: String
+    }
 
     private var shouldFailFirstEvent: Bool
-    private(set) var eventAttempts: [Attempt] = []
+    private var shouldFailFirstReminder: Bool
+    private(set) var eventAttempts: [EventAttempt] = []
+    private(set) var reminderAttempts: [ReminderAttempt] = []
 
-    init(failFirstEventOnce: Bool = false) {
+    init(failFirstEventOnce: Bool = false, failFirstReminderOnce: Bool = false) {
         shouldFailFirstEvent = failFirstEventOnce
+        shouldFailFirstReminder = failFirstReminderOnce
     }
 
     func saveEvent(
@@ -289,7 +390,7 @@ private final class TestDraftPersistence: ScheduleDraftPersistence {
         notifyParticipants: Bool,
         idempotencyKey: UUID
     ) async throws -> EventMutationResult {
-        eventAttempts.append(Attempt(eventID: event.id, idempotencyKey: idempotencyKey))
+        eventAttempts.append(EventAttempt(eventID: event.id, idempotencyKey: idempotencyKey))
         if shouldFailFirstEvent {
             shouldFailFirstEvent = false
             throw TestFailure()
@@ -297,5 +398,11 @@ private final class TestDraftPersistence: ScheduleDraftPersistence {
         return EventMutationResult(conflicts: [], notificationOutcome: .sent)
     }
 
-    func saveReminder(_ reminder: FamilyReminder) async throws {}
+    func saveReminder(_ reminder: FamilyReminder) async throws {
+        reminderAttempts.append(ReminderAttempt(reminderID: reminder.id, title: reminder.title))
+        if shouldFailFirstReminder {
+            shouldFailFirstReminder = false
+            throw TestFailure()
+        }
+    }
 }

@@ -12,12 +12,28 @@ struct ScheduleCaptureSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var intake: ScheduleDraftIntake
     @State private var isShowingNotifyPrompt = false
+     @State private var speechLanguage: SpeechLanguage = .english
+
+     enum SpeechLanguage: String, CaseIterable, Identifiable {
+         case english = "English"
+         case spanish = "Español"
+         var id: String {
+             rawValue
+          }
+         var locale: Locale {
+             switch self {
+             case .english: Locale(identifier: "en-US")
+             case .spanish: Locale(identifier: "es-ES")
+            }
+          }
+      }
 
     init(
         extractor: any ScheduleDraftExtractor,
         members: [FamilyMember],
         onSaveEvent: @escaping @MainActor (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
-        onSaveReminder: @escaping @MainActor (FamilyReminder) async throws -> Void
+        onSaveReminder: @escaping @MainActor (FamilyReminder) async throws -> Void,
+        speechLocale: Locale = Locale(identifier: "en-US")
     ) {
         self.members = members
         let persistence = ClosureScheduleDraftPersistence(
@@ -26,7 +42,7 @@ struct ScheduleCaptureSheet: View {
         )
         _intake = StateObject(wrappedValue: ScheduleDraftIntake(
             extractor: extractor,
-            speech: ScheduleSpeechTranscriber(),
+            speech: ScheduleSpeechTranscriber(locale: speechLocale),
             imageRecognizer: AppleScheduleImageTextRecognizer(),
             persistence: persistence
         ))
@@ -57,6 +73,16 @@ struct ScheduleCaptureSheet: View {
                         .buttonStyle(.bordered)
                         .disabled(intake.isWorking)
                     }
+                    Picker("Voice language", selection: $speechLanguage) {
+                        ForEach(SpeechLanguage.allCases) { language in
+                            Text(language.rawValue).tag(language)
+                          }
+                       }
+                       .pickerStyle(.segmented)
+                       .onChange(of: speechLanguage) { _, newLanguage in
+                          intake.setSpeechLocale(newLanguage.locale)
+                          }
+                       .accessibilityLabel("Voice language")
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -310,12 +336,23 @@ private struct AppleScheduleImageTextRecognizer: ScheduleImageTextRecognition {
 private final class ScheduleSpeechTranscriber: ScheduleSpeechCapture {
     private(set) var isRecording = false
     private let audioEngine = AVAudioEngine()
-    private let recognizer = SFSpeechRecognizer()
+    private var recognizer: SFSpeechRecognizer?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var onTranscript: (@MainActor @Sendable (String) -> Void)?
     private var onFailure: (@MainActor @Sendable (String) -> Void)?
     private var captureGeneration = UUID()
+    private var locale: Locale
+
+    init(locale: Locale = Locale(identifier: "en-US")) {
+        self.locale = locale
+        self.recognizer = SFSpeechRecognizer(locale: locale)
+      }
+      func updateLocale(_ newLocale: Locale) {
+          locale = newLocale
+          recognizer = SFSpeechRecognizer(locale: newLocale)
+      }
+
 
     func start(
         onTranscript: @escaping @MainActor @Sendable (String) -> Void,
@@ -340,6 +377,7 @@ private final class ScheduleSpeechTranscriber: ScheduleSpeechCapture {
                             onFailure("Allow Speech Recognition and Microphone access in Settings to use voice capture.")
                             return
                         }
+                        self.recognizer = SFSpeechRecognizer(locale: self.locale)
                         do { try self.beginAudioCapture() }
                         catch { onFailure("Voice capture could not start.") }
                     }

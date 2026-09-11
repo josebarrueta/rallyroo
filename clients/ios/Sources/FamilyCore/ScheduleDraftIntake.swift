@@ -9,6 +9,7 @@ public protocol ScheduleSpeechCapture: AnyObject {
         onFailure: @escaping @MainActor @Sendable (String) -> Void
     )
     func stop()
+      func updateLocale(_ locale: Locale)
 }
 
 public protocol ScheduleImageTextRecognition: Sendable {
@@ -191,7 +192,11 @@ public final class ScheduleDraftIntake: ObservableObject {
         }
     }
 
-    public func toggleVoiceCapture() {
+    public func setSpeechLocale(_ locale: Locale) {
+        speech.updateLocale(locale)
+       }
+
+     public func toggleVoiceCapture() {
         if phase == .recording {
             finishVoiceCapture()
             return
