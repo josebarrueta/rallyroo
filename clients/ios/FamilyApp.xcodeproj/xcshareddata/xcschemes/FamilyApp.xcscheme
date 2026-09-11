@@ -49,6 +49,18 @@
             ReferencedContainer = "container:FamilyApp.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "RALLYROO_DATA_MODE"
+            value = "remote"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "RALLYROO_REMOTE_BASE_URL"
+            value = "https://api.rallyroo.dev"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

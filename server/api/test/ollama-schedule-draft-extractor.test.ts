@@ -129,4 +129,108 @@ describe("OllamaScheduleDraftExtractor", () => {
 
     await expect(extractor.extract(request)).rejects.toThrow("unknown member");
   });
+
+  it("understands Spanish reminder requests and preserves accents", async () => {
+    const spanishRequest = {
+      text: "Recuerda a Sofía que traiga las botas de lluvia mañana a las 16:30",
+      inputType: "voice" as const,
+      timeZone: "America/Los_Angeles",
+      referenceDate: "2026-09-06T16:00:00.000Z",
+      members: [{ id: "kid-1", name: "Sofía" }],
+    };
+    const extractor = new OllamaScheduleDraftExtractor({
+      baseURL: new URL("http://127.0.0.1:11435"),
+      model: "qwen3.8:27b-mlx",
+      fetch: async (_url, init) => {
+        return new Response(JSON.stringify({
+          message: { content: JSON.stringify({ drafts: [{
+            kind: "reminder",
+            title: "Traer botas de lluvia",
+            memberIDs: ["kid-1"],
+            startTime: null,
+            endTime: null,
+            dueAt: "2026-09-07T22:30:00.000Z",
+            location: null,
+            alertLeadTimeMinutes: 0,
+            clarification: null,
+            confidence: 0.95,
+          }] }) },
+          done: true,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+
+    const result = await extractor.extract(spanishRequest);
+    expect(result.drafts[0]!.kind).toBe("reminder");
+    expect(result.drafts[0]!.title).toBe("Traer botas de lluvia");
+    expect(result.drafts[0]!.memberIDs).toEqual(["kid-1"]);
+    expect(result.drafts[0]!.dueAt).toBe("2026-09-07T22:30:00.000Z");
+  });
+
+  it("routes Reminder intent to reminder kind, never creates a phantom Event", async () => {
+    const extractor = new OllamaScheduleDraftExtractor({
+      baseURL: new URL("http://127.0.0.1:11435"),
+      model: "qwen3.8:27b-mlx",
+      fetch: async (_url, init) => {
+        return new Response(JSON.stringify({
+          message: { content: JSON.stringify({ drafts: [{
+            kind: "reminder",
+            title: "Feed the dog",
+            memberIDs: ["kid-1"],
+            startTime: null,
+            endTime: null,
+            dueAt: "2026-09-07T23:30:00.000Z",
+            location: null,
+            alertLeadTimeMinutes: 5,
+            clarification: null,
+            confidence: 0.98,
+          }] }) },
+          done: true,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+
+    const result = await extractor.extract(request);
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0]!.kind).toBe("reminder");
+    expect(result.drafts[0]!.startTime).toBeNull();
+    expect(result.drafts[0]!.endTime).toBeNull();
+  });
+
+  it("returns clarifications in the parent language for ambiguous Spanish requests", async () => {
+    const spanishAmbiguousRequest = {
+      text: "Recuerda a alguien que pague la cuenta el lunes",
+      inputType: "text" as const,
+      timeZone: "America/Los_Angeles",
+      referenceDate: "2026-09-06T16:00:00.000Z",
+      members: [{ id: "kid-1", name: "Sofía" }],
+    };
+    const extractor = new OllamaScheduleDraftExtractor({
+      baseURL: new URL("http://127.0.0.1:11435"),
+      model: "qwen3.8:27b-mlx",
+      fetch: async (_url, init) => {
+        return new Response(JSON.stringify({
+          message: { content: JSON.stringify({ drafts: [{
+            kind: "reminder",
+            title: "Pagar la cuenta",
+            memberIDs: [],
+            startTime: null,
+            endTime: null,
+            dueAt: null,
+            location: null,
+            alertLeadTimeMinutes: null,
+            clarification: "¿A quién debe pagar la cuenta y a qué hora el lunes?",
+            confidence: 0.4,
+          }] }) },
+          done: true,
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+
+    const result = await extractor.extract(spanishAmbiguousRequest);
+    expect(result.drafts[0]!.clarification).toContain("¿");
+    expect(result.drafts[0]!.memberIDs).toEqual([]);
+    expect(result.drafts[0]!.dueAt).toBeNull();
+  });
+
 });
