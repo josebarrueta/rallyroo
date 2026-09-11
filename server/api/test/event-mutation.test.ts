@@ -224,7 +224,7 @@ describe("EventMutationModule.recurringEdit", () => {
     const source: FamilyEvent = {
        ...event,
       id: "11111111-1111-1111-1111-111111111111",
-      recurrence: { frequency: "weekly", interval: 1, weekdays: [3, 5] },
+      recurrence: { frequency: "weekly", interval: 1, weekdays: [3, 5], endDate: "2027-09-01T00:00:00.000Z" }
      };
     await module.save({
       account,
@@ -237,7 +237,7 @@ describe("EventMutationModule.recurringEdit", () => {
     const fridayRow: FamilyEvent = {
        ...source,
       id: `${source.id}.w5`,
-      recurrence: { frequency: "weekly", interval: 1, weekdays: [5] },
+      recurrence: { frequency: "weekly", interval: 1, weekdays: [5], endDate: "2027-09-01T00:00:00.000Z"},
       location: "New field",
      };
 
@@ -252,7 +252,8 @@ describe("EventMutationModule.recurringEdit", () => {
     const events = await persistence.eventsForFamily("family-1");
     expect(result.notificationOutcome).toBe("notRequested");
     expect(events.map((item) => item.id)).toEqual([fridayRow.id]);
-    expect(events[0].location).toBe("New field");
+    const first = events[0];
+    expect(first?.location).toBe("New field");
 
     // Replay is a no-op: same idempotency key returns the same single row.
     await module.recurringEdit({
@@ -264,14 +265,15 @@ describe("EventMutationModule.recurringEdit", () => {
      });
     const afterReplay = await persistence.eventsForFamily("family-1");
     expect(afterReplay).toHaveLength(1);
-    expect(afterReplay[0].id).toBe(fridayRow.id);
+    const replayed = afterReplay[0];
+    expect(replayed?.id).toBe(fridayRow.id);
    });
 
   it("refuses to upsert a row whose id is also being deleted", async () => {
       const module = new EventMutationModule({ persistence: repository(), importedEvents });
     const source: FamilyEvent = {
        ...event,
-      recurrence: { frequency: "weekly", interval: 1, weekdays: [3, 5] },
+      recurrence: { frequency: "weekly", interval: 1, weekdays: [3, 5], endDate: "2027-09-01T00:00:00.000Z" }
      };
     await expect(
        module.recurringEdit({
