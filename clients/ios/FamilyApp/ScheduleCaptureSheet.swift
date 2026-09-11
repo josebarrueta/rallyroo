@@ -73,16 +73,7 @@ struct ScheduleCaptureSheet: View {
                         .buttonStyle(.bordered)
                         .disabled(intake.isWorking)
                     }
-                    Picker("Voice language", selection: $speechLanguage) {
-                        ForEach(SpeechLanguage.allCases) { language in
-                            Text(language.rawValue).tag(language)
-                          }
-                       }
-                       .pickerStyle(.segmented)
-                       .onChange(of: speechLanguage) { _, newLanguage in
-                          intake.setSpeechLocale(newLanguage.locale)
-                          }
-                       .accessibilityLabel("Voice language")
+                    scheduleLanguagePicker
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -425,4 +416,22 @@ private final class ScheduleSpeechTranscriber: ScheduleSpeechCapture {
             }
         }
     }
+
+     @ViewBuilder
+     private var scheduleLanguagePicker: some View {
+        Picker(
+             "Voice language",
+             selection: $speechLanguage
+            ) {
+                ForEach(SpeechLanguage.allCases) { language in
+                    Text(language.rawValue).tag(language)
+                    }
+                     }
+                     .pickerStyle(.segmented)
+                     .accessibilityLabel("Voice language")
+                     .onChange(of: speechLanguage) { _, newLanguage in
+                         intake.setSpeechLocale(newLanguage.locale)
+                         }
+                     }
+
 }
