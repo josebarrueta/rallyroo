@@ -254,7 +254,7 @@ struct ScheduleCaptureSheet: View {
                    }
                    .pickerStyle(.segmented)
                    .accessibilityLabel("Voice language")
-                   .onChange(of: speechLanguage) { _, newLanguage in
+                   .onChange(of: speechLanguage) { newLanguage in
                      intake.setSpeechLocale(newLanguage.locale)
                       }
         }
