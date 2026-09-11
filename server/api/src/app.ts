@@ -78,6 +78,12 @@ const eventSchema = z.object({
   message: "recurrence must end within 732 days after startTime",
 });
 
+const recurringEditSchema = z.object({
+  upserts: z.array(eventSchema),
+  deleteIDs: z.array(z.string().min(1)),
+   notifyParticipants: z.boolean().optional(),
+});
+
 const reminderSchema = z.object({
   id: z.string().uuid(),
   title: z.string().trim().min(1).max(200),
@@ -983,7 +989,42 @@ export function buildApp({
     }
   });
 
-  app.get("/v1/family-members", async (request) => {
+  app.post("/v1/events/recurring-edit", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = recurringEditSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_recurring_edit", details: parsed.error.issues });
+    const idempotencyKey = mutationIdempotencyKey(request, reply);
+     if (!idempotencyKey) return;
+    const notifyParticipants = parsed.data.notifyParticipants ?? true;
+    try {
+      const result = await eventMutations.recurringEdit({
+        account,
+        idempotencyKey,
+        notifyParticipants,
+        upserts: parsed.data.upserts.map((parsedEvent) => {
+          const { recurrence, ...eventData } = parsedEvent;
+          return {
+             ...eventData,
+             id: parsedEvent.id.toLowerCase(),
+             familyID: account.familyID,
+              ...(recurrence !== undefined ? { recurrence } : {}),
+             };
+            }),
+        deleteIDs: parsed.data.deleteIDs.map((id) => id.toLowerCase()),
+          });
+      return {
+         conflicts: result.conflicts,
+        notificationOutcome: result.notificationOutcome,
+         };
+       } catch (error) {
+      if (error instanceof EventMutationError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+         }
+        throw error;
+         }
+     });
+
+   app.get("/v1/family-members", async (request) => {
     const account = requiredAccount(request);
     return (await repository.membersForFamily(account.familyID)).map(clientMember);
   });

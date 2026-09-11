@@ -1496,12 +1496,36 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
              recurrence=EXCLUDED.recurrence`,
           eventValues(protectedEvent),
         );
-      } else {
-        await client.query(
-          "DELETE FROM events WHERE family_id = $1 AND id = $2",
-          [familyID, plan.action.eventID],
-        );
-      }
+        } else if (plan.action.kind === "recurringEdit") {
+            for (const upsert of plan.action.upserts) {
+                const protectedEvent = await this.protectEvent(upsert);
+                await client.query(
+                    `INSERT INTO events (
+                     family_id, id, title, kid_id, participant_ids, start_time, end_time,
+                     location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+                     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                   ON CONFLICT (family_id, id) DO UPDATE SET
+                     title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
+                     participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
+                     end_time=EXCLUDED.end_time, location=EXCLUDED.location,
+                     driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
+                     alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
+                     recurrence=EXCLUDED.recurrence`,
+                   eventValues(protectedEvent),
+                  );
+                }
+            for (const eventID of plan.action.deleteIDs) {
+                await client.query(
+                    "DELETE FROM events WHERE family_id = $1 AND id = $2",
+                    [familyID, eventID],
+                   );
+                }
+              } else {
+                await client.query(
+                    "DELETE FROM events WHERE family_id = $1 AND id = $2",
+                    [familyID, plan.action.eventID],
+                   );
+              }
       await client.query(
         `INSERT INTO family_change_versions (family_id, version) VALUES ($1, 1)
          ON CONFLICT (family_id) DO UPDATE

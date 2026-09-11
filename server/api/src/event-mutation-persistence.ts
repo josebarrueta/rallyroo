@@ -30,7 +30,10 @@ export interface ScheduleUpdateNotificationIntent {
 }
 
 export interface EventMutationPlan {
-  action: { kind: "save"; event: FamilyEvent } | { kind: "delete"; eventID: string };
+  action:
+   | { kind: "save"; event: FamilyEvent }
+   | { kind: "delete"; eventID: string }
+   | { kind: "recurringEdit"; deleteIDs: string[]; upserts: FamilyEvent[] };
   result: StoredEventMutationResult;
   notification?: ScheduleUpdateNotificationIntent;
 }

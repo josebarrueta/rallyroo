@@ -170,6 +170,110 @@ export class EventMutationModule {
     return this.deliverImmediately(storedResult);
   }
 
+
+  async recurringEdit(input: {
+    account: Account;
+    upserts: FamilyEvent[];
+    deleteIDs: string[];
+    idempotencyKey: string;
+    notifyParticipants: boolean;
+    }): Promise<EventMutationResult> {
+    requireParent(input.account);
+    const previous = await this.dependencies.persistence.eventMutationResult(
+      input.account.familyID,
+      input.idempotencyKey,
+    );
+    if (previous) return this.deliverImmediately(previous);
+    if (input.upserts.length === 0) {
+      throw new EventMutationError("invalid_driver", 400);
+    }
+    const importedEvents = await this.dependencies.importedEvents.visibleEvents(
+      input.account.familyID,
+      input.account.memberID,
+    );
+    const importedIDs = new Set(importedEvents.map((event) => event.id.toLowerCase()));
+    const deleteLookup = new Set(input.deleteIDs.map((id) => id.toLowerCase()));
+    for (const upsert of input.upserts) {
+      if (importedIDs.has(upsert.id.toLowerCase())) {
+        throw new EventMutationError("imported_event_read_only", 409);
+      }
+      if (deleteLookup.has(upsert.id.toLowerCase())) {
+        throw new EventMutationError("invalid_driver", 400);
+      }
+    }
+
+    const notificationID = randomUUID();
+    const storedResult = await this.dependencies.persistence.performEventMutation(
+      input.account.familyID,
+      input.idempotencyKey,
+      ({ events, members }) => {
+        const memberIDs = new Set(members.map((member) => member.id));
+        const upsertedEvents: FamilyEvent[] = [];
+        for (const upsert of input.upserts) {
+          const eventID = upsert.id.toLowerCase();
+          for (const memberID of [...upsert.participantIDs, ...(upsert.kidID ? [upsert.kidID] : [])]) {
+            if (!memberIDs.has(memberID)) {
+              throw new EventMutationError("unknown_participant", 400);
+            }
+          }
+          if (upsert.driverMemberID && upsert.driver) {
+            throw new EventMutationError("invalid_driver", 400);
+          }
+          if (upsert.driverMemberID) {
+            const driverMember = members.find((member) => member.id === upsert.driverMemberID);
+            if (!driverMember || (driverMember.role === "kid" && driverMember.canDrive !== true)) {
+              throw new EventMutationError("invalid_driver", 400);
+            }
+          }
+          const existing = events.find((candidate) => candidate.id.toLowerCase() === eventID);
+          const recurrence = preserveWeeklyWeekdays(upsert.recurrence, existing?.recurrence);
+          upsertedEvents.push({
+              ...upsert,
+            id: eventID,
+            familyID: input.account.familyID,
+          ...(recurrence !== undefined ? { recurrence } : {}),
+          });
+        }
+
+        const keptIDs = new Set(upsertedEvents.map((event) => event.id));
+        const nativeOthers = events.filter((candidate) => !keptIDs.has(candidate.id.toLowerCase()));
+        const conflicts = upsertedEvents.flatMap((event) =>
+          detectEventConflicts(event, [...nativeOthers, ...importedEvents])
+        );
+        const primary = upsertedEvents[0];
+        if (!primary) {
+          throw new EventMutationError("invalid_driver", 400);
+          }
+        const driverID = primary.driverMemberID;
+        const participantIDs = primary.participantIDs.filter(
+          (id) => id !== input.account.memberID && id !== driverID,
+        );
+        const shouldNotify = input.notifyParticipants && participantIDs.length > 0;
+        const deleteIDs = Array.from(new Set(input.deleteIDs.map((id) => id.toLowerCase())));
+        return {
+          action: { kind: "recurringEdit", deleteIDs, upserts: upsertedEvents },
+          result: {
+            conflicts,
+            notificationOutcome: input.notifyParticipants
+              ? (shouldNotify ? "queuedForRetry" : "noRecipients")
+              : "notRequested",
+            ...(shouldNotify ? { notificationID } : {}),
+          },
+          ...(shouldNotify ? {
+            notification: {
+              id: notificationID,
+              eventID: primary.id,
+              title: primary.title,
+              body: "Your family schedule was updated.",
+              participantIDs,
+            },
+          } : {}),
+        };
+      },
+    );
+    return this.deliverImmediately(storedResult);
+  }
+
   private async recordDriverChange(input: {
     account: Account;
     event: FamilyEvent;
