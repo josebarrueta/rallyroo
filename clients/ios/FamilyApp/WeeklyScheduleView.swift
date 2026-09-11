@@ -13,7 +13,7 @@ struct WeeklyScheduleView: View {
     private let commuterStore: (any CommuterStore)?
     @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
-    @State private var editingEvent: FamilyEvent?
+    @State private var editingOccurrence: EventOccurrence?
     @State private var linkedEvent: FamilyEvent?
     @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
@@ -157,9 +157,15 @@ struct WeeklyScheduleView: View {
                     )
                 }
             }
-            .sheet(item: $editingEvent) { event in
+            .sheet(item: $editingOccurrence) { occurrence in
                 AddEventSheet(
-                    event: event, members: viewModel.members, locationSearch: locationSearch,
+                    event: occurrence.event,
+                    recurringSource: occurrence.sourceEvent.recurrence == nil
+                        && occurrence.sourceEvent.recurrenceSeriesID == nil ? nil : occurrence.sourceEvent,
+                    occurrenceStart: occurrence.event.startTime,
+                    supportsWeekdayScope: supportsWeekdayScope(for: occurrence.sourceEvent),
+                    members: viewModel.members,
+                    locationSearch: locationSearch,
                     onSave: { event, notifyParticipants, idempotencyKey in
                         try await viewModel.addEvent(
                             event,
@@ -167,8 +173,18 @@ struct WeeklyScheduleView: View {
                             idempotencyKey: idempotencyKey
                         )
                     },
-                    onDelete: { event, idempotencyKey in
-                        try await viewModel.deleteEvent(event, idempotencyKey: idempotencyKey)
+                    onSaveRecurring: { edit, notifyParticipants, idempotencyKey in
+                        try await viewModel.updateRecurringEvent(
+                            edit,
+                            notifyParticipants: notifyParticipants,
+                            idempotencyKey: idempotencyKey
+                        )
+                    },
+                    onDelete: { _, idempotencyKey in
+                        try await viewModel.deleteEvent(
+                            occurrence.sourceEvent,
+                            idempotencyKey: idempotencyKey
+                        )
                     }
                 )
             }
@@ -274,6 +290,16 @@ struct WeeklyScheduleView: View {
 
     // MARK: - Day sections
 
+    private func supportsWeekdayScope(for event: FamilyEvent) -> Bool {
+        let seriesID = event.recurrenceSeriesID ?? (event.recurrence == nil ? nil : event.id)
+        guard let seriesID else { return false }
+        return viewModel.events.contains { candidate in
+            let candidateSeriesID = candidate.recurrenceSeriesID
+                ?? (candidate.recurrence == nil ? nil : candidate.id)
+            return candidateSeriesID == seriesID && candidate.recurrence?.frequency == .weekly
+        }
+    }
+
     @ViewBuilder
     private var daySections: some View {
         if let errorMessage = viewModel.errorMessage {
@@ -303,7 +329,7 @@ struct WeeklyScheduleView: View {
                                            calendarSourceStore != nil {
                                             linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
                                         } else {
-                                            editingEvent = occurrence.sourceEvent
+                                            editingOccurrence = occurrence
                                         }
                                     }
                                 }

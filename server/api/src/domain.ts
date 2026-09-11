@@ -56,6 +56,7 @@ export interface FamilyEvent {
   status: "confirmed" | "pending_review";
   alertLeadTimeMinutes?: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
   recurrence?: EventRecurrence | null;
+  recurrenceSeriesID?: string | null;
   readOnly?: boolean;
   provenance?: Array<{
     sourceID: string;

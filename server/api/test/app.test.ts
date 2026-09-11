@@ -2380,6 +2380,103 @@ describe("Rallyroo API", () => {
       expect(listed.json().find((event: { id: string }) => event.id === id)?.alertLeadTimeMinutes)
              .toBe(alertLeadTimeMinutes);
       await app.close();
-       }
-     });
+    }
+  });
+
+  it("atomically edits a recurring Event occurrence through a scoped endpoint", async () => {
+    const data = repository();
+    const app = buildApp({ identityProvider, repository: data });
+    const initialEventCount = (await data.eventsForFamily("family-1")).length;
+    const id = "00000000-0000-4000-8000-000000000059";
+    const source = {
+      id,
+      title: "Practice",
+      kidID: "kid-1",
+      participantIDs: ["kid-1"],
+      startTime: "2026-09-02T16:00:00.000Z",
+      endTime: "2026-09-02T17:00:00.000Z",
+      location: "Field",
+      driver: null,
+      driverMemberID: null,
+      source: "manual",
+      status: "confirmed",
+      alertLeadTimeMinutes: 15,
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [3, 4],
+        endDate: "2026-12-31T16:00:00.000Z",
+      },
+    };
+    expect((await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=false`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: source,
+    })).statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/events/${id}/recurring-edit`,
+      headers: {
+        authorization: "Bearer parent-token",
+        "idempotency-key": "59000000-0000-4000-8000-000000000001",
+      },
+      payload: {
+        event: {
+          ...source,
+          title: "Thursday carpool",
+          startTime: "2026-09-10T16:00:00.000Z",
+          endTime: "2026-09-10T16:45:00.000Z",
+          alertLeadTimeMinutes: 45,
+        },
+        scope: "thisWeekdayAndFuture",
+        occurrenceStart: "2026-09-10T16:00:00.000Z",
+        upserts: [
+          {
+            ...source,
+            recurrenceSeriesID: id,
+            recurrence: { ...source.recurrence, endDate: "2026-09-10T15:59:59.999Z" },
+          },
+          {
+            ...source,
+            id: "59000000-0000-4000-8000-000000000002",
+            recurrenceSeriesID: id,
+            startTime: "2026-09-16T16:00:00.000Z",
+            endTime: "2026-09-16T17:00:00.000Z",
+            recurrence: { ...source.recurrence, weekdays: [3] },
+          },
+          {
+            ...source,
+            id: "59000000-0000-4000-8000-000000000003",
+            title: "Thursday carpool",
+            startTime: "2026-09-10T16:00:00.000Z",
+            endTime: "2026-09-10T16:45:00.000Z",
+            alertLeadTimeMinutes: 45,
+            recurrenceSeriesID: id,
+            recurrence: { ...source.recurrence, weekdays: [4] },
+          },
+        ],
+        deleteIDs: [],
+        affectedEventIDs: ["59000000-0000-4000-8000-000000000003"],
+        affectedSourceEventIDs: [id],
+        baseSeriesEvents: [{ ...source, recurrenceSeriesID: id }],
+        notifyParticipants: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(await data.familyChangeVersion("family-1")).toBe(2);
+    const stored = await data.eventsForFamily("family-1");
+    expect(stored).toHaveLength(initialEventCount + 3);
+    expect(stored).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "Thursday carpool",
+        alertLeadTimeMinutes: 45,
+        recurrenceSeriesID: id,
+      }),
+      expect.objectContaining({ id, title: "Practice", recurrenceSeriesID: id }),
+    ]));
+    await app.close();
+  });
 });

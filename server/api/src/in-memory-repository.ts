@@ -288,11 +288,13 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     });
     const action = plan.action;
     if (action.kind === "save") {
-      const index = this.events.findIndex((candidate) =>
-        candidate.familyID === familyID && candidate.id === action.event.id
+      this.upsertEvent(action.event);
+    } else if (action.kind === "replaceRecurringSeries") {
+      const deleteIDs = new Set(action.deleteIDs);
+      removeWhere(this.events, (event) =>
+        event.familyID === familyID && deleteIDs.has(event.id)
       );
-      if (index >= 0) this.events[index] = structuredClone(action.event);
-      else this.events.push(structuredClone(action.event));
+      for (const event of action.events) this.upsertEvent(event);
     } else {
       removeWhere(this.events, (event) => event.familyID === familyID && event.id === action.eventID);
     }
@@ -366,9 +368,7 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   }
 
   async saveEvent(event: FamilyEvent): Promise<void> {
-    const index = this.events.findIndex((candidate) => candidate.id === event.id && candidate.familyID === event.familyID);
-    if (index >= 0) this.events[index] = event;
-    else this.events.push(event);
+    this.upsertEvent(event);
   }
 
   async deleteEvent(familyID: string, eventID: string): Promise<void> {
@@ -494,6 +494,14 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   async deleteMember(familyID: string, memberID: string): Promise<void> {
     const index = this.members.findIndex((member) => member.familyID === familyID && member.id === memberID);
     if (index >= 0) this.members.splice(index, 1);
+  }
+
+  private upsertEvent(event: FamilyEvent): void {
+    const index = this.events.findIndex((candidate) =>
+      candidate.id === event.id && candidate.familyID === event.familyID
+    );
+    if (index >= 0) this.events[index] = structuredClone(event);
+    else this.events.push(structuredClone(event));
   }
 }
 

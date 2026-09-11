@@ -45,6 +45,9 @@ it changes. The app also refreshes whenever it becomes active.
 
 - `GET /v1/events` → JSON array of events.
 - `PUT /v1/events/{id}?notifyParticipants=true|false` with an event body → mutation result.
+- `POST /v1/events/{id}/recurring-edit` with `event`, `scope`, `occurrenceStart`,
+  concrete `upserts`/`deleteIDs`, affected row IDs, a base-series snapshot, and `notifyParticipants`
+  → atomic scoped mutation result.
 - `DELETE /v1/events/{id}` → empty 2xx response.
 
 Clients should send a stable UUID in `Idempotency-Key` for both mutations and
@@ -55,7 +58,7 @@ client supplies a stable key.
 Event bodies use the Swift `FamilyEvent` fields, including `id`, `title`,
 `participantIDs`, `startTime`, `endTime`, `location`, `driver`, `source`, and
 `status`. Native events also support optional `alertLeadTimeMinutes` (`0`, `5`,
-`15`, `60`, `1440`, or null) and `recurrence`. An omitted alert on a write defaults
+`15`, `30`, `45`, `60`, `1440`, or null) and `recurrence`. An omitted alert on a write defaults
 to `0` (at start). `kidID` is temporarily included for
 compatibility and may be null. A recurrence contains `frequency` (`daily`,
 `weekly`, or `monthly`), a positive `interval`, and an ISO 8601 `endDate`.
@@ -63,6 +66,16 @@ Weekly recurrences may include `weekdays`, a unique array using ISO weekday
 numbers (`1` Monday through `7` Sunday). Omitting `weekdays` retains legacy
 once-per-week behavior. New or updated recurrences must end no more than 732
 days after their start, keeping expansion, conflict checks, and alerts bounded.
+
+Scoped edits accept `scope` as `thisOccurrence`, `thisWeekdayAndFuture`, or
+`allFuture`. `occurrenceStart` identifies the original occurrence being edited.
+The Swift planner preserves past occurrences and applies all edited fields—including
+alert and structured driver—to the selected scope. The server validates its bounded
+concrete plan against the locked current series, then commits every replacement row,
+change cursor, mutation receipt, and schedule-update intent in one transaction.
+A server-owned opaque `recurrenceSeriesID` links split rows so later all-future
+edits still reach every weekday. Existing recurring rows are backfilled with
+their Event ID; older clients may omit the field.
 
 `notifyParticipants=true` records one durable schedule update notification
 intent for devices owned by selected participants, excluding the parent making

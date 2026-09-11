@@ -10,6 +10,7 @@ import type { CaltrainStaticScheduleSnapshot } from "../src/caltrain-static-sche
 import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
+import type { FamilyEvent } from "../src/domain.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -685,6 +686,63 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     await data.releaseReminderNotificationClaim(account.familyID, reminderID, now);
     expect((await data.claimDueReminderNotifications(now, 100)).map((reminder) => reminder.id))
       .toEqual([reminderID]);
+  });
+
+  it("atomically replaces recurring-series rows and replays the mutation receipt", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("recurring-edit-parent", "Editor");
+    const seriesID = "abcdefab-cdef-4abc-8def-abcdefabc310";
+    const obsoleteID = "abcdefab-cdef-4abc-8def-abcdefabc311";
+    const newID = "abcdefab-cdef-4abc-8def-abcdefabc312";
+    const source: FamilyEvent = {
+      id: seriesID,
+      familyID: account.familyID,
+      title: "Practice",
+      kidID: null,
+      participantIDs: [account.memberID],
+      startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z",
+      location: null,
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+      recurrenceSeriesID: seriesID,
+      recurrence: {
+        frequency: "weekly", interval: 1, weekdays: [4], endDate: "2026-12-31T15:00:00Z",
+      },
+    };
+    await data.saveEvent(source);
+    await data.saveEvent({
+      ...source,
+      id: obsoleteID,
+      startTime: "2026-09-17T15:00:00Z",
+      endTime: "2026-09-17T16:00:00Z",
+    });
+    const replacement = { ...source, title: "Carpool" };
+    const generated = {
+      ...replacement,
+      id: newID,
+      startTime: "2026-09-24T15:00:00Z",
+      endTime: "2026-09-24T16:00:00Z",
+    };
+
+    const idempotencyKey = "abcdefab-cdef-4abc-8def-abcdefabc313";
+    const first = await data.performEventMutation(account.familyID, idempotencyKey, () => ({
+      action: {
+        kind: "replaceRecurringSeries",
+        events: [replacement, generated],
+        deleteIDs: [obsoleteID],
+      },
+      result: { conflicts: [], notificationOutcome: "notRequested" },
+    }));
+    const replay = await data.performEventMutation(account.familyID, idempotencyKey, () => {
+      throw new Error("idempotent replay must not rebuild the plan");
+    });
+
+    expect(replay).toEqual(first);
+    const rows = await data.eventsForFamily(account.familyID);
+    expect(rows.map((event) => event.id).sort()).toEqual([newID, seriesID].sort());
+    expect(rows.every((event) => event.recurrenceSeriesID === seriesID)).toBe(true);
   });
 
   it("claims a due recurring event occurrence once across concurrent workers", async () => {

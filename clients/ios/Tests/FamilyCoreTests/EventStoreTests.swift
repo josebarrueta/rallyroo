@@ -281,6 +281,88 @@ final class EventStoreTests: XCTestCase {
         XCTAssertEqual(savedEvents, [updatedEvent])
     }
 
+    func testAtomicallyAppliesAndReplaysARecurringWeekdayEditLocally() async throws {
+        let storageURL = temporaryStorageURL()
+        var repository: any EventStore = LocalEventStore(storageURL: storageURL)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        func date(_ day: Int) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: 16))!
+        }
+        let source = FamilyEvent(
+            id: UUID(uuidString: "30000000-0000-4000-8000-000000000001")!,
+            title: "Practice",
+            kidID: KidID(rawValue: "kid-1"),
+            startTime: date(2),
+            endTime: date(2).addingTimeInterval(3_600),
+            driverMemberID: KidID(rawValue: "parent-1"),
+            source: .manual,
+            status: .confirmed,
+            alertLeadTime: .fifteenMinutes,
+            recurrence: EventRecurrence(
+                frequency: .weekly,
+                weekdays: [.wednesday, .thursday],
+                endDate: date(30)
+            )
+        )
+        try await repository.save(source)
+        let occurrenceStart = date(10)
+        var edited = source
+        edited.title = "Thursday carpool"
+        edited.startTime = occurrenceStart
+        edited.endTime = occurrenceStart.addingTimeInterval(45 * 60)
+        edited.driverMemberID = KidID(rawValue: "parent-2")
+        edited.alertLeadTime = .fortyFiveMinutes
+        let edit = RecurringEventEdit(
+            sourceEventID: source.id,
+            editedEvent: edited,
+            scope: .thisWeekdayAndFuture,
+            occurrenceStart: occurrenceStart
+        )
+        let idempotencyKey = UUID(uuidString: "30000000-0000-4000-8000-000000000002")!
+
+        _ = try await repository.updateRecurringEvent(
+            edit, notifyParticipants: false, idempotencyKey: idempotencyKey
+        )
+        let afterFirstSave = try await repository.events()
+        repository = LocalEventStore(storageURL: storageURL)
+        _ = try await repository.updateRecurringEvent(
+            edit, notifyParticipants: false, idempotencyKey: idempotencyKey
+        )
+        let afterReplay = try await repository.events()
+
+        XCTAssertEqual(afterReplay, afterFirstSave)
+        XCTAssertEqual(afterReplay.count, 3)
+        let range = DateInterval(start: date(1), end: date(30).addingTimeInterval(24 * 60 * 60))
+        let occurrences = EventOccurrenceExpander.occurrences(of: afterReplay, in: range, calendar: calendar)
+        XCTAssertEqual(occurrences.first { $0.event.startTime == date(9) }?.event.title, "Practice")
+        XCTAssertEqual(occurrences.first { $0.event.startTime == date(10) }?.event.title, "Thursday carpool")
+        XCTAssertEqual(occurrences.first { $0.event.startTime == date(16) }?.event.title, "Practice")
+        XCTAssertEqual(occurrences.first { $0.event.startTime == date(17) }?.event.title, "Thursday carpool")
+
+        let thursdayRow = afterReplay.first { $0.title == "Thursday carpool" }!
+        var allFuture = thursdayRow
+        allFuture.title = "All future carpool"
+        allFuture.startTime = date(17)
+        allFuture.endTime = date(17).addingTimeInterval(45 * 60)
+        _ = try await repository.updateRecurringEvent(
+            RecurringEventEdit(
+                sourceEventID: thursdayRow.id,
+                editedEvent: allFuture,
+                scope: .allFuture,
+                occurrenceStart: date(17)
+            ),
+            notifyParticipants: false,
+            idempotencyKey: UUID(uuidString: "30000000-0000-4000-8000-000000000003")!
+        )
+        let finalRows = try await repository.events()
+        let finalOccurrences = EventOccurrenceExpander.occurrences(of: finalRows, in: range, calendar: calendar)
+        XCTAssertEqual(finalOccurrences.first { $0.event.startTime == date(16) }?.event.title, "Practice")
+        XCTAssertEqual(finalOccurrences.first { $0.event.startTime == date(17) }?.event.title, "All future carpool")
+        XCTAssertEqual(finalOccurrences.first { $0.event.startTime == date(23) }?.event.title, "All future carpool")
+        XCTAssertEqual(finalOccurrences.first { $0.event.startTime == date(24) }?.event.title, "All future carpool")
+    }
+
     func testDeletesAnEvent() async throws {
         let repository: any EventStore = LocalEventStore(storageURL: temporaryStorageURL())
         let event = FamilyEvent(
