@@ -99,6 +99,10 @@ const reminderSchema = z.object({
   alertLeadTimeMinutes: z.union([
     z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
   ]).default(null),
+   recurrenceFrequency: z.union([z.literal("weekly"), z.literal("biweekly"), z.null()]).default(null),
+  recurrenceInterval: z.union([z.number().int().min(1).max(4), z.null()]).default(null),
+  recurrenceWeekdays: z.array(z.number().int().min(1).max(7)).max(7).default([]),
+  recurrenceEndDate: z.union([z.string().datetime(), z.null()]).default(null),
 });
 
 const locationSearchSchema = z.object({ q: z.string().trim().min(2).max(200) });
