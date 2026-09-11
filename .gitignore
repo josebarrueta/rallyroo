@@ -1,0 +1,27 @@
+# ---- Swift / Xcode ----
+.DS_Store
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+Generated/
+ios/Pods/
+
+# ---- Supabase ----
+.supabase/.branches/
+.supabase/config.toml.local
+.supabase/branches/
+
+# ---- Secrets / env ----
+.env
+*.env
+!.env.example
+ios/FamilyHub/Config/Secrets.xcconfig
+.env.local
+
+# ---- Node / Deno ----
+node_modules/
+
+# ---- Logs ----
+*.log
