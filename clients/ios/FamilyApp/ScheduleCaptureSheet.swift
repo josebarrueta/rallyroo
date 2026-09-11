@@ -242,6 +242,23 @@ struct ScheduleCaptureSheet: View {
             }
         )
     }
+    @ViewBuilder
+    private var scheduleLanguagePicker: some View {
+        Picker(
+               "Voice language",
+             selection: $speechLanguage
+             ) {
+                ForEach(SpeechLanguage.allCases) { language in
+                    Text(language.rawValue).tag(language)
+                      }
+                   }
+                   .pickerStyle(.segmented)
+                   .accessibilityLabel("Voice language")
+                   .onChange(of: speechLanguage) { _, newLanguage in
+                     intake.setSpeechLocale(newLanguage.locale)
+                      }
+        }
+
 }
 
 @MainActor
@@ -416,22 +433,5 @@ private final class ScheduleSpeechTranscriber: ScheduleSpeechCapture {
             }
         }
     }
-
-     @ViewBuilder
-     private var scheduleLanguagePicker: some View {
-        Picker(
-             "Voice language",
-             selection: $speechLanguage
-            ) {
-                ForEach(SpeechLanguage.allCases) { language in
-                    Text(language.rawValue).tag(language)
-                    }
-                     }
-                     .pickerStyle(.segmented)
-                     .accessibilityLabel("Voice language")
-                     .onChange(of: speechLanguage) { _, newLanguage in
-                         intake.setSpeechLocale(newLanguage.locale)
-                         }
-                     }
 
 }
