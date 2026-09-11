@@ -145,10 +145,7 @@ describe("recurring reminder API", () => {
     const app = buildApp({
       identityProvider,
       repository: data,
-      reminderNotificationDispatcher: {
-           async dispatchDueReminders() {},
-          },
-       });
+     });
     const reminderID = "abcdefab-cdef-4abc-8def-abcdefabc204";
     await app.inject({
       method: "PUT",

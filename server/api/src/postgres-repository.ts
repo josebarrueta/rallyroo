@@ -184,7 +184,9 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         const reminders = await client.query<ReminderRow>(
           `SELECT family_id, id::text, title, assignee_ids, due_at, status,
                   completed_at, completed_by_member_id, alert_lead_time_minutes,
-                  created_by_member_id
+                  created_by_member_id,
+                  recurrence_frequency, recurrence_interval, recurrence_weekdays,
+                  recurrence_end_date, recurrence_series_id
            FROM family_reminders WHERE title NOT LIKE 'rr1.%'
            ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
           [remaining()],
@@ -1949,7 +1951,9 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const result = await this.pool.query<ReminderRow>(
       `SELECT family_id, id::text, title, assignee_ids, due_at, status,
               completed_at, completed_by_member_id, alert_lead_time_minutes,
-              created_by_member_id
+              created_by_member_id,
+              recurrence_frequency, recurrence_interval, recurrence_weekdays,
+              recurrence_end_date, recurrence_series_id
        FROM family_reminders WHERE family_id = $1 ORDER BY due_at`,
       [familyID],
     );
@@ -2656,6 +2660,11 @@ interface ReminderRow {
   completed_by_member_id: string | null;
   alert_lead_time_minutes: FamilyReminder["alertLeadTimeMinutes"];
   created_by_member_id: string;
+  recurrence_frequency: string | null;
+  recurrence_interval: number | null;
+  recurrence_weekdays: number[];
+  recurrence_end_date: Date | string | null;
+  recurrence_series_id: string;
 }
 
 interface CalendarSourceRow {

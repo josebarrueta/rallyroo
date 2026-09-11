@@ -80,11 +80,11 @@ export interface FamilyReminder {
   alertLeadTimeMinutes: 0 | 5 | 15 | 60 | 1440 | null;
   createdByMemberID: string;
   // Recurrence: null on one-time; set on series templates.
-  recurrenceFrequency: ReminderFrequency | null;
-  recurrenceInterval: number | null;
-  recurrenceWeekdays: number[] | null;
-  recurrenceEndDate: string | null;
-  recurrenceSeriesID: string | null;
+  recurrenceFrequency?: ReminderFrequency | null;
+  recurrenceInterval?: number | null;
+  recurrenceWeekdays?: number[] | null;
+  recurrenceEndDate?: string | null;
+  recurrenceSeriesID?: string | null;
 }
 
 export interface EventConflict {
