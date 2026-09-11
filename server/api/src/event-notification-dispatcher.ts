@@ -105,6 +105,8 @@ function alertBody(leadTimeMinutes: FamilyEvent["alertLeadTimeMinutes"]): string
     case 0: return "Event starting now.";
     case 5: return "Event starts in 5 minutes.";
     case 15: return "Event starts in 15 minutes.";
+    case 30: return "Event starts in 30 minutes.";
+    case 45: return "Event starts in 45 minutes.";
     case 60: return "Event starts in 1 hour.";
     case 1440: return "Event starts in 1 day.";
     case null:

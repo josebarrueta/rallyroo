@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { OllamaScheduleDraftExtractor } from "../src/ollama-schedule-draft-extractor.js";
+import { scheduleDraftSchema } from "../src/schedule-draft-extractor.js";
 
 const request = {
   text: "Remind Alex to bring cleats tomorrow at 4 PM",
@@ -10,6 +11,29 @@ const request = {
 };
 
 describe("OllamaScheduleDraftExtractor", () => {
+  it("allows 30 and 45 minute alerts only for Event drafts", () => {
+    const draft = {
+      title: "Practice",
+      memberIDs: ["kid-1"],
+      startTime: "2026-09-07T23:00:00.000Z",
+      endTime: "2026-09-08T00:00:00.000Z",
+      dueAt: null,
+      location: null,
+      alertLeadTimeMinutes: 30,
+      clarification: null,
+      confidence: 0.9,
+    };
+
+    expect(scheduleDraftSchema.safeParse({ ...draft, kind: "event" }).success).toBe(true);
+    expect(scheduleDraftSchema.safeParse({
+      ...draft,
+      kind: "reminder",
+      startTime: null,
+      endTime: null,
+      dueAt: "2026-09-07T23:00:00.000Z",
+    }).success).toBe(false);
+  });
+
   it("requests structured output and validates reminder drafts", async () => {
     let body: Record<string, unknown> = {};
     const extractor = new OllamaScheduleDraftExtractor({

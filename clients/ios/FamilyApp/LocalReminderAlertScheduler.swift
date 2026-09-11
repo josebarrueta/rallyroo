@@ -95,6 +95,8 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
         case .atStart: "Event starting now."
         case .fiveMinutes: "Event starts in 5 minutes."
         case .fifteenMinutes: "Event starts in 15 minutes."
+        case .thirtyMinutes: "Event starts in 30 minutes."
+        case .fortyFiveMinutes: "Event starts in 45 minutes."
         case .oneHour: "Event starts in 1 hour."
         case .oneDay: "Event starts in 1 day."
         }

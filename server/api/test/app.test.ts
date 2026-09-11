@@ -2348,4 +2348,38 @@ describe("Rallyroo API", () => {
     expect(saved?.recurrence).toMatchObject({ frequency: "weekly", weekdays: [3, 7] });
     await app.close();
   });
+
+  it("persists 30 and 45 minute Event alert lead times", async () => {
+    for (const alertLeadTimeMinutes of [30, 45]) {
+      const last12 = alertLeadTimeMinutes === 30 ? "000000000030" : "000000000045";
+      const id = `00000000-0000-4000-8000-${last12}`;
+      const data = repository();
+      const app = buildApp({ identityProvider, repository: data });
+      const write = await app.inject({
+        method: "PUT",
+        url: `/v1/events/${id}?notifyParticipants=false`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          id,
+          title: "Lead time practice",
+          kidID: "kid-1",
+          participantIDs: ["kid-1"],
+          startTime: "2026-08-26T18:00:00Z",
+          endTime: "2026-08-26T19:00:00Z",
+          source: "manual",
+          status: "confirmed",
+          alertLeadTimeMinutes,
+         },
+       });
+      const listed = await app.inject({
+        method: "GET",
+        url: "/v1/events",
+        headers: { authorization: "Bearer parent-token" },
+       });
+      expect(write.statusCode).toBe(200);
+      expect(listed.json().find((event: { id: string }) => event.id === id)?.alertLeadTimeMinutes)
+             .toBe(alertLeadTimeMinutes);
+      await app.close();
+       }
+     });
 });

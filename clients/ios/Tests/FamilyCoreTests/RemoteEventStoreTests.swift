@@ -153,6 +153,31 @@ final class RemoteEventStoreTests: XCTestCase {
         XCTAssertEqual(request.timeoutInterval, 60)
     }
 
+    func testSavesThirtyAndFortyFiveMinuteEventAlertsThroughTheRemoteAPI() async throws {
+        for (leadTime, expectedMinutes) in [(EventAlertLeadTime.thirtyMinutes, 30), (.fortyFiveMinutes, 45)] {
+            let transport = RecordingHTTPTransport(
+                responses: [HTTPResponse(
+                    statusCode: 200,
+                    body: Data("{\"conflicts\":[],\"notificationOutcome\":\"notRequested\"}".utf8)
+                )]
+            )
+            let store: any EventStore = RemoteEventStore(
+                baseURL: URL(string: "https://api.example.com")!,
+                transport: transport
+            )
+            var event = sampleEvent()
+            event.alertLeadTime = leadTime
+
+            _ = try await store.save(event, notifyParticipants: false)
+
+            let requests = await transport.recordedRequests()
+            let request = try XCTUnwrap(requests.first)
+            let body = try XCTUnwrap(request.body)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(json["alertLeadTimeMinutes"] as? Int, expectedMinutes)
+        }
+    }
+
     func testSavesAnEventThroughTheRemoteAPI() async throws {
         let transport = RecordingHTTPTransport(
             responses: [HTTPResponse(

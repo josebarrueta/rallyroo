@@ -46,6 +46,8 @@ public enum EventAlertLeadTime: Int, Codable, CaseIterable, Sendable {
     case atStart = 0
     case fiveMinutes = 5
     case fifteenMinutes = 15
+    case thirtyMinutes = 30
+    case fortyFiveMinutes = 45
     case oneHour = 60
     case oneDay = 1_440
 }

@@ -9,7 +9,7 @@ export const scheduleDraftSchema = z.object({
   dueAt: z.string().datetime().nullable(),
   location: z.string().trim().max(500).nullable(),
   alertLeadTimeMinutes: z.union([
-    z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
+    z.literal(0), z.literal(5), z.literal(15), z.literal(30), z.literal(45), z.literal(60), z.literal(1440), z.null(),
   ]),
   clarification: z.string().trim().min(1).max(500).nullable(),
   confidence: z.number().min(0).max(1),
@@ -19,8 +19,13 @@ export const scheduleDraftSchema = z.object({
       context.addIssue({ code: "custom", message: "event requires a valid time range" });
     }
   }
-  if (draft.kind === "reminder" && draft.clarification === null && !draft.dueAt) {
-    context.addIssue({ code: "custom", message: "reminder requires a due time" });
+  if (draft.kind === "reminder") {
+    if (draft.clarification === null && !draft.dueAt) {
+      context.addIssue({ code: "custom", message: "reminder requires a due time" });
+    }
+    if (draft.alertLeadTimeMinutes === 30 || draft.alertLeadTimeMinutes === 45) {
+      context.addIssue({ code: "custom", message: "30 and 45 minute alerts are Event-only" });
+    }
   }
 });
 
