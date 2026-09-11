@@ -65,6 +65,9 @@ export interface FamilyEvent {
   }>;
 }
 
+export type ReminderFrequency = "weekly" | "biweekly";
+export type ReminderWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
 export interface FamilyReminder {
   id: string;
   familyID: string;
@@ -76,6 +79,12 @@ export interface FamilyReminder {
   completedByMemberID: string | null;
   alertLeadTimeMinutes: 0 | 5 | 15 | 60 | 1440 | null;
   createdByMemberID: string;
+  // Recurrence: null on one-time; set on series templates.
+  recurrenceFrequency?: ReminderFrequency | null;
+  recurrenceInterval?: number | null;
+  recurrenceWeekdays?: number[] | null;
+  recurrenceEndDate?: string | null;
+  recurrenceSeriesID?: string | null;
 }
 
 export interface EventConflict {

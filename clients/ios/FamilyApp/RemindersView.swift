@@ -77,6 +77,15 @@ struct RemindersView: View {
                             Text(reminder.title).font(.headline)
                             LabeledContent("Due", value: reminder.dueAt.formatted())
                             LabeledContent("Status", value: reminder.status == .completed ? "Completed" : "Open")
+                            if reminder.hasRecurrence {
+                                Section("Recurrence") {
+                                    LabeledContent("Frequency", value: recurrenceLabel(reminder))
+                                    LabeledContent("Days", value: weekdayLabel(reminder.recurrenceWeekdays ?? []))
+                                    if let end = reminder.recurrenceEndDate {
+                                        LabeledContent("Ends", value: end.formatted(.dateTime.month().day()))
+                                    }
+                                }
+                            }
                         }
                     }
                     .navigationTitle("Reminder details")
@@ -89,7 +98,7 @@ struct RemindersView: View {
                     await load()
                 }
             }
-              .tint(AppTheme.purple)
+            .tint(AppTheme.purple)
         }
     }
 
@@ -136,6 +145,19 @@ struct RemindersView: View {
         Calendar.current.date(byAdding: .day, value: 1, to: startOfToday)!
     }
 
+    private func recurrenceLabel(_ reminder: FamilyReminder) -> String {
+        guard let freq = reminder.recurrenceFrequency else { return "One-time" }
+        return freq == .biweekly ? "Biweekly" : "Weekly"
+    }
+
+    private func weekdayLabel(_ days: [ReminderRecurrence.Weekday]) -> String {
+        let names: [ReminderRecurrence.Weekday: String] = [
+            .monday: "Mon", .tuesday: "Tue", .wednesday: "Wed",
+            .thursday: "Thu", .friday: "Fri", .saturday: "Sat", .sunday: "Sun",
+        ]
+        return days.map { names[$0] ?? "" }.joined(separator: ", ")
+    }
+
     @MainActor
     private func load() async {
         do {
@@ -144,7 +166,8 @@ struct RemindersView: View {
             reminders = try await loadedReminders
             members = try await loadedMembers
             errorMessage = nil
-        } catch {
+        }
+        catch {
             errorMessage = "Reminders could not be loaded."
         }
     }
@@ -164,7 +187,8 @@ struct RemindersView: View {
                 try? await alertScheduler?.schedule(reopened)
             }
             await load()
-        } catch {
+        }
+        catch {
             errorMessage = "The reminder could not be updated."
         }
     }
@@ -175,11 +199,14 @@ struct RemindersView: View {
             try await store.delete(reminder)
             await alertScheduler?.cancel(reminder)
             await load()
-        } catch {
+        }
+        catch {
             errorMessage = "The reminder could not be deleted."
         }
     }
 }
+
+// MARK: - Reminder Row
 
 private struct ReminderRow: View {
     let reminder: FamilyReminder
@@ -201,6 +228,14 @@ private struct ReminderRow: View {
                 Text(reminder.dueAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if reminder.hasRecurrence {
+                    Label(
+                        "Repeats \(reminder.recurrenceFrequency == .biweekly ? "biweekly" : "weekly")",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.purple)
+                }
                 Text(assigneeNames)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -215,8 +250,10 @@ private struct ReminderRow: View {
     }
 }
 
+// MARK: - Reminder Editor
+
 private struct ReminderEditorSheet: View {
-    let reminder: FamilyReminder
+    let originalReminder: FamilyReminder
     let members: [FamilyMember]
     let onSave: (FamilyReminder) async throws -> Void
 
@@ -225,6 +262,10 @@ private struct ReminderEditorSheet: View {
     @State private var assigneeIDs: Set<KidID>
     @State private var dueAt = Date.now.addingTimeInterval(60 * 60)
     @State private var alertChoice: ReminderAlertChoice = .none
+    @State private var isRecurring = false
+    @State private var frequency: ReminderRecurrence.Frequency = .weekly
+    @State private var selectedWeekdays: Set<ReminderRecurrence.Weekday> = []
+    @State private var endDate = Date.now.addingTimeInterval(60 * 60 * 24 * 90)
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -233,7 +274,7 @@ private struct ReminderEditorSheet: View {
         members: [FamilyMember],
         onSave: @escaping (FamilyReminder) async throws -> Void
     ) {
-        self.reminder = reminder
+        self.originalReminder = reminder
         self.members = members
         self.onSave = onSave
         _title = State(initialValue: reminder.title)
@@ -242,6 +283,12 @@ private struct ReminderEditorSheet: View {
             : Set(reminder.assigneeIDs))
         _dueAt = State(initialValue: reminder.dueAt)
         _alertChoice = State(initialValue: ReminderAlertChoice(leadTime: reminder.alertLeadTime))
+        if reminder.hasRecurrence {
+            _isRecurring = State(initialValue: true)
+            _frequency = State(initialValue: reminder.recurrenceFrequency ?? .weekly)
+            _selectedWeekdays = State(initialValue: Set(reminder.recurrenceWeekdays ?? []))
+            _endDate = State(initialValue: reminder.recurrenceEndDate ?? Date.now.addingTimeInterval(60 * 60 * 24 * 90))
+        }
     }
 
     var body: some View {
@@ -249,7 +296,7 @@ private struct ReminderEditorSheet: View {
             Form {
                 Section("Reminder") {
                     TextField("Title", text: $title)
-                    DatePicker("Due", selection: $dueAt)
+                    DatePicker("Due", selection: $dueAt, displayedComponents: [.date, .hourAndMinute])
                     Picker("Alert", selection: $alertChoice) {
                         ForEach(ReminderAlertChoice.allCases) { choice in
                             Text(choice.title).tag(choice)
@@ -267,22 +314,46 @@ private struct ReminderEditorSheet: View {
                         ))
                     }
                 }
+                Section("Recurrence") {
+                    Toggle("Repeats", isOn: $isRecurring)
+                    if isRecurring {
+                        Picker("Frequency", selection: $frequency) {
+                            Text("Weekly").tag(ReminderRecurrence.Frequency.weekly)
+                            Text("Biweekly").tag(ReminderRecurrence.Frequency.biweekly)
+                        }
+                        .pickerStyle(.segmented)
+
+                        LabeledContent("Weekdays") {
+                            DayOfWeekPicker(selected: $selectedWeekdays)
+                                .frame(maxWidth: 300)
+                        }
+                        Text(weekdayNames(selectedWeekdays))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        DatePicker("Ends", selection: $endDate, displayedComponents: [.date])
+                    }
+                }
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
                 }
             }
-            .navigationTitle(reminder.title.isEmpty ? "Add Reminder" : "Edit Reminder")
+            .navigationTitle(originalReminder.title.isEmpty ? "Add Reminder" : "Edit Reminder")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
-                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || assigneeIDs.isEmpty || isSaving)
+                        .disabled(
+                            title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                || assigneeIDs.isEmpty
+                                || isSaving
+                                || (isRecurring && selectedWeekdays.isEmpty)
+                        )
                 }
             }
-                   .tint(AppTheme.purple)
+            .tint(AppTheme.purple)
         }
     }
 
@@ -291,19 +362,83 @@ private struct ReminderEditorSheet: View {
         Task {
             defer { isSaving = false }
             do {
-                var updatedReminder = reminder
-                updatedReminder.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                updatedReminder.assigneeIDs = Array(assigneeIDs)
-                updatedReminder.dueAt = dueAt
-                updatedReminder.alertLeadTime = alertChoice.leadTime
-                try await onSave(updatedReminder)
+                var updated = originalReminder
+                updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                updated.assigneeIDs = Array(assigneeIDs)
+                updated.dueAt = dueAt
+                updated.alertLeadTime = alertChoice.leadTime
+                if isRecurring, !selectedWeekdays.isEmpty {
+                    updated.recurrenceFrequency = frequency
+                    updated.recurrenceInterval = 1
+                    updated.recurrenceWeekdays = Array(selectedWeekdays).sorted()
+                    updated.recurrenceEndDate = endDate
+                } else {
+                    updated.recurrenceFrequency = nil
+                    updated.recurrenceWeekdays = []
+                    updated.recurrenceEndDate = nil
+                }
+                try await onSave(updated)
                 dismiss()
-            } catch {
+            }
+            catch {
                 errorMessage = "The reminder could not be saved."
             }
         }
     }
+
+    private func weekdayNames(_ days: Set<ReminderRecurrence.Weekday>) -> String {
+        let names: [ReminderRecurrence.Weekday: String] = [
+            .monday: "Mon", .tuesday: "Tue", .wednesday: "Wed",
+            .thursday: "Thu", .friday: "Fri", .saturday: "Sat", .sunday: "Sun",
+        ]
+        return days.map { names[$0] ?? "" }.sorted().joined(separator: ", ")
+    }
 }
+
+// MARK: - Day of Week Picker
+
+private struct DayOfWeekPicker: View {
+    @Binding var selected: Set<ReminderRecurrence.Weekday>
+    private static let allWeekdays: [ReminderRecurrence.Weekday] = [
+        .monday, .tuesday, .wednesday, .thursday, .friday, .saturday, .sunday
+    ]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Self.allWeekdays, id: \.self) { day in
+                DayButton(day: day, isSelected: selected.contains(day)) {
+                    if selected.contains(day) { selected.remove(day) }
+                    else { selected.insert(day) }
+                }
+            }
+        }
+    }
+}
+
+private struct DayButton: View {
+    let day: ReminderRecurrence.Weekday
+    let isSelected: Bool
+    let action: () -> Void
+    private let labels: [ReminderRecurrence.Weekday: String] = [
+        .monday: "M", .tuesday: "T", .wednesday: "W", .thursday: "T",
+        .friday: "F", .saturday: "S", .sunday: "S",
+    ]
+
+    var body: some View {
+        Button(action: action) {
+            Text(labels[day] ?? "?")
+                .frame(width: 28, height: 28)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .background(
+                    Circle().fill(isSelected ? AppTheme.purple : Color(.systemGray5))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Alert Choice
 
 private enum ReminderAlertChoice: Int, CaseIterable, Identifiable {
     case none = -1

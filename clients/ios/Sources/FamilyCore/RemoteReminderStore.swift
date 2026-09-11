@@ -58,4 +58,8 @@ public actor RemoteReminderStore: ReminderStore {
     private func reminderURL(_ reminder: FamilyReminder) -> URL {
         remindersURL.appending(path: reminder.id.uuidString)
     }
+
+     public func occurrences(_ series: [FamilyReminder], in range: DateInterval) async throws -> [FamilyReminder] {
+        ReminderOccurrenceExpander.occurrences(of: series, in: range).map(\.reminder)
+        }
 }
