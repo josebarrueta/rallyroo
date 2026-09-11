@@ -53,7 +53,7 @@ const eventSchema = z.object({
   source: z.enum(["manual", "email_suggested", "voice"]),
   status: z.enum(["confirmed", "pending_review"]),
   alertLeadTimeMinutes: z.union([
-    z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
+    z.literal(0), z.literal(5), z.literal(15), z.literal(30), z.literal(45), z.literal(60), z.literal(1440), z.null(),
   ]).default(0),
   recurrence: z.object({
     frequency: z.enum(["daily", "weekly", "monthly"]),
@@ -84,7 +84,7 @@ const reminderSchema = z.object({
   assigneeIDs: z.array(z.string().min(1)).min(1).transform((ids) => [...new Set(ids)]),
   dueAt: z.string().datetime(),
   alertLeadTimeMinutes: z.union([
-    z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
+    z.literal(0), z.literal(5), z.literal(15), z.literal(30), z.literal(45), z.literal(60), z.literal(1440), z.null(),
   ]).default(null),
 });
 

@@ -54,7 +54,7 @@ export interface FamilyEvent {
   driverMemberID?: string | null;
   source: "manual" | "email_suggested" | "voice" | "calendar";
   status: "confirmed" | "pending_review";
-  alertLeadTimeMinutes?: 0 | 5 | 15 | 60 | 1440 | null;
+  alertLeadTimeMinutes?: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
   recurrence?: EventRecurrence | null;
   readOnly?: boolean;
   provenance?: Array<{
@@ -73,7 +73,7 @@ export interface FamilyReminder {
   status: "open" | "completed";
   completedAt: string | null;
   completedByMemberID: string | null;
-  alertLeadTimeMinutes: 0 | 5 | 15 | 60 | 1440 | null;
+  alertLeadTimeMinutes: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
   createdByMemberID: string;
 }
 

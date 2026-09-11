@@ -355,6 +355,8 @@ private enum EventAlertChoice: Int, CaseIterable, Identifiable {
     case atStart = 0
     case fiveMinutes = 5
     case fifteenMinutes = 15
+    case thirtyMinutes = 30
+    case fortyFiveMinutes = 45
     case oneHour = 60
     case oneDay = 1_440
 
@@ -373,6 +375,8 @@ private enum EventAlertChoice: Int, CaseIterable, Identifiable {
         case .atStart: "At start"
         case .fiveMinutes: "5 minutes before"
         case .fifteenMinutes: "15 minutes before"
+        case .thirtyMinutes: "30 minutes before"
+        case .fortyFiveMinutes: "45 minutes before"
         case .oneHour: "1 hour before"
         case .oneDay: "1 day before"
         }

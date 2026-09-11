@@ -9,7 +9,7 @@ export const scheduleDraftSchema = z.object({
   dueAt: z.string().datetime().nullable(),
   location: z.string().trim().max(500).nullable(),
   alertLeadTimeMinutes: z.union([
-    z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
+    z.literal(0), z.literal(5), z.literal(15), z.literal(30), z.literal(45), z.literal(60), z.literal(1440), z.null(),
   ]),
   clarification: z.string().trim().min(1).max(500).nullable(),
   confidence: z.number().min(0).max(1),
