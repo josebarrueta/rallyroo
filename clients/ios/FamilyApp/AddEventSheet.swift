@@ -3,10 +3,14 @@ import FamilyCore
 
 struct AddEventSheet: View {
     let onSave: (FamilyEvent, Bool, UUID) async throws -> EventMutationResult
+    let onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)?
     let onDelete: ((FamilyEvent, UUID) async throws -> Void)?
     let members: [FamilyMember]
 
     private let existingEvent: FamilyEvent?
+    private let recurringSource: FamilyEvent?
+    private let occurrenceStart: Date?
+    private let supportsWeekdayScope: Bool
     private let locationSearch: any LocationSearch
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
@@ -26,6 +30,8 @@ struct AddEventSheet: View {
     @State private var isShowingAlert = false
     @State private var isShowingDeleteConfirmation = false
     @State private var isShowingNotifyPrompt = false
+    @State private var isShowingEditScopePrompt = false
+    @State private var selectedEditScope: EventEditScope?
     @State private var locationSuggestions: [LocationSuggestion] = []
     @State private var locationSearchMessage: String?
     @State private var mutationID = UUID()
@@ -33,14 +39,23 @@ struct AddEventSheet: View {
 
     init(
         event: FamilyEvent? = nil,
+        recurringSource: FamilyEvent? = nil,
+        occurrenceStart: Date? = nil,
+        supportsWeekdayScope: Bool? = nil,
         prefill: ActivityEventPrefill? = nil,
         members: [FamilyMember],
         locationSearch: any LocationSearch = EmptyLocationSearch(),
         onSave: @escaping (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
+        onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)? = nil,
         onDelete: ((FamilyEvent, UUID) async throws -> Void)? = nil
     ) {
         existingEvent = event
+        self.recurringSource = recurringSource
+        self.occurrenceStart = occurrenceStart
+        self.supportsWeekdayScope = supportsWeekdayScope
+            ?? (recurringSource?.recurrence?.frequency == .weekly)
         self.onSave = onSave
+        self.onSaveRecurring = onSaveRecurring
         self.onDelete = onDelete
         self.members = members
         self.locationSearch = locationSearch
@@ -79,8 +94,16 @@ struct AddEventSheet: View {
                 }
 
                 Section("Time") {
-                    DatePicker("Starts", selection: $startTime)
-                    DatePicker("Ends", selection: $endTime)
+                    DatePicker(
+                        "Starts",
+                        selection: $startTime,
+                        displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                    )
+                    DatePicker(
+                        "Ends",
+                        selection: $endTime,
+                        displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                    )
                     Picker("Alert", selection: $alertChoice) {
                         ForEach(EventAlertChoice.allCases) { choice in
                             Text(choice.title).tag(choice)
@@ -91,6 +114,7 @@ struct AddEventSheet: View {
                             Text(option.title).tag(option)
                         }
                     }
+                    .disabled(recurringSource != nil)
                     if repeatOption == .weekly || repeatOption == .biweekly {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("On")
@@ -108,6 +132,7 @@ struct AddEventSheet: View {
                                     .tint(selectedWeekdays.contains(weekday) ? AppTheme.purple : .secondary)
                                     .accessibilityLabel(weekday.title)
                                     .accessibilityAddTraits(selectedWeekdays.contains(weekday) ? .isSelected : [])
+                                    .disabled(recurringSource != nil)
                                 }
                             }
                         }
@@ -119,6 +144,7 @@ struct AddEventSheet: View {
                             in: startTime...latestRecurrenceEndDate,
                             displayedComponents: .date
                         )
+                        .disabled(recurringSource != nil)
                     }
                 }
 
@@ -192,10 +218,34 @@ struct AddEventSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        isShowingNotifyPrompt = true
+                        if recurringSource != nil, onSaveRecurring != nil {
+                            isShowingEditScopePrompt = true
+                        } else {
+                            isShowingNotifyPrompt = true
+                        }
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
                 }
+            }
+            .confirmationDialog(
+                "Apply changes to recurring event",
+                isPresented: $isShowingEditScopePrompt,
+                titleVisibility: .visible
+            ) {
+                Button("Only this occurrence") {
+                    chooseEditScope(.thisOccurrence)
+                }
+                if supportsWeekdayScope {
+                    Button("This weekday and future occurrences") {
+                        chooseEditScope(.thisWeekdayAndFuture)
+                    }
+                }
+                Button("All future occurrences") {
+                    chooseEditScope(.allFuture)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Past occurrences will remain unchanged.")
             }
             .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
                 Button("Yes, notify") {
@@ -232,12 +282,31 @@ struct AddEventSheet: View {
         }
     }
 
+    private func chooseEditScope(_ scope: EventEditScope) {
+        selectedEditScope = scope
+        isShowingNotifyPrompt = true
+    }
+
     private func save(notifyParticipants: Bool) {
         isSaving = true
         Task {
             defer { isSaving = false }
             do {
-                let result = try await onSave(event, notifyParticipants, mutationID)
+                let result: EventMutationResult
+                if let recurringSource, let occurrenceStart, let selectedEditScope, let onSaveRecurring {
+                    result = try await onSaveRecurring(
+                        RecurringEventEdit(
+                            sourceEventID: recurringSource.id,
+                            editedEvent: event,
+                            scope: selectedEditScope,
+                            occurrenceStart: occurrenceStart
+                        ),
+                        notifyParticipants,
+                        mutationID
+                    )
+                } else {
+                    result = try await onSave(event, notifyParticipants, mutationID)
+                }
                 let deliveryMessage = ScheduleUpdateNotificationMessage.make(
                     for: result.notificationOutcome
                 ) ?? ""
@@ -300,10 +369,11 @@ struct AddEventSheet: View {
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
             alertLeadTime: alertChoice.leadTime,
-            recurrence: repeatOption.recurrence(
+            recurrence: recurringSource?.recurrence ?? repeatOption.recurrence(
                 ending: recurrenceEndDate,
                 weekdays: selectedWeekdays.sorted()
-            )
+            ),
+            recurrenceSeriesID: recurringSource?.recurrenceSeriesID
         )
     }
 

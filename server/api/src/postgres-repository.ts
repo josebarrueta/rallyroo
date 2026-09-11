@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { Pool, type PoolConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig } from "pg";
 import type {
   Account,
   AccountRole,
@@ -148,7 +148,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       if (remaining() > 0) {
         const events = await client.query<EventRow>(
           `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                  end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+                  end_time, location, driver, driver_member_id, source, status,
+                  alert_lead_time_minutes, recurrence, recurrence_series_id
            FROM events
            WHERE title NOT LIKE 'rr1.%'
               OR (location IS NOT NULL AND location NOT LIKE 'rr1.%')
@@ -1421,7 +1422,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
     const result = await this.pool.query<EventRow>(
       `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-              end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+              end_time, location, driver, driver_member_id, source, status,
+              alert_lead_time_minutes, recurrence, recurrence_series_id
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
@@ -1439,6 +1441,27 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
     const row = result.rows[0];
     return row ? this.eventMutationResultFromRow(familyID, idempotencyKey, row) : null;
+  }
+
+  private async upsertEvent(client: PoolClient, event: FamilyEvent): Promise<void> {
+    const protectedEvent = await this.protectEvent(event);
+    await client.query(
+      `INSERT INTO events (
+         family_id, id, title, kid_id, participant_ids, start_time, end_time,
+         location, driver, driver_member_id, source, status, alert_lead_time_minutes,
+         recurrence, recurrence_series_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (family_id, id) DO UPDATE SET
+         title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
+         participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
+         end_time=EXCLUDED.end_time, location=EXCLUDED.location,
+         driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id,
+         source=EXCLUDED.source, status=EXCLUDED.status,
+         alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
+         recurrence=EXCLUDED.recurrence,
+         recurrence_series_id=EXCLUDED.recurrence_series_id`,
+      eventValues(protectedEvent),
+    );
   }
 
   async performEventMutation(
@@ -1466,7 +1489,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       }
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status,
+                alert_lead_time_minutes, recurrence, recurrence_series_id
          FROM events WHERE family_id = $1 ORDER BY start_time`,
         [familyID],
       );
@@ -1480,22 +1504,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         members: await Promise.all(members.rows.map((row) => this.memberFromRow(row))),
       });
       if (plan.action.kind === "save") {
-        const event = plan.action.event;
-        const protectedEvent = await this.protectEvent(event);
-        await client.query(
-          `INSERT INTO events (
-             family_id, id, title, kid_id, participant_ids, start_time, end_time,
-             location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           ON CONFLICT (family_id, id) DO UPDATE SET
-             title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
-             participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
-             end_time=EXCLUDED.end_time, location=EXCLUDED.location,
-             driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
-             alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
-             recurrence=EXCLUDED.recurrence`,
-          eventValues(protectedEvent),
-        );
+        await this.upsertEvent(client, plan.action.event);
+      } else if (plan.action.kind === "replaceRecurringSeries") {
+        if (plan.action.deleteIDs.length > 0) {
+          await client.query(
+            "DELETE FROM events WHERE family_id = $1 AND id = ANY($2::uuid[])",
+            [familyID, plan.action.deleteIDs],
+          );
+        }
+        for (const event of plan.action.events) await this.upsertEvent(client, event);
       } else {
         await client.query(
           "DELETE FROM events WHERE family_id = $1 AND id = $2",
@@ -1660,15 +1677,17 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query(
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
-         location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         location, driver, driver_member_id, source, status, alert_lead_time_minutes,
+         recurrence, recurrence_series_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
          end_time=EXCLUDED.end_time, location=EXCLUDED.location,
          driver=EXCLUDED.driver, driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
-         recurrence=EXCLUDED.recurrence`,
+         recurrence=EXCLUDED.recurrence,
+         recurrence_series_id=EXCLUDED.recurrence_series_id`,
       eventValues(protectedEvent),
     );
   }
@@ -1683,7 +1702,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       await client.query("BEGIN");
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
-                end_time, location, driver, driver_member_id, source, status, alert_lead_time_minutes, recurrence
+                end_time, location, driver, driver_member_id, source, status,
+                alert_lead_time_minutes, recurrence, recurrence_series_id
          FROM events
          WHERE alert_lead_time_minutes IS NOT NULL
            AND start_time <= $1::timestamptz + interval '1 day'
@@ -2595,6 +2615,7 @@ interface EventRow {
   status: FamilyEvent["status"];
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
+  recurrence_series_id: string | null;
 }
 
 interface MemberInboxRow {
@@ -2721,6 +2742,7 @@ function eventValues(event: FamilyEvent): unknown[] {
     event.startTime, event.endTime, event.location, event.driver, event.driverMemberID ?? null,
     event.source, event.status, event.alertLeadTimeMinutes ?? null,
     event.recurrence ? JSON.stringify(event.recurrence) : null,
+    event.recurrenceSeriesID ?? null,
   ];
 }
 
@@ -2740,6 +2762,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
     status: row.status,
     alertLeadTimeMinutes: row.alert_lead_time_minutes,
     recurrence: row.recurrence,
+    recurrenceSeriesID: row.recurrence_series_id,
   };
 }
 

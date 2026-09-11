@@ -64,6 +64,33 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Save without notifying"].exists)
     }
 
+    func testEditingARecurringOccurrenceOffersAllThreeScopes() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["Add"].tap()
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Recurring scope test")
+        app.staticTexts["Never"].tap()
+        app.buttons["Weekly"].tap()
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
+        app.buttons["Save without notifying"].tap()
+
+        let event = app.staticTexts["Recurring scope test"]
+        XCTAssertTrue(event.waitForExistence(timeout: 5))
+        event.tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        app.buttons["Save"].tap()
+
+        XCTAssertTrue(app.buttons["Only this occurrence"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["This weekday and future occurrences"].exists)
+        XCTAssertTrue(app.buttons["All future occurrences"].exists)
+        XCTAssertTrue(app.staticTexts["Past occurrences will remain unchanged."].exists)
+    }
+
     func testManualLocationRemainsSavableWhenSuggestionsAreUnavailable() {
         let app = XCUIApplication()
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"

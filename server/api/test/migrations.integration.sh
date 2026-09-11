@@ -54,7 +54,7 @@ run_structured_migrations pre >/dev/null
 
 ledger=$(psql "$DATABASE_URL" -Atc \
   "SELECT version || '|' || name || '|' || app_version || '|' || length(checksum) FROM schema_migrations ORDER BY version")
-[[ $(wc -l <<<"$ledger" | tr -d ' ') == "20" ]]
+[[ $(wc -l <<<"$ledger" | tr -d ' ') == "21" ]]
 grep -q '^1|001_initial.sql|test-release|64$' <<<"$ledger"
 grep -q '^9|009_child_invitation_consent.sql|test-release|64$' <<<"$ledger"
 grep -q '^10|010_calendar_source_visibility.sql|test-release|64$' <<<"$ledger"
@@ -68,9 +68,10 @@ grep -q '^17|017_commuter_alert_delivery.sql|test-release|64$' <<<"$ledger"
 grep -q '^18|018_schedule_driven_commute.sql|test-release|64$' <<<"$ledger"
 grep -q '^19|019_structured_event_drivers.sql|test-release|64$' <<<"$ledger"
 grep -q '^20|020_member_notification_inbox.sql|test-release|64$' <<<"$ledger"
+grep -q '^21|021_recurring_event_edit_scopes.sql|test-release|64$' <<<"$ledger"
 
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "20" ]]
+[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "21" ]]
 
 # Upgrade the filename-only ledger created by releases before this runner.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -79,7 +80,7 @@ ALTER TABLE schema_migrations DROP COLUMN checksum;
 ALTER TABLE schema_migrations DROP COLUMN app_version;
 SQL
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "20" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "21" ]]
 
 cp -R "$ROOT/migrations" "$tmp/checksum-migrations"
 printf '\n-- changed after deployment\n' >>"$tmp/checksum-migrations/pre/001_initial.sql"

@@ -75,6 +75,33 @@ final class WeeklyScheduleViewModel: ObservableObject {
         return result
     }
 
+    func updateRecurringEvent(
+        _ edit: RecurringEventEdit,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
+        let source = events.first(where: { $0.id == edit.sourceEventID })
+        let result = try await eventStore.updateRecurringEvent(
+            edit,
+            notifyParticipants: notifyParticipants,
+            idempotencyKey: idempotencyKey
+        )
+        if let source { await alertScheduler?.cancel(source) }
+        let snapshot = try await eventStore.loadEvents()
+        events = snapshot.events.sorted { $0.startTime < $1.startTime }
+        isShowingCachedEvents = snapshot.freshness == .cached
+        for event in events { try? await alertScheduler?.schedule(event) }
+        if !result.conflicts.isEmpty, alertPreferences.areConflictAlertsEnabled {
+            let message = ConflictNotificationMessage.make(
+                event: edit.editedEvent,
+                conflicts: result.conflicts,
+                members: members
+            )
+            try await notificationStore.save(ConflictNotification(message: message))
+        }
+        return result
+    }
+
     func deleteEvent(_ event: FamilyEvent, idempotencyKey: UUID = UUID()) async throws {
         try await eventStore.delete(event, idempotencyKey: idempotencyKey)
         await alertScheduler?.cancel(event)

@@ -178,6 +178,82 @@ final class RemoteEventStoreTests: XCTestCase {
         }
     }
 
+    func testSendsRecurringEditScopeThroughTheRemoteAPI() async throws {
+        var source = sampleEvent()
+        source.recurrence = EventRecurrence(
+            frequency: .weekly,
+            weekdays: [.thursday],
+            endDate: source.startTime.addingTimeInterval(30 * 24 * 60 * 60)
+        )
+        source.recurrenceSeriesID = source.id
+        let responseEncoder = JSONEncoder()
+        responseEncoder.dateEncodingStrategy = .iso8601
+        let transport = RecordingHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: try responseEncoder.encode([source])),
+            HTTPResponse(
+                statusCode: 200,
+                body: Data("{\"conflicts\":[],\"notificationOutcome\":\"notRequested\"}".utf8)
+            ),
+            HTTPResponse(
+                statusCode: 200,
+                body: Data("{\"conflicts\":[],\"notificationOutcome\":\"notRequested\"}".utf8)
+            ),
+        ])
+        let store: any EventStore = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+        var edited = source
+        edited.title = "Thursday carpool"
+        let occurrenceStart = source.startTime
+        let idempotencyKey = UUID(uuidString: "45555555-5555-4555-8555-555555555555")!
+
+        let result = try await store.updateRecurringEvent(
+            RecurringEventEdit(
+                sourceEventID: source.id,
+                editedEvent: edited,
+                scope: .thisWeekdayAndFuture,
+                occurrenceStart: occurrenceStart
+            ),
+            notifyParticipants: false,
+            idempotencyKey: idempotencyKey
+        )
+
+        XCTAssertEqual(result.notificationOutcome, .notRequested)
+        _ = try await store.updateRecurringEvent(
+            RecurringEventEdit(
+                sourceEventID: source.id,
+                editedEvent: edited,
+                scope: .thisWeekdayAndFuture,
+                occurrenceStart: occurrenceStart
+            ),
+            notifyParticipants: false,
+            idempotencyKey: idempotencyKey
+        )
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.count, 3)
+        let firstReplayBody = try XCTUnwrap(requests[1].body)
+        let secondReplayBody = try XCTUnwrap(requests[2].body)
+        let firstReplayJSON = try JSONSerialization.jsonObject(with: firstReplayBody) as? NSDictionary
+        let secondReplayJSON = try JSONSerialization.jsonObject(with: secondReplayBody) as? NSDictionary
+        XCTAssertEqual(firstReplayJSON, secondReplayJSON)
+        XCTAssertEqual(requests.first?.method, .get)
+        let request = try XCTUnwrap(requests.last)
+        XCTAssertEqual(request.method, .post)
+        XCTAssertTrue(request.url.path.hasSuffix("/v1/events/\(source.id.uuidString)/recurring-edit"))
+        XCTAssertEqual(request.headers["Idempotency-Key"], idempotencyKey.uuidString.lowercased())
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["scope"] as? String, "thisWeekdayAndFuture")
+        XCTAssertEqual(json["notifyParticipants"] as? Bool, false)
+        XCTAssertEqual((json["event"] as? [String: Any])?["title"] as? String, "Thursday carpool")
+        XCTAssertEqual((json["upserts"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual((json["affectedEventIDs"] as? [String])?.count, 1)
+        XCTAssertEqual((json["affectedSourceEventIDs"] as? [String])?.count, 1)
+        XCTAssertEqual((json["baseSeriesEvents"] as? [[String: Any]])?.count, 1)
+        XCTAssertNotNil(json["occurrenceStart"] as? String)
+    }
+
     func testSavesAnEventThroughTheRemoteAPI() async throws {
         let transport = RecordingHTTPTransport(
             responses: [HTTPResponse(

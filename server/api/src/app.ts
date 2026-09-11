@@ -54,7 +54,8 @@ const eventSchema = z.object({
   status: z.enum(["confirmed", "pending_review"]),
   alertLeadTimeMinutes: z.union([
     z.literal(0), z.literal(5), z.literal(15), z.literal(30), z.literal(45), z.literal(60), z.literal(1440), z.null(),
-  ]).default(0),
+  ]).optional(),
+  recurrenceSeriesID: z.string().uuid().nullable().optional(),
   recurrence: z.object({
     frequency: z.enum(["daily", "weekly", "monthly"]),
     interval: z.number().int().positive(),
@@ -76,6 +77,18 @@ const eventSchema = z.object({
     <= 732 * 24 * 60 * 60 * 1_000
 ), {
   message: "recurrence must end within 732 days after startTime",
+});
+
+const recurringEventEditSchema = z.object({
+  event: eventSchema,
+  scope: z.enum(["thisOccurrence", "thisWeekdayAndFuture", "allFuture"]),
+  occurrenceStart: z.string().datetime(),
+  upserts: z.array(eventSchema).min(1).max(2048),
+  deleteIDs: z.array(z.string().uuid()).max(2048),
+  affectedEventIDs: z.array(z.string().uuid()).min(1).max(2048),
+  affectedSourceEventIDs: z.array(z.string().uuid()).min(1).max(2048),
+  baseSeriesEvents: z.array(eventSchema).min(1).max(2048),
+  notifyParticipants: z.boolean().default(true),
 });
 
 const reminderSchema = z.object({
@@ -943,7 +956,7 @@ export function buildApp({
     if (routeID !== eventID) return reply.code(400).send({ error: "event_id_mismatch" });
     const idempotencyKey = mutationIdempotencyKey(request, reply);
     if (!idempotencyKey) return;
-    const { recurrence, ...eventData } = parsed.data;
+    const { alertLeadTimeMinutes, recurrence, recurrenceSeriesID, ...eventData } = parsed.data;
     try {
       return await eventMutations.save({
         account,
@@ -953,6 +966,78 @@ export function buildApp({
           ...eventData,
           id: eventID,
           familyID: account.familyID,
+          alertLeadTimeMinutes: alertLeadTimeMinutes === undefined ? 0 : alertLeadTimeMinutes,
+          ...(recurrenceSeriesID !== undefined ? { recurrenceSeriesID } : {}),
+          ...(recurrence !== undefined ? { recurrence } : {}),
+        },
+      });
+    } catch (error) {
+      if (error instanceof EventMutationError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/events/:id/recurring-edit", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = recurringEventEditSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_recurring_edit", details: parsed.error.issues });
+    }
+    const sourceEventID = (request.params as { id: string }).id.toLowerCase();
+    if (parsed.data.event.id.toLowerCase() !== sourceEventID) {
+      return reply.code(400).send({ error: "event_id_mismatch" });
+    }
+    const idempotencyKey = mutationIdempotencyKey(request, reply);
+    if (!idempotencyKey) return;
+    const {
+      alertLeadTimeMinutes,
+      recurrence,
+      recurrenceSeriesID,
+      ...eventData
+    } = parsed.data.event;
+    try {
+      return await eventMutations.recurringEdit({
+        account,
+        sourceEventID,
+        scope: parsed.data.scope,
+        occurrenceStart: new Date(parsed.data.occurrenceStart),
+        upserts: parsed.data.upserts.map(({
+          recurrence: plannedRecurrence,
+          recurrenceSeriesID: plannedSeriesID,
+          alertLeadTimeMinutes: plannedAlertLeadTime,
+          ...plannedEvent
+        }) => ({
+          ...plannedEvent,
+          familyID: account.familyID,
+          alertLeadTimeMinutes: plannedAlertLeadTime ?? null,
+          ...(plannedRecurrence !== undefined ? { recurrence: plannedRecurrence } : {}),
+          ...(plannedSeriesID !== undefined ? { recurrenceSeriesID: plannedSeriesID } : {}),
+        })),
+        deleteIDs: parsed.data.deleteIDs,
+        affectedEventIDs: parsed.data.affectedEventIDs,
+        affectedSourceEventIDs: parsed.data.affectedSourceEventIDs,
+        baseSeriesEvents: parsed.data.baseSeriesEvents.map(({
+          recurrence: baseRecurrence,
+          recurrenceSeriesID: baseSeriesID,
+          alertLeadTimeMinutes: baseAlertLeadTime,
+          ...baseEvent
+        }) => ({
+          ...baseEvent,
+          familyID: account.familyID,
+          alertLeadTimeMinutes: baseAlertLeadTime ?? null,
+          ...(baseRecurrence !== undefined ? { recurrence: baseRecurrence } : {}),
+          ...(baseSeriesID !== undefined ? { recurrenceSeriesID: baseSeriesID } : {}),
+        })),
+        idempotencyKey,
+        notifyParticipants: parsed.data.notifyParticipants,
+        edited: {
+          ...eventData,
+          id: sourceEventID,
+          familyID: account.familyID,
+          alertLeadTimeMinutes: alertLeadTimeMinutes ?? null,
+          ...(recurrenceSeriesID !== undefined ? { recurrenceSeriesID } : {}),
           ...(recurrence !== undefined ? { recurrence } : {}),
         },
       });

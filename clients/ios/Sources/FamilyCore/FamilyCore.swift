@@ -66,12 +66,13 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var status: EventStatus
     public var alertLeadTime: EventAlertLeadTime?
     public var recurrence: EventRecurrence?
+    public var recurrenceSeriesID: UUID?
     public var isReadOnly: Bool
     public var provenance: [EventProvenance]
 
     private enum CodingKeys: String, CodingKey {
         case id, title, kidID, participantIDs, startTime, endTime, location
-        case driver, driverMemberID, source, status, recurrence, provenance
+        case driver, driverMemberID, source, status, recurrence, recurrenceSeriesID, provenance
         case alertLeadTime = "alertLeadTimeMinutes"
         case isReadOnly = "readOnly"
     }
@@ -90,6 +91,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         status: EventStatus,
         alertLeadTime: EventAlertLeadTime? = .atStart,
         recurrence: EventRecurrence? = nil,
+        recurrenceSeriesID: UUID? = nil,
         isReadOnly: Bool = false,
         provenance: [EventProvenance] = []
     ) {
@@ -106,6 +108,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.status = status
         self.alertLeadTime = alertLeadTime
         self.recurrence = recurrence
+        self.recurrenceSeriesID = recurrenceSeriesID ?? (recurrence == nil ? nil : id)
         self.isReadOnly = isReadOnly
         self.provenance = provenance
     }
@@ -125,6 +128,8 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         status = try container.decode(EventStatus.self, forKey: .status)
         alertLeadTime = try container.decodeIfPresent(EventAlertLeadTime.self, forKey: .alertLeadTime)
         recurrence = try container.decodeIfPresent(EventRecurrence.self, forKey: .recurrence)
+        recurrenceSeriesID = try container.decodeIfPresent(UUID.self, forKey: .recurrenceSeriesID)
+            ?? (recurrence == nil ? nil : id)
         isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
         provenance = try container.decodeIfPresent([EventProvenance].self, forKey: .provenance) ?? []
     }
@@ -134,8 +139,8 @@ public enum EventValidationError: Error, Equatable, Sendable {
     case endTimeMustFollowStartTime
 }
 
-public struct EventConflict: Equatable, Sendable {
-    public enum Kind: Equatable, Sendable {
+public struct EventConflict: Codable, Equatable, Sendable {
+    public enum Kind: Codable, Equatable, Sendable {
         case overlappingKidActivity(KidID)
         case overlappingParticipantActivity(KidID)
         case doubleBookedDriver(String)
@@ -158,7 +163,7 @@ public enum ScheduleUpdateNotificationOutcome: String, Codable, Equatable, Senda
     case notRequested
 }
 
-public struct EventMutationResult: Equatable, Sendable {
+public struct EventMutationResult: Codable, Equatable, Sendable {
     public let conflicts: [EventConflict]
     public let notificationOutcome: ScheduleUpdateNotificationOutcome
 
@@ -203,6 +208,12 @@ public protocol EventStore: Sendable {
         idempotencyKey: UUID
     ) async throws -> EventMutationResult
     func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws
+    @discardableResult
+    func updateRecurringEvent(
+        _ edit: RecurringEventEdit,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult
     func loadEvents() async throws -> EventSnapshot
     func clearCache() async throws
 }
@@ -229,7 +240,13 @@ public extension EventStore {
 }
 
 public actor LocalEventStore: EventStore {
+    private struct StoredDocument: Codable {
+        let events: [FamilyEvent]
+        let recurringMutationResults: [UUID: EventMutationResult]
+    }
+
     private let storageURL: URL
+    private var recurringMutationResults: [UUID: EventMutationResult] = [:]
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -268,6 +285,68 @@ public actor LocalEventStore: EventStore {
         try write(savedEvents)
     }
 
+    @discardableResult
+    public func updateRecurringEvent(
+        _ edit: RecurringEventEdit,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
+        var savedEvents = try storedEvents()
+        if let previous = recurringMutationResults[idempotencyKey] { return previous }
+        guard edit.editedEvent.endTime > edit.editedEvent.startTime else {
+            throw EventValidationError.endTimeMustFollowStartTime
+        }
+        guard let source = savedEvents.first(where: { $0.id == edit.sourceEventID }) else {
+            throw RecurringEventEditError.occurrenceNotInSeries
+        }
+        let seriesID = source.recurrenceSeriesID ?? source.id
+        let seriesRows = savedEvents.filter {
+            ($0.recurrenceSeriesID ?? ($0.recurrence == nil ? nil : $0.id)) == seriesID
+        }
+        var generatedIDIndex = 0
+        let plan = try RecurringEventEditPlanner.planSeries(
+            edit: edit,
+            seriesRows: seriesRows,
+            makeID: {
+                defer { generatedIDIndex += 1 }
+                return RecurringEventEditPlanner.mutationID(
+                    idempotencyKey,
+                    index: generatedIDIndex
+                )
+            }
+        )
+        let replacementIDs = Set(plan.upserts.map(\.id)).union(plan.deleteIDs)
+        savedEvents.removeAll { replacementIDs.contains($0.id) }
+        savedEvents.append(contentsOf: plan.upserts)
+        let conflicts = plan.affectedEvents.flatMap { affected in
+            self.conflicts(
+                for: affected,
+                against: savedEvents.filter {
+                    $0.id != affected.id && $0.recurrenceSeriesID != seriesID
+                }
+            )
+        }
+        let uniqueConflicts = conflicts.reduce(into: [EventConflict]()) { result, conflict in
+            if !result.contains(conflict) { result.append(conflict) }
+        }
+        let result = EventMutationResult(
+            conflicts: uniqueConflicts,
+            notificationOutcome: notifyParticipants ? .noRecipients : .notRequested
+        )
+        if recurringMutationResults.count >= 256,
+           let discardedKey = recurringMutationResults.keys.first {
+            recurringMutationResults.removeValue(forKey: discardedKey)
+        }
+        recurringMutationResults[idempotencyKey] = result
+        do {
+            try write(savedEvents)
+        } catch {
+            recurringMutationResults.removeValue(forKey: idempotencyKey)
+            throw error
+        }
+        return result
+    }
+
     public func loadEvents() async throws -> EventSnapshot {
         EventSnapshot(events: try storedEvents(), freshness: .fresh)
     }
@@ -276,8 +355,12 @@ public actor LocalEventStore: EventStore {
         guard FileManager.default.fileExists(atPath: storageURL.path) else {
             return []
         }
-
-        return try decoder.decode([FamilyEvent].self, from: Data(contentsOf: storageURL))
+        let data = try Data(contentsOf: storageURL)
+        if let document = try? decoder.decode(StoredDocument.self, from: data) {
+            recurringMutationResults = document.recurringMutationResults
+            return document.events
+        }
+        return try decoder.decode([FamilyEvent].self, from: data)
     }
 
     private func conflicts(for event: FamilyEvent, against savedEvents: [FamilyEvent]) -> [EventConflict] {
@@ -338,6 +421,9 @@ public actor LocalEventStore: EventStore {
             at: storageURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try encoder.encode(events).write(to: storageURL, options: .atomic)
+        try encoder.encode(StoredDocument(
+            events: events,
+            recurringMutationResults: recurringMutationResults
+        )).write(to: storageURL, options: .atomic)
     }
 }

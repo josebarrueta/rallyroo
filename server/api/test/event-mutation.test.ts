@@ -3,6 +3,7 @@ import { EventMutationError, EventMutationModule } from "../src/event-mutation.j
 import { InMemoryRallyrooRepository } from "../src/in-memory-repository.js";
 import { ScheduleUpdateNotificationDispatcher } from "../src/schedule-update-notification-dispatcher.js";
 import type { Account, FamilyEvent } from "../src/domain.js";
+import { eventOccurrenceStarts } from "../src/event-recurrence.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
 import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
 
@@ -182,6 +183,205 @@ describe("EventMutationModule", () => {
     });
     expect(await notificationCenter.list({ ...account, memberID: "kid-1", role: "kid" }))
       .toHaveLength(1);
+  });
+
+  it("atomically applies a recurring scope and notifies the newly assigned driver once", async () => {
+    const persistence = repository();
+    await persistence.saveMember({
+      id: "parent-2", familyID: "family-1", name: "Sam", role: "parent", colorTag: "green",
+    });
+    await persistence.saveDeviceToken("family-1", "kid-1", "kid-token");
+    const inboxRepository = new InMemoryNotificationCenterRepository();
+    const notificationCenter = new NotificationCenterModule(inboxRepository);
+    const module = new EventMutationModule({ persistence, importedEvents, notificationCenter });
+    const source: FamilyEvent = {
+      ...event,
+      startTime: "2026-09-08T16:00:00.000Z",
+      endTime: "2026-09-08T17:00:00.000Z",
+      driverMemberID: "parent-1",
+      recurrenceSeriesID: event.id,
+      recurrence: {
+        frequency: "weekly", interval: 1, weekdays: [2, 4], endDate: "2026-12-31T16:00:00.000Z",
+      },
+    };
+    await module.save({
+      account, event: source, idempotencyKey: "recurring-source", notifyParticipants: false,
+    });
+    const edited: FamilyEvent = {
+      ...source,
+      title: "Thursday carpool",
+      startTime: "2026-09-10T16:00:00.000Z",
+      endTime: "2026-09-10T16:45:00.000Z",
+      driverMemberID: "parent-2",
+      alertLeadTimeMinutes: 45,
+    };
+    const tuesdayRowID = "20000000-0000-4000-8000-000000000010";
+    const thursdayRowID = "20000000-0000-4000-8000-000000000011";
+    const input = {
+      account,
+      sourceEventID: source.id,
+      edited,
+      scope: "thisWeekdayAndFuture" as const,
+      occurrenceStart: new Date("2026-09-10T16:00:00.000Z"),
+      upserts: [
+        {
+          ...source,
+          recurrenceSeriesID: source.id,
+          recurrence: { ...source.recurrence!, endDate: "2026-09-10T15:59:59.999Z" },
+        },
+        {
+          ...source,
+          id: tuesdayRowID,
+          recurrenceSeriesID: source.id,
+          startTime: "2026-09-15T16:00:00.000Z",
+          endTime: "2026-09-15T17:00:00.000Z",
+          recurrence: { ...source.recurrence!, weekdays: [2 as const] },
+        },
+        {
+          ...edited,
+          id: thursdayRowID,
+          recurrenceSeriesID: source.id,
+          recurrence: { ...source.recurrence!, weekdays: [4 as const] },
+        },
+      ],
+      deleteIDs: [],
+      affectedEventIDs: [thursdayRowID],
+      affectedSourceEventIDs: [source.id],
+      baseSeriesEvents: [source],
+      idempotencyKey: "recurring-edit",
+      notifyParticipants: true,
+    };
+
+    const result = await module.recurringEdit(input);
+    await module.recurringEdit(input);
+
+    expect(result).toEqual({ conflicts: [], notificationOutcome: "queuedForRetry" });
+    expect(await persistence.familyChangeVersion("family-1")).toBe(2);
+    expect((await persistence.eventsForFamily("family-1")).map((item) => item.title)).toContain("Thursday carpool");
+    expect(await notificationCenter.list({ ...account, memberID: "parent-2" })).toEqual([
+      expect.objectContaining({
+        kind: "driver_assignment",
+        destination: { kind: "event", id: expect.any(String) },
+      }),
+    ]);
+    const deliveredBodies: string[] = [];
+    const scheduleDispatcher = new ScheduleUpdateNotificationDispatcher({
+      persistence,
+      recipients: persistence,
+      pushNotificationProvider: {
+        async send(_tokens, notification) { deliveredBodies.push(notification.body); },
+      },
+    });
+    expect(await scheduleDispatcher.dispatchDue()).toEqual(["sent"]);
+    expect(deliveredBodies).toEqual(["Your family schedule was updated."]);
+    expect(await scheduleDispatcher.dispatchDue()).toEqual([]);
+
+    let splitRows = await persistence.eventsForFamily("family-1");
+    const initialThursdayRow = splitRows.find((item) => item.id === thursdayRowID)!;
+    const { recurrenceSeriesID: _legacyOmittedSeriesID, ...legacyThursdayEdit } = initialThursdayRow;
+    await module.save({
+      account,
+      event: legacyThursdayEdit,
+      idempotencyKey: "legacy-split-row-edit",
+      notifyParticipants: false,
+    });
+    splitRows = await persistence.eventsForFamily("family-1");
+    const tuesdayRow = splitRows.find((item) => item.id === tuesdayRowID)!;
+    const thursdayRow = splitRows.find((item) => item.id === thursdayRowID)!;
+    expect(thursdayRow.recurrenceSeriesID).toBe(source.id);
+    const allFutureEdited = {
+      ...thursdayRow,
+      title: "All future carpool",
+      startTime: "2026-09-17T16:00:00.000Z",
+      endTime: "2026-09-17T16:45:00.000Z",
+    };
+    const futureTuesdayID = "20000000-0000-4000-8000-000000000012";
+    const futureThursdayID = "20000000-0000-4000-8000-000000000013";
+    await module.recurringEdit({
+      account,
+      sourceEventID: thursdayRow.id,
+      edited: allFutureEdited,
+      scope: "allFuture",
+      occurrenceStart: new Date("2026-09-17T16:00:00.000Z"),
+      upserts: [
+        {
+          ...tuesdayRow,
+          recurrence: { ...tuesdayRow.recurrence!, endDate: "2026-09-22T15:59:59.999Z" },
+        },
+        {
+          ...allFutureEdited,
+          id: futureTuesdayID,
+          startTime: "2026-09-22T16:00:00.000Z",
+          endTime: "2026-09-22T16:45:00.000Z",
+          recurrence: { ...tuesdayRow.recurrence!, weekdays: [2 as const] },
+        },
+        {
+          ...thursdayRow,
+          recurrence: { ...thursdayRow.recurrence!, endDate: "2026-09-17T15:59:59.999Z" },
+        },
+        {
+          ...allFutureEdited,
+          id: futureThursdayID,
+          recurrence: { ...thursdayRow.recurrence!, weekdays: [4 as const] },
+        },
+      ],
+      deleteIDs: [],
+      affectedEventIDs: [futureTuesdayID, futureThursdayID],
+      affectedSourceEventIDs: [tuesdayRowID, thursdayRowID],
+      baseSeriesEvents: splitRows,
+      idempotencyKey: "recurring-edit-all-future",
+      notifyParticipants: false,
+    });
+    const finalRows = (await persistence.eventsForFamily("family-1"))
+      .filter((item) => item.recurrenceSeriesID === source.id);
+    const occurrenceTitle = (start: string) => finalRows.find((item) =>
+      eventOccurrenceStarts(item, new Date("2026-10-01T23:59:59.000Z"))
+        .some((date) => date.toISOString() === start)
+    )?.title;
+    expect(occurrenceTitle("2026-09-15T16:00:00.000Z")).toBe("Soccer practice");
+    expect(occurrenceTitle("2026-09-17T16:00:00.000Z")).toBe("All future carpool");
+    expect(occurrenceTitle("2026-09-22T16:00:00.000Z")).toBe("All future carpool");
+    expect(occurrenceTitle("2026-09-24T16:00:00.000Z")).toBe("All future carpool");
+    expect(await persistence.familyChangeVersion("family-1")).toBe(4);
+  });
+
+  it("rejects a concrete recurring plan that would rewrite a past row", async () => {
+    const persistence = repository();
+    const module = new EventMutationModule({ persistence, importedEvents });
+    const source: FamilyEvent = {
+      ...event,
+      recurrenceSeriesID: event.id,
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [2],
+        endDate: "2026-12-31T16:00:00.000Z",
+      },
+    };
+    await module.save({
+      account, event: source, idempotencyKey: "past-plan-source", notifyParticipants: false,
+    });
+    const tampered = {
+      ...source,
+      title: "Rewritten past",
+      recurrenceSeriesID: source.id,
+    };
+
+    await expect(module.recurringEdit({
+      account,
+      sourceEventID: source.id,
+      edited: tampered,
+      scope: "allFuture",
+      occurrenceStart: new Date("2026-09-15T16:00:00.000Z"),
+      upserts: [tampered],
+      deleteIDs: [],
+      affectedEventIDs: [source.id],
+      affectedSourceEventIDs: [source.id],
+      baseSeriesEvents: [source],
+      idempotencyKey: "tampered-past-plan",
+      notifyParticipants: false,
+    })).rejects.toEqual(new EventMutationError("invalid_recurring_edit", 409));
+    expect(await persistence.familyChangeVersion("family-1")).toBe(1);
   });
 
   it("detects a double-booked driver by stable member identity", async () => {

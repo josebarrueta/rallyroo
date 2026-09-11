@@ -80,12 +80,25 @@ public actor RemoteEventStore: EventStore {
         let events: [FamilyEvent]
     }
 
+    private struct RecurringEditRequest: Codable {
+        let event: FamilyEvent
+        let scope: EventEditScope
+        let occurrenceStart: Date
+        let upserts: [FamilyEvent]
+        let deleteIDs: [UUID]
+        let affectedEventIDs: [UUID]
+        let affectedSourceEventIDs: [UUID]
+        let baseSeriesEvents: [FamilyEvent]
+        let notifyParticipants: Bool
+    }
+
     private let eventsURL: URL
     private let transport: any HTTPTransport
     private let cacheURL: URL?
     private let accountID: @Sendable () async throws -> String?
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private var recurringEditRequests: [UUID: RecurringEditRequest] = [:]
 
     public init(
         baseURL: URL,
@@ -157,6 +170,79 @@ public actor RemoteEventStore: EventStore {
         )
     }
 
+    public func updateRecurringEvent(
+        _ edit: RecurringEventEdit,
+        notifyParticipants: Bool,
+        idempotencyKey: UUID
+    ) async throws -> EventMutationResult {
+        let requestBody: RecurringEditRequest
+        if let pending = recurringEditRequests[idempotencyKey] {
+            requestBody = pending
+        } else {
+            let events = try await loadEvents().events
+            guard let source = events.first(where: { $0.id == edit.sourceEventID }) else {
+                throw RecurringEventEditError.occurrenceNotInSeries
+            }
+            let seriesID = source.recurrenceSeriesID ?? source.id
+            let seriesRows = events.filter {
+                ($0.recurrenceSeriesID ?? ($0.recurrence == nil ? nil : $0.id)) == seriesID
+            }
+            var generatedIDIndex = 0
+            let plan = try RecurringEventEditPlanner.planSeries(
+                edit: edit,
+                seriesRows: seriesRows,
+                makeID: {
+                    defer { generatedIDIndex += 1 }
+                    return RecurringEventEditPlanner.mutationID(
+                        idempotencyKey,
+                        index: generatedIDIndex
+                    )
+                }
+            )
+            requestBody = RecurringEditRequest(
+                event: edit.editedEvent,
+                scope: edit.scope,
+                occurrenceStart: edit.occurrenceStart,
+                upserts: plan.upserts,
+                deleteIDs: plan.deleteIDs,
+                affectedEventIDs: plan.affectedEvents.map(\.id),
+                affectedSourceEventIDs: plan.affectedSourceEventIDs,
+                baseSeriesEvents: seriesRows,
+                notifyParticipants: notifyParticipants
+            )
+            if recurringEditRequests.count >= 128,
+               let discardedKey = recurringEditRequests.keys.first {
+                recurringEditRequests.removeValue(forKey: discardedKey)
+            }
+            recurringEditRequests[idempotencyKey] = requestBody
+        }
+        let url = eventsURL
+            .appending(path: edit.sourceEventID.uuidString)
+            .appending(path: "recurring-edit")
+        let response = try await transport.send(HTTPRequest(
+            method: .post,
+            url: url,
+            headers: [
+                "Content-Type": "application/json",
+                "Idempotency-Key": idempotencyKey.uuidString.lowercased(),
+            ],
+            body: try encoder.encode(requestBody)
+        ))
+        do {
+            try response.requireSuccess()
+        } catch {
+            if [400, 404, 409].contains(response.statusCode) {
+                recurringEditRequests.removeValue(forKey: idempotencyKey)
+            }
+            throw error
+        }
+        let payload = try decoder.decode(SaveResponse.self, from: response.body)
+        return EventMutationResult(
+            conflicts: payload.conflicts.compactMap(\.eventConflict),
+            notificationOutcome: payload.notificationOutcome ?? .notRequested
+        )
+    }
+
     public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {
         let response = try await transport.send(HTTPRequest(
             method: .delete,
@@ -167,6 +253,7 @@ public actor RemoteEventStore: EventStore {
     }
 
     public func clearCache() async throws {
+        recurringEditRequests.removeAll()
         guard let cacheURL, FileManager.default.fileExists(atPath: cacheURL.path) else { return }
         try FileManager.default.removeItem(at: cacheURL)
     }

@@ -13,7 +13,12 @@ export interface EventMutationResult {
 
 export interface StoredEventMutationResult extends EventMutationResult {
   notificationID?: string;
-  driverChanges?: Array<{ memberID: string; change: "assigned" | "removed" }>;
+  driverChanges?: Array<{
+    memberID: string;
+    change: "assigned" | "removed";
+    eventID?: string;
+    eventTitle?: string;
+  }>;
 }
 
 export interface EventMutationSnapshot {
@@ -30,7 +35,10 @@ export interface ScheduleUpdateNotificationIntent {
 }
 
 export interface EventMutationPlan {
-  action: { kind: "save"; event: FamilyEvent } | { kind: "delete"; eventID: string };
+  action:
+    | { kind: "save"; event: FamilyEvent }
+    | { kind: "delete"; eventID: string }
+    | { kind: "replaceRecurringSeries"; events: FamilyEvent[]; deleteIDs: string[] };
   result: StoredEventMutationResult;
   notification?: ScheduleUpdateNotificationIntent;
 }
