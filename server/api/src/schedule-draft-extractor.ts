@@ -19,8 +19,13 @@ export const scheduleDraftSchema = z.object({
       context.addIssue({ code: "custom", message: "event requires a valid time range" });
     }
   }
-  if (draft.kind === "reminder" && draft.clarification === null && !draft.dueAt) {
-    context.addIssue({ code: "custom", message: "reminder requires a due time" });
+  if (draft.kind === "reminder") {
+    if (draft.clarification === null && !draft.dueAt) {
+      context.addIssue({ code: "custom", message: "reminder requires a due time" });
+    }
+    if (draft.alertLeadTimeMinutes === 30 || draft.alertLeadTimeMinutes === 45) {
+      context.addIssue({ code: "custom", message: "30 and 45 minute alerts are Event-only" });
+    }
   }
 });
 

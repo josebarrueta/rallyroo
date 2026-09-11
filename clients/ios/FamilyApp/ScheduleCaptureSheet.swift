@@ -93,8 +93,10 @@ struct ScheduleCaptureSheet: View {
                                     Text(draft.kind == .event ? "At start" : "At due time").tag(Int?.some(0))
                                     Text("5 minutes before").tag(Int?.some(5))
                                     Text("15 minutes before").tag(Int?.some(15))
-                                    Text("30 minutes before").tag(Int?.some(30))
-                                    Text("45 minutes before").tag(Int?.some(45))
+                                    if draft.kind == .event {
+                                        Text("30 minutes before").tag(Int?.some(30))
+                                        Text("45 minutes before").tag(Int?.some(45))
+                                    }
                                     Text("1 hour before").tag(Int?.some(60))
                                     Text("1 day before").tag(Int?.some(1_440))
                                 }

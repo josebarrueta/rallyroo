@@ -73,7 +73,7 @@ export interface FamilyReminder {
   status: "open" | "completed";
   completedAt: string | null;
   completedByMemberID: string | null;
-  alertLeadTimeMinutes: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
+  alertLeadTimeMinutes: 0 | 5 | 15 | 60 | 1440 | null;
   createdByMemberID: string;
 }
 
