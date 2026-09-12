@@ -2161,8 +2161,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const result = await this.pool.query(
       `WITH expired AS (
          SELECT id FROM member_notification_inbox
-         WHERE (deleted_at IS NOT NULL AND deleted_at < $1 - interval '30 days')
-            OR occurred_at < $1 - interval '180 days'
+         WHERE (deleted_at IS NOT NULL AND deleted_at < $1::timestamptz - interval '30 days')
+            OR occurred_at < $1::timestamptz - interval '180 days'
          ORDER BY COALESCE(deleted_at, occurred_at), id LIMIT $2
        )
        DELETE FROM member_notification_inbox i USING expired

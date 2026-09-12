@@ -202,6 +202,31 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
   });
 
+  it("prunes member inbox records after the retention window", async () => {
+    const repository = repositoryForTest();
+    const app = buildApp({ identityProvider, repository });
+    await app.inject({
+      method: "POST", url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    await app.close();
+    const account = await repository.accountForIdentity("integration-parent");
+    const center = new NotificationCenterModule(repository);
+    const [expired] = await center.record({
+      familyID: account!.familyID,
+      recipientMemberIDs: [account!.memberID],
+      kind: "schedule_update",
+      deduplicationKey: "expired-event:update-1",
+      title: "Expired update",
+      body: "This update is outside the retention window.",
+      destination: { kind: "event", id: "expired-event" },
+      occurredAt: new Date("2030-01-01T00:00:00Z"),
+    });
+
+    expect(await center.prune(new Date("2030-07-01T00:00:01Z"))).toBe(1);
+    expect((await center.list(account!)).map((record) => record.id)).not.toContain(expired!.id);
+  });
+
   it("persists encrypted Commuter state and durable alert deduplication", async () => {
     const writerRepository = repositoryForTest();
     const app = buildApp({
@@ -420,9 +445,16 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         driver: null,
         source: "manual",
         status: "confirmed",
+        alertLeadTimeMinutes: 30,
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          weekdays: [2],
+          endDate: "2027-03-01T18:00:00Z",
+        },
       },
     });
-    expect(saved.statusCode).toBe(200);
+    expect(saved.statusCode, saved.body).toBe(200);
     await writer.close();
 
     const readerRepository = repositoryForTest();
@@ -439,7 +471,12 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     });
     expect(events.statusCode).toBe(200);
     expect(events.json()).toEqual([
-      expect.objectContaining({ id: "00000000-0000-4000-8000-000000000099", title: "Integration rehearsal" }),
+      expect.objectContaining({
+        id: "00000000-0000-4000-8000-000000000099",
+        title: "Integration rehearsal",
+        alertLeadTimeMinutes: 30,
+        recurrence: expect.objectContaining({ frequency: "weekly", weekdays: [2] }),
+      }),
     ]);
 
     const inspectionPool = new Pool({ connectionString: databaseURL });

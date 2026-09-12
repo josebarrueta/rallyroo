@@ -315,27 +315,38 @@ struct WeeklyScheduleView: View {
                         if dayEvents.isEmpty {
                             Text("No activities").foregroundStyle(.secondary)
                         } else {
-                            ForEach(dayEvents) { occurrence in
-                                EventRow(
-                                    display: ScheduleEventDisplay(
-                                        event: occurrence.event,
-                                        members: viewModel.members
-                                    )
-                                )
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    if allowsEditing && !viewModel.isShowingCachedEvents {
-                                        if occurrence.sourceEvent.isReadOnly,
-                                           calendarSourceStore != nil {
-                                            linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
-                                        } else {
-                                            editingOccurrence = occurrence
-                                        }
+                            ForEach(ScheduleOverlapCluster.make(from: dayEvents)) { cluster in
+                                if cluster.items.count == 1, let occurrence = cluster.items.first?.occurrence {
+                                    eventRow(for: occurrence)
+                                } else {
+                                    OverlapTimeline(cluster: cluster) { occurrence in
+                                        eventRow(for: occurrence, compact: true)
                                     }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func eventRow(for occurrence: EventOccurrence, compact: Bool = false) -> some View {
+        EventRow(
+            display: ScheduleEventDisplay(
+                event: occurrence.event,
+                members: viewModel.members
+            ),
+            compact: compact
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if allowsEditing && !viewModel.isShowingCachedEvents {
+                if occurrence.sourceEvent.isReadOnly, calendarSourceStore != nil {
+                    linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
+                } else {
+                    editingOccurrence = occurrence
                 }
             }
         }
@@ -415,11 +426,117 @@ private extension Sequence where Element: Hashable {
     }
 }
 
-private struct EventRow: View {
-    let display: ScheduleEventDisplay
+private struct ScheduleOverlapCluster: Identifiable {
+    struct Item: Identifiable {
+        let occurrence: EventOccurrence
+        let lane: Int
+        var id: String { occurrence.id }
+    }
+
+    let id: String
+    let items: [Item]
+    let start: Date
+    let end: Date
+    let laneCount: Int
+    let pointsPerMinute: CGFloat
+
+    var height: CGFloat {
+        max(78, CGFloat(end.timeIntervalSince(start) / 60) * pointsPerMinute)
+    }
+
+    static func make(from occurrences: [EventOccurrence]) -> [Self] {
+        let sorted = occurrences.sorted { $0.event.startTime < $1.event.startTime }
+        var groups: [[EventOccurrence]] = []
+        var current: [EventOccurrence] = []
+        var currentEnd = Date.distantPast
+        for occurrence in sorted {
+            if !current.isEmpty, occurrence.event.startTime >= currentEnd {
+                groups.append(current)
+                current = []
+                currentEnd = .distantPast
+            }
+            current.append(occurrence)
+            currentEnd = max(currentEnd, occurrence.event.endTime)
+        }
+        if !current.isEmpty { groups.append(current) }
+        return groups.map(makeCluster)
+    }
+
+    private static func makeCluster(_ occurrences: [EventOccurrence]) -> Self {
+        var laneEnds: [Date] = []
+        var assignments: [(EventOccurrence, Int)] = []
+        for occurrence in occurrences {
+            let lane = laneEnds.firstIndex { $0 <= occurrence.event.startTime } ?? laneEnds.count
+            if lane == laneEnds.count {
+                laneEnds.append(occurrence.event.endTime)
+            } else {
+                laneEnds[lane] = occurrence.event.endTime
+            }
+            assignments.append((occurrence, lane))
+        }
+        let start = occurrences.map(\.event.startTime).min()!
+        let end = occurrences.map(\.event.endTime).max()!
+        let shortestMinutes = occurrences
+            .map { max(1, $0.event.endTime.timeIntervalSince($0.event.startTime) / 60) }
+            .min()!
+        let scale = max(1.2, 78 / CGFloat(shortestMinutes))
+        return Self(
+            id: occurrences[0].id,
+            items: assignments.map { Item(occurrence: $0.0, lane: $0.1) },
+            start: start,
+            end: end,
+            laneCount: laneEnds.count,
+            pointsPerMinute: scale
+        )
+    }
+}
+
+private struct OverlapTimeline<Content: View>: View {
+    let cluster: ScheduleOverlapCluster
+    @ViewBuilder let content: (EventOccurrence) -> Content
 
     var body: some View {
-        HStack(spacing: 12) {
+        GeometryReader { geometry in
+            let spacing: CGFloat = 6
+            let laneWidth = (geometry.size.width - spacing * CGFloat(cluster.laneCount - 1))
+                / CGFloat(cluster.laneCount)
+            ZStack(alignment: .topLeading) {
+                ForEach(cluster.items) { item in
+                    let offsetMinutes = item.occurrence.event.startTime.timeIntervalSince(cluster.start) / 60
+                    let durationMinutes = item.occurrence.event.endTime
+                        .timeIntervalSince(item.occurrence.event.startTime) / 60
+                    content(item.occurrence)
+                        .padding(8)
+                        .frame(
+                            width: laneWidth,
+                            height: CGFloat(durationMinutes) * cluster.pointsPerMinute,
+                            alignment: .topLeading
+                        )
+                        .background(
+                            Color.secondary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                        )
+                        .offset(
+                            x: CGFloat(item.lane) * (laneWidth + spacing),
+                            y: CGFloat(offsetMinutes) * cluster.pointsPerMinute
+                        )
+                }
+            }
+        }
+        .frame(height: cluster.height)
+    }
+}
+
+private struct EventRow: View {
+    let display: ScheduleEventDisplay
+    var compact = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: compact ? 7 : 12) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color(familyColorTag: display.primaryColorTag))
                 .frame(width: 5)
@@ -430,10 +547,10 @@ private struct EventRow: View {
                         .font(.subheadline)
                         .foregroundStyle(Color(familyColorTag: display.primaryColorTag))
                 }
-                Text(display.event.startTime.formatted(date: .omitted, time: .shortened))
-                    .font(.subheadline)
+                Text(timeRange)
+                    .font(compact ? .caption : .subheadline)
                     .foregroundStyle(.secondary)
-                if display.event.isReadOnly {
+                if !compact && display.event.isReadOnly {
                     Label(
                         display.event.provenance.map(\.sourceName).uniqued().joined(separator: " • "),
                         systemImage: "calendar.badge.clock"
@@ -441,7 +558,7 @@ private struct EventRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
-                if let location = display.event.location, !location.isEmpty {
+                if !compact, let location = display.event.location, !location.isEmpty {
                     Label(location, systemImage: "mappin.and.ellipse")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -449,5 +566,11 @@ private struct EventRow: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var timeRange: String {
+        let start = display.event.startTime.formatted(date: .omitted, time: .shortened)
+        let end = display.event.endTime.formatted(date: .omitted, time: .shortened)
+        return "\(start)–\(end)"
     }
 }

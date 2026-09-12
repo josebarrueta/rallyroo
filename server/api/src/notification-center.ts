@@ -135,10 +135,11 @@ export class NotificationCenterModule {
           continue;
         }
         await this.pushNotificationProvider.send(tokens, {
-          title: "Rallyroo update",
-          body: "Open Rallyroo to review.",
+          title: claim.record.title,
+          body: claim.record.body,
           data: {
             notificationID: claim.record.id,
+            notificationKind: claim.record.kind,
             destinationKind: claim.record.destination.kind,
             destinationID: claim.record.destination.id,
           },

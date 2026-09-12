@@ -17,6 +17,8 @@ struct AddEventSheet: View {
     @State private var selectedParticipantIDs: Set<KidID>
     @State private var startTime: Date
     @State private var endTime: Date
+    @State private var endMode: EventEndMode
+    @State private var durationMinutes: Int
     @State private var alertChoice: EventAlertChoice
     @State private var location: String
     @State private var driverChoice: EventDriverChoice
@@ -63,8 +65,15 @@ struct AddEventSheet: View {
         _selectedParticipantIDs = State(initialValue: Set(
             event?.participantIDs ?? event?.kidID.map { [$0] } ?? prefill?.participantIDs ?? []
         ))
-        _startTime = State(initialValue: event?.startTime ?? .now)
-        _endTime = State(initialValue: event?.endTime ?? .now.addingTimeInterval(60 * 60))
+        let initialStartTime = event?.startTime ?? .now
+        let initialEndTime = event?.endTime ?? initialStartTime.addingTimeInterval(60 * 60)
+        _startTime = State(initialValue: initialStartTime)
+        _endTime = State(initialValue: initialEndTime)
+        _endMode = State(initialValue: .duration)
+        _durationMinutes = State(initialValue: max(
+            15,
+            Int(initialEndTime.timeIntervalSince(initialStartTime) / 60)
+        ))
         _alertChoice = State(initialValue: event.map {
             EventAlertChoice(leadTime: $0.alertLeadTime)
         } ?? .atStart)
@@ -99,11 +108,29 @@ struct AddEventSheet: View {
                         selection: $startTime,
                         displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
                     )
-                    DatePicker(
-                        "Ends",
-                        selection: $endTime,
-                        displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
-                    )
+                    Picker("Event length", selection: $endMode) {
+                        ForEach(EventEndMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if endMode == .duration {
+                        Stepper(value: $durationMinutes, in: 15...(7 * 24 * 60), step: 15) {
+                            LabeledContent("Duration", value: formattedDuration)
+                        }
+                        LabeledContent(
+                            "Ends",
+                            value: endTime.formatted(date: .abbreviated, time: .shortened)
+                        )
+                    } else {
+                        DatePicker(
+                            "Ends",
+                            selection: $endTime,
+                            in: startTime.addingTimeInterval(60)...,
+                            displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                        )
+                    }
                     Picker("Alert", selection: $alertChoice) {
                         ForEach(EventAlertChoice.allCases) { choice in
                             Text(choice.title).tag(choice)
@@ -180,9 +207,25 @@ struct AddEventSheet: View {
             .navigationTitle(existingEvent == nil ? "Add Event" : "Edit Event")
             .onChange(of: startTime) { newStartTime in
                 recurrenceEndDate = min(max(recurrenceEndDate, newStartTime), latestRecurrenceEndDate)
+                if endMode == .duration || endTime <= newStartTime {
+                    endTime = newStartTime.addingTimeInterval(TimeInterval(durationMinutes * 60))
+                }
                 if repeatOption != .weekly && repeatOption != .biweekly {
                     selectedWeekdays = [Self.weekday(for: newStartTime)]
                 }
+            }
+            .onChange(of: durationMinutes) { minutes in
+                guard endMode == .duration else { return }
+                endTime = startTime.addingTimeInterval(TimeInterval(minutes * 60))
+            }
+            .onChange(of: endMode) { mode in
+                if mode == .duration {
+                    endTime = startTime.addingTimeInterval(TimeInterval(durationMinutes * 60))
+                }
+            }
+            .onChange(of: endTime) { newEndTime in
+                guard endMode == .endDate, newEndTime > startTime else { return }
+                durationMinutes = max(1, Int(newEndTime.timeIntervalSince(startTime) / 60))
             }
             .task(id: location) {
                 let query = location.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -394,6 +437,17 @@ struct AddEventSheet: View {
         )
     }
 
+    private var formattedDuration: String {
+        let days = durationMinutes / (24 * 60)
+        let hours = (durationMinutes % (24 * 60)) / 60
+        let minutes = durationMinutes % 60
+        return [
+            days > 0 ? "\(days)d" : nil,
+            hours > 0 ? "\(hours)h" : nil,
+            minutes > 0 ? "\(minutes)m" : nil,
+        ].compactMap { $0 }.joined(separator: " ")
+    }
+
     private var latestRecurrenceEndDate: Date {
         Calendar.autoupdatingCurrent.date(byAdding: .day, value: 732, to: startTime)!
     }
@@ -407,6 +461,14 @@ struct AddEventSheet: View {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
     }
+}
+
+private enum EventEndMode: String, CaseIterable, Identifiable {
+    case duration
+    case endDate
+
+    var id: String { rawValue }
+    var title: String { self == .duration ? "Duration" : "End time" }
 }
 
 private enum EventDriverChoice: Hashable {
