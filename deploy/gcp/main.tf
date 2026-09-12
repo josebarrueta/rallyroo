@@ -201,6 +201,9 @@ resource "google_compute_instance" "this" {
     enable-oslogin-2fa           = var.enable_os_login_2fa ? "TRUE" : "FALSE"
     serial-port-enable           = "FALSE"
     rallyroo-k3s-version         = var.k3s_version
+    rallyroo-k3s-cluster-cidr    = var.k3s_cluster_cidr
+    rallyroo-k3s-service-cidr    = var.k3s_service_cidr
+    rallyroo-k3s-cluster-dns     = var.k3s_cluster_dns
     rallyroo-helm-version        = var.helm_version
     rallyroo-flux-version        = var.flux_version
     rallyroo-cloudflared-version = var.cloudflared_version

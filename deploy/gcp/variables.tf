@@ -55,6 +55,24 @@ variable "subnet_cidr" {
   default     = "10.42.0.0/24"
 }
 
+variable "k3s_cluster_cidr" {
+  description = "Non-overlapping CIDR used for Kubernetes pods. Must not overlap subnet_cidr."
+  type        = string
+  default     = "10.244.0.0/16"
+}
+
+variable "k3s_service_cidr" {
+  description = "Non-overlapping CIDR used for Kubernetes services."
+  type        = string
+  default     = "10.96.0.0/16"
+}
+
+variable "k3s_cluster_dns" {
+  description = "CoreDNS service address contained by k3s_service_cidr."
+  type        = string
+  default     = "10.96.0.10"
+}
+
 variable "admin_members" {
   description = "IAM members allowed to open IAP tunnels and use OS Login as administrator (for example, user:name@example.com)."
   type        = set(string)
