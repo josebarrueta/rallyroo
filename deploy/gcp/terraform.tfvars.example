@@ -1,0 +1,17 @@
+# Use the immutable PROJECT_ID from `gcloud projects list`, not the display NAME.
+project_id = "project-id-from-gcloud"
+
+# Grant only named operators IAP and OS Login access.
+admin_members = [
+  "user:operator@example.com",
+]
+
+region = "us-central1"
+zone   = "us-central1-a"
+
+# Defaults provision 4 vCPU / 16 GiB and a separate 50 GiB data disk.
+# machine_type      = "e2-standard-4"
+# data_disk_size_gb = 50
+
+# Must be globally unique if the derived default is unavailable.
+# backup_bucket_name = "rallyroo-production-backups-example"
