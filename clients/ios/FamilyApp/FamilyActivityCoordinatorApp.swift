@@ -29,6 +29,12 @@ struct FamilyActivityCoordinatorApp: App {
     private let dataIsSynced: Bool
 
     init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RESET_STORAGE"] == "1" {
+            AppStorage.resetForUITesting()
+        }
+        #endif
+
         let configuration: AppConfiguration
         do {
             configuration = try AppConfiguration.load()
@@ -314,6 +320,20 @@ enum AppStorage {
         try? FileManager.default.removeItem(at: storageDirectory)
         UserDefaults.standard.set(true, forKey: resetKey)
     }
+
+    #if DEBUG
+    static func resetForUITesting() {
+        guard FileManager.default.fileExists(atPath: storageDirectory.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: storageDirectory)
+        } catch {
+            fatalError("Unable to reset UI test storage: \(error)")
+        }
+    }
+    #endif
 
     private static var storageDirectory: URL {
         FileManager.default.urls(

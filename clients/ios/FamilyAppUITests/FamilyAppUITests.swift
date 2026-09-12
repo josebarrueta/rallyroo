@@ -2,8 +2,14 @@ import XCTest
 
 @MainActor
 final class FamilyAppUITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        continueAfterFailure = false
+    }
+
     func testLoginDoesNotAskForAManualInvitationCode() {
         let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "remote"
         app.launchEnvironment["RALLYROO_REMOTE_BASE_URL"] = "http://127.0.0.1:3199"
         app.launch()
@@ -19,8 +25,7 @@ final class FamilyAppUITests: XCTestCase {
     }
 
     func testUserCanSignOutFromSettings() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
@@ -36,27 +41,45 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 5))
     }
 
-    func testNewEventDefaultsToAnAtStartAlert() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+    func testEventAlertAppearsOnlyAfterSelectingAParticipant() {
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.buttons["Add"].tap()
-
         XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["At start"].exists)
+        XCTAssertFalse(app.staticTexts["At start"].exists)
+        app.buttons["Cancel"].tap()
+
+        addFamilyMember(named: "Alert Participant", in: app)
+        app.buttons["Soccer Practice"].tap()
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts["At start"].waitForExistence(timeout: 2))
     }
 
-    func testSavingAnEventAsksSeparatelyAboutImmediateParticipantNotifications() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+    func testEventWithoutParticipantsSavesWithoutNotificationOptions() {
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.buttons["Add"].tap()
         app.textFields["Title"].tap()
-        app.textFields["Title"].typeText("Notification choice test")
+        app.textFields["Title"].typeText("No notification options")
+        app.buttons["Save"].tap()
+
+        XCTAssertFalse(app.alerts["Notify family?"].exists)
+        XCTAssertTrue(app.staticTexts["No notification options"].waitForExistence(timeout: 5))
+    }
+
+    func testSavingAnEventWithAParticipantAsksAboutImmediateNotifications() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        addFamilyMember(named: "Notification Participant", in: app)
+        app.buttons["Soccer Practice"].tap()
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
         app.buttons["Save"].tap()
 
         XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
@@ -65,8 +88,7 @@ final class FamilyAppUITests: XCTestCase {
     }
 
     func testEditingARecurringOccurrenceOffersAllThreeScopes() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
@@ -76,8 +98,6 @@ final class FamilyAppUITests: XCTestCase {
         app.staticTexts["Never"].tap()
         app.buttons["Weekly"].tap()
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
-        app.buttons["Save without notifying"].tap()
 
         let event = app.staticTexts["Recurring scope test"]
         XCTAssertTrue(event.waitForExistence(timeout: 5))
@@ -92,8 +112,7 @@ final class FamilyAppUITests: XCTestCase {
     }
 
     func testManualLocationRemainsSavableWhenSuggestionsAreUnavailable() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
@@ -110,16 +129,13 @@ final class FamilyAppUITests: XCTestCase {
         ]
         XCTAssertTrue(fallbackMessage.waitForExistence(timeout: 5))
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.alerts["Notify family?"].waitForExistence(timeout: 5))
-        app.buttons["Save without notifying"].tap()
 
         XCTAssertTrue(app.staticTexts["Location fallback test"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["123 Main Street"].exists)
     }
 
     func testParentCanCreateAndCompleteAReminderWithoutAnEndTime() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.tabBars.buttons["Reminders"].waitForExistence(timeout: 10))
@@ -152,8 +168,7 @@ final class FamilyAppUITests: XCTestCase {
     // Issue #3 regression: today must be the first visible schedule day, even
     // when it falls near the end of the calendar week.
     func testScheduleStartsAtToday() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
@@ -173,8 +188,7 @@ final class FamilyAppUITests: XCTestCase {
      }
 
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
-        let app = XCUIApplication()
-        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
@@ -187,5 +201,40 @@ final class FamilyAppUITests: XCTestCase {
         app.tabBars.buttons["Family"].tap()
         XCTAssertTrue(app.navigationBars["Family"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Your home team"].exists)
+    }
+
+    func testLocalUITestLaunchClearsPreviousTestData() {
+        let firstLaunch = localApp()
+        firstLaunch.launch()
+        XCTAssertTrue(firstLaunch.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        firstLaunch.buttons["Add"].tap()
+        firstLaunch.textFields["Title"].tap()
+        firstLaunch.textFields["Title"].typeText("Must not survive relaunch")
+        firstLaunch.buttons["Save"].tap()
+        XCTAssertTrue(firstLaunch.staticTexts["Must not survive relaunch"].waitForExistence(timeout: 5))
+        firstLaunch.terminate()
+
+        let secondLaunch = localApp()
+        secondLaunch.launch()
+        XCTAssertTrue(secondLaunch.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        XCTAssertFalse(secondLaunch.staticTexts["Must not survive relaunch"].exists)
+    }
+
+    private func addFamilyMember(named name: String, in app: XCUIApplication) {
+        app.tabBars.buttons["Family"].tap()
+        XCTAssertTrue(app.navigationBars["Family"].waitForExistence(timeout: 5))
+        app.navigationBars["Family"].buttons["Add"].tap()
+        XCTAssertTrue(app.navigationBars["Add Family Member"].waitForExistence(timeout: 5))
+        app.textFields["Name"].tap()
+        app.textFields["Name"].typeText(name)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 5))
+    }
+
+    private func localApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
+        return app
     }
 }
