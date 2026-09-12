@@ -9,6 +9,9 @@ metadata() {
 }
 
 K3S_VERSION=$(metadata rallyroo-k3s-version)
+K3S_CLUSTER_CIDR=$(metadata rallyroo-k3s-cluster-cidr)
+K3S_SERVICE_CIDR=$(metadata rallyroo-k3s-service-cidr)
+K3S_CLUSTER_DNS=$(metadata rallyroo-k3s-cluster-dns)
 HELM_VERSION=$(metadata rallyroo-helm-version)
 FLUX_VERSION=$(metadata rallyroo-flux-version)
 CLOUDFLARED_VERSION=$(metadata rallyroo-cloudflared-version)
@@ -53,7 +56,10 @@ grep -q "UUID=$DATA_UUID " /etc/fstab || \
   printf 'UUID=%s /var/local/rallyroo ext4 defaults,noatime,nofail 0 2\n' "$DATA_UUID" >>/etc/fstab
 install -d -m 0755 /var/local/rallyroo
 mountpoint -q /var/local/rallyroo || mount /var/local/rallyroo
-install -d -m 0770 /var/local/rallyroo/postgres /var/local/rallyroo/redis
+# The PostgreSQL Alpine image runs as UID/GID 70 after its root entrypoint.
+# Assign the host path explicitly because hostPath volumes do not correct it.
+install -d -o 70 -g 70 -m 0700 /var/local/rallyroo/postgres
+install -d -m 0770 /var/local/rallyroo/redis
 install -d -m 0700 /etc/rallyroo
 printf 'RALLYROO_BACKUP_BUCKET=%q\n' "$BACKUP_BUCKET" >/etc/rallyroo/environment
 chmod 0600 /etc/rallyroo/environment
@@ -78,7 +84,7 @@ install_k3s() {
 if ! /usr/local/bin/k3s --version 2>/dev/null | head -1 | grep -Fq "$K3S_VERSION"; then
   install_k3s
 fi
-cat >/etc/systemd/system/k3s.service <<'EOF'
+cat >/etc/systemd/system/k3s.service <<EOF
 [Unit]
 Description=Lightweight Kubernetes
 Documentation=https://docs.k3s.io
@@ -97,7 +103,7 @@ TasksMax=infinity
 TimeoutStartSec=0
 Restart=always
 RestartSec=5s
-ExecStart=/usr/local/bin/k3s server --disable=traefik --disable=servicelb --write-kubeconfig-mode=0600 --secrets-encryption
+ExecStart=/usr/local/bin/k3s server --disable=traefik --disable=servicelb --write-kubeconfig-mode=0600 --secrets-encryption --cluster-cidr=$K3S_CLUSTER_CIDR --service-cidr=$K3S_SERVICE_CIDR --cluster-dns=$K3S_CLUSTER_DNS
 
 [Install]
 WantedBy=multi-user.target

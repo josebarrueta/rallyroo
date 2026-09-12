@@ -19,7 +19,8 @@ or 1Password credentials.
 
 The idempotent first-boot script installs and configures:
 
-- k3s with Traefik and ServiceLB disabled and Kubernetes secret encryption enabled;
+- k3s with Traefik and ServiceLB disabled, Kubernetes secret encryption enabled,
+  and pod/service CIDRs that do not overlap the GCP subnet;
 - the Flux source, Helm, and notification controllers;
 - pinned Helm, Flux CLI, and cloudflared binaries with release checksums;
 - Google Cloud CLI, unattended upgrades, and the Cloud Ops Agent;
@@ -112,7 +113,8 @@ with the repository deployment tooling after credential setup.
 ## Data and backups
 
 The data disk mounts at `/var/local/rallyroo`, matching the chart's production
-PostgreSQL and Redis host paths. The VM service account can manage objects only in
+PostgreSQL and Redis host paths. The bootstrap assigns the PostgreSQL host path
+to the image's UID/GID `70` before k3s starts. The VM service account can manage objects only in
 the emitted backup bucket. Creating the bucket is not a backup system by itself;
 backup scheduling, encryption, restore validation, and alerts must be configured
 before cutover.
