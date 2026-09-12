@@ -558,7 +558,7 @@ private struct EventRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
-                if !compact, let location = display.event.location, !location.isEmpty {
+                if let location = display.event.location, !location.isEmpty {
                     Label(location, systemImage: "mappin.and.ellipse")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
