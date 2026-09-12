@@ -23,5 +23,16 @@ ios/FamilyHub/Config/Secrets.xcconfig
 # ---- Node / Deno ----
 node_modules/
 
+# ---- Terraform ----
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform.tfvars
+terraform.tfvars
+crash.log
+crash.*.log
+
 # ---- Logs ----
 *.log
