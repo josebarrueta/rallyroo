@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Account } from "../src/domain.js";
 import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
+import type { PushNotification } from "../src/push-notification-provider.js";
 
 const parent: Account = {
   identitySubject: "parent-subject", familyID: "family-1", memberID: "parent-1", role: "parent",
@@ -40,6 +41,31 @@ describe("NotificationCenterModule", () => {
     expect(await center.markRead(parent, kidItem.id, new Date("2026-09-10T16:01:00Z"))).toBe(false);
     expect(await center.markRead(kid, kidItem.id, new Date("2026-09-10T16:01:00Z"))).toBe(true);
     expect((await center.list(kid))[0]?.readAt).toEqual(new Date("2026-09-10T16:01:00Z"));
+  });
+
+  it("delivers the notification's useful title and body", async () => {
+    const repository = new InMemoryNotificationCenterRepository();
+    const pushes: PushNotification[] = [];
+    const center = new NotificationCenterModule(repository, {
+      send: async (_tokens, notification) => { pushes.push(notification); },
+    });
+
+    await center.recordAndDispatch({
+      familyID: "family-1",
+      recipientMemberIDs: ["kid-1"],
+      kind: "event_occurrence",
+      deduplicationKey: "event-1:2026-09-10T16:00:00Z",
+      title: "Soccer practice",
+      body: "Event starts in 30 minutes.",
+      destination: { kind: "event", id: "event-1" },
+      occurredAt: new Date("2026-09-10T15:30:00Z"),
+    });
+
+    expect(pushes).toEqual([expect.objectContaining({
+      title: "Soccer practice",
+      body: "Event starts in 30 minutes.",
+      data: expect.objectContaining({ notificationKind: "event_occurrence" }),
+    })]);
   });
 
   it("preserves one inbox record and retries channel delivery after provider failure", async () => {

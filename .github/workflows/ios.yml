@@ -1,14 +1,55 @@
 name: iOS
 
 on:
-  # These checks are required by main branch protection, so they must report for
-  # every PR/push. The TestFlight queue separately filters commits by clients/ios/.
+  # Keep the workflow present for every PR/push so required checks report a
+  # result. The changes job skips the expensive macOS jobs when iOS and its
+  # contract dependencies are untouched.
   pull_request:
   push:
     branches: [main]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect iOS-related changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            comparison_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          elif [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            comparison_base=$BEFORE_SHA
+          fi
+
+          if git diff --quiet "$comparison_base" "$HEAD_SHA" -- \
+            clients/ios \
+            server/api/src \
+            server/api/test/support/contract-server.ts \
+            server/api/package.json \
+            server/api/package-lock.json \
+            scripts/test-ai-capture-concurrency.sh \
+            .github/workflows/ios.yml; then
+            echo "ios=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios=true" >> "$GITHUB_OUTPUT"
+          fi
+
   core-contract:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     runs-on: macos-latest
     timeout-minutes: 15
     defaults:
@@ -53,6 +94,8 @@ jobs:
           fi
 
   ui:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     # App Store Connect requires iOS 26 SDK; CI and signed archives stay aligned.
     runs-on: macos-15
     timeout-minutes: 15
