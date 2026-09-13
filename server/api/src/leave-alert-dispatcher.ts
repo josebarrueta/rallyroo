@@ -54,7 +54,6 @@ export class LeaveAlertDispatcher {
           if (result.evaluated >= maximumCandidates) break;
           const occurrenceArrival = new Date(occurrenceStart.getTime() - arrivalOffset);
           if (occurrenceStart <= now
-            || occurrenceArrival < now
             || occurrenceArrival.getTime() > now.getTime() + horizonMilliseconds) continue;
           const key = occurrenceKey(plan, event, occurrenceStart);
           activeKeys.add(key);

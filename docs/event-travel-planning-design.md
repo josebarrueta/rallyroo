@@ -98,9 +98,10 @@ interface TravelPlanningModule {
 ```
 
 `preview` supports the Event editor without saving provider output as authoritative
-Event state. `reconcileEvent` creates, updates, or cancels occurrence guidance when
-an Event or Travel plan changes. `dispatchDueLeaveAlerts` uses bounded durable
-claims and submits typed intents to Notification Center.
+Event state. Phase 2 reconciliation derives occurrence guidance from current Event
+and Travel plan inputs on each process-local evaluation; startup scanning rebuilds
+that schedule. `dispatchDueLeaveAlerts` submits typed intents to Notification Center,
+whose durable deduplication prevents repeat delivery.
 
 The implementation hides origin resolution, provider calls, iterative leave-time
 calculation, recurrence expansion, refresh timing, stale guidance, deduplication,

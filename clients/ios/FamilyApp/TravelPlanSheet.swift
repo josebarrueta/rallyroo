@@ -4,13 +4,16 @@ import FamilyCore
 struct TravelPlanSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: TravelPlanViewModel
+    private let readOnly: Bool
 
     init(
         event: FamilyEvent,
         members: [FamilyMember],
         store: any TravelPlanningStore,
-        locationSearch: any LocationSearch
+        locationSearch: any LocationSearch,
+        readOnly: Bool = false
     ) {
+        self.readOnly = readOnly
         _model = StateObject(wrappedValue: TravelPlanViewModel(
             event: event,
             members: members,
@@ -23,14 +26,35 @@ struct TravelPlanSheet: View {
         NavigationStack {
             Form {
                 eventSection
-                originSection
-                timingSection
-                recipientSection
-                previewSection
-                if model.existingPlan != nil {
-                    Section {
-                        Button("Remove travel plan", role: .destructive) {
-                            Task { await model.deletePlan(); if model.didFinish { dismiss() } }
+                if readOnly {
+                    if let plan = model.existingPlan {
+                        Section("Plan") {
+                            LabeledContent("Preparation", value: "\(plan.preparationMinutes) min")
+                            LabeledContent(
+                                "Traffic estimate",
+                                value: plan.trafficPreference == .bestGuess ? "Best estimate" : "Extra cautious"
+                            )
+                        }
+                        readOnlyPreviewSection
+                    } else if model.isWorking {
+                        ProgressView("Loading travel details…")
+                    } else {
+                        Section {
+                            Label("Travel details unavailable", systemImage: "car")
+                            Text("No travel guidance is shared with this account.")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    originSection
+                    timingSection
+                    recipientSection
+                    previewSection
+                    if model.existingPlan != nil {
+                        Section {
+                            Button("Remove travel plan", role: .destructive) {
+                                Task { await model.deletePlan(); if model.didFinish { dismiss() } }
+                            }
                         }
                     }
                 }
@@ -38,13 +62,15 @@ struct TravelPlanSheet: View {
             .navigationTitle("Travel plan")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(readOnly ? "Done" : "Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task { await model.save(); if model.didFinish { dismiss() } }
+                if !readOnly {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") {
+                            Task { await model.save(); if model.didFinish { dismiss() } }
+                        }
+                        .disabled(!model.canSave || model.isWorking)
                     }
-                    .disabled(!model.canSave || model.isWorking)
                 }
             }
             .task { await model.load() }
@@ -139,29 +165,44 @@ struct TravelPlanSheet: View {
         }
     }
 
+    private var readOnlyPreviewSection: some View {
+        Section("Leave time") {
+            Button(model.isPreviewing ? "Calculating…" : "Refresh traffic guidance") {
+                Task { await model.previewSavedPlan() }
+            }
+            .disabled(model.isPreviewing || model.isWorking)
+            previewResult
+        }
+    }
+
     private var previewSection: some View {
         Section("Leave time") {
             Button(model.isPreviewing ? "Calculating…" : "Calculate with traffic") {
                 Task { await model.preview() }
             }
             .disabled(!model.canSave || model.isWorking)
-            if let preview = model.previewResult {
-                LabeledContent(
-                    preview.leaveNow ? "Recommendation" : "Leave at",
-                    value: preview.leaveNow
-                        ? "Leave now"
-                        : preview.leaveTime.formatted(date: .abbreviated, time: .shortened)
-                )
-                LabeledContent("Drive", value: model.durationText(preview.durationSeconds))
-                Text(preview.attribution)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("Google Maps")
-            } else {
-                Text("Traffic guidance is a preview and may change before departure.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+            previewResult
+        }
+    }
+
+    @ViewBuilder
+    private var previewResult: some View {
+        if let preview = model.previewResult {
+            LabeledContent(
+                preview.leaveNow ? "Recommendation" : "Leave at",
+                value: preview.leaveNow
+                    ? "Leave now"
+                    : preview.leaveTime.formatted(date: .abbreviated, time: .shortened)
+            )
+            LabeledContent("Drive", value: model.durationText(preview.durationSeconds))
+            Text(preview.attribution)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Google Maps")
+        } else {
+            Text("Traffic guidance is a preview and may change before departure.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -285,6 +326,19 @@ final class TravelPlanViewModel: ObservableObject {
         }
     }
 
+    func previewSavedPlan() async {
+        isPreviewing = true
+        previewResult = nil
+        defer { isPreviewing = false }
+        do {
+            previewResult = try await store.previewTravelPlan(for: event.id)
+        } catch let RemoteStoreError.requestFailed(statusCode) where statusCode == 503 {
+            message = "Traffic estimates are temporarily unavailable."
+        } catch {
+            message = "A leave time could not be calculated right now."
+        }
+    }
+
     func save() async {
         guard var draft = try? makeDraft() else { return }
         isWorking = true
@@ -332,8 +386,10 @@ final class TravelPlanViewModel: ObservableObject {
     private func apply(_ plan: EventTravelPlan) {
         preparationMinutes = plan.preparationMinutes
         trafficPreference = plan.trafficPreference
-        recipientMemberIDs = Set(plan.recipientMemberIDs)
-        leaveAlertEnabled = plan.leaveAlertEnabled
+        recipientMemberIDs = Set(plan.recipientMemberIDs).intersection(
+            eligibleMembers.map { $0.id.rawValue }
+        )
+        leaveAlertEnabled = plan.leaveAlertEnabled && !recipientMemberIDs.isEmpty
         switch plan.origin {
         case let .savedPlace(id): originChoice = id.uuidString
         case let .oneTime(waypoint):

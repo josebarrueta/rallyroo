@@ -295,6 +295,24 @@ describe("TravelPlanningModule authorization", () => {
     expect(preview.durationSeconds).toBe(1_800);
    });
 
+  it("lets a recipient preview an authorized plan without exposing a private Saved place", async () => {
+    const { module } = make();
+    const privateOrigin = await module.saveSavedPlace(
+      parent(),
+      savedPlaceDraft({ visibility: "personal" }),
+    );
+    await module.saveTravelPlan(parent(), "event-1", oneTimeDraft({
+      origin: { kind: "saved_place", savedPlaceID: privateOrigin.id },
+      recipientMemberIDs: ["member-kid"],
+    }));
+
+    expect((await module.listSavedPlaces(kid())).some((place) => place.id === privateOrigin.id))
+      .toBe(false);
+    await expect(module.preview(kid(), "event-1")).resolves.toMatchObject({
+      provider: "google_routes",
+    });
+  });
+
   it("returns null when no plan exists for a child", async () => {
     const { module } = make();
     expect(await module.travelPlan(kid(), "event-1")).toBeNull();
@@ -405,6 +423,19 @@ describe("TravelPlanningModule event context invariants", () => {
       noLocation.module.saveTravelPlan(parent(), "event-1", oneTimeDraft()),
      ).rejects.toEqual(new TravelPlanningError("event_missing_destination"));
     });
+
+  it("allows guidance without recipients when Leave alerts are disabled", async () => {
+    const { module } = make();
+    const plan = await module.saveTravelPlan(parent(), "event-1", oneTimeDraft({
+      recipientMemberIDs: [],
+      leaveAlertEnabled: false,
+    }));
+
+    expect(plan.recipientMemberIDs).toEqual([]);
+    await expect(module.preview(parent(), "event-1")).resolves.toMatchObject({
+      provider: "google_routes",
+    });
+  });
 
   it("requires recipients to be family participants or the structured driver", async () => {
     const { module } = make();

@@ -145,7 +145,8 @@ struct WeeklyScheduleView: View {
                         event: event,
                         members: viewModel.members,
                         store: travelPlanningStore,
-                        locationSearch: locationSearch
+                        locationSearch: locationSearch,
+                        readOnly: !allowsEditing
                     )
                 }
             }
@@ -371,15 +372,14 @@ struct WeeklyScheduleView: View {
             }
         }
         .contextMenu {
-            if allowsEditing,
-               !viewModel.isShowingCachedEvents,
+            if !viewModel.isShowingCachedEvents,
                travelPlanningStore != nil,
                occurrence.sourceEvent.arrivalTime != nil,
                occurrence.sourceEvent.location?.isEmpty == false {
                 Button {
                     travelEvent = occurrence.sourceEvent
                 } label: {
-                    Label("Plan travel", systemImage: "car")
+                    Label(allowsEditing ? "Plan travel" : "Travel details", systemImage: "car")
                 }
             }
         }

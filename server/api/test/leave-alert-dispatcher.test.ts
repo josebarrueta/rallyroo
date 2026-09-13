@@ -82,6 +82,15 @@ describe("LeaveAlertDispatcher", () => {
     })).toHaveLength(1);
   });
 
+  it("still records a leave-now alert after the arrival target but before Event start", async () => {
+    const inbox = new InMemoryNotificationCenterRepository();
+    const notifications = new NotificationCenterModule(inbox);
+    const dispatcher = new LeaveAlertDispatcher(repository(), provider().provider, notifications);
+
+    expect(await dispatcher.dispatchDue(new Date("2026-08-01T10:05:00Z")))
+      .toMatchObject({ evaluated: 1, recorded: 2, failed: 0 });
+  });
+
   it("defers distant guidance without persisting provider-derived route content", async () => {
     const travelRepository = repository();
     const inbox = new InMemoryNotificationCenterRepository();

@@ -204,7 +204,14 @@ const notificationDispatchInterval = setInterval(async () => {
       { name: "Event notification", operation: eventNotificationDispatcher.dispatchDue() },
       { name: "Schedule update notification", operation: scheduleUpdateNotificationDispatcher.dispatchDue() },
       ...(leaveAlertDispatcher
-        ? [{ name: "Leave alert", operation: leaveAlertDispatcher.dispatchDue() }]
+        ? [{
+          name: "Leave alert",
+          operation: leaveAlertDispatcher.dispatchDue().then((result) => {
+            if (result.failed > 0) {
+              app.log.warn({ failed: result.failed }, "Leave alert route evaluations failed");
+            }
+          }),
+        }]
         : []),
       ...(commuterAlertDispatcher
         ? [{ name: "Commuter alert", operation: commuterAlertDispatcher.dispatchDue() }]

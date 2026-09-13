@@ -31,7 +31,7 @@ CREATE TABLE event_travel_plans (
   FOREIGN KEY (family_id, event_id)
     REFERENCES events(family_id, id) ON DELETE CASCADE,
   FOREIGN KEY (family_id, saved_place_id)
-    REFERENCES saved_places(family_id, id) ON DELETE CASCADE,
+    REFERENCES saved_places(family_id, id) ON DELETE RESTRICT,
   FOREIGN KEY (family_id, created_by_member_id)
     REFERENCES family_members(family_id, id)
 );

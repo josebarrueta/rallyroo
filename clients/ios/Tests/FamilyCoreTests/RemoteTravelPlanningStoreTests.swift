@@ -404,6 +404,26 @@ final class RemoteTravelPlanningStoreTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testAllowsNoRecipientsWhenLeaveAlertIsDisabled() async throws {
+        let transport = RecordingHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: validEventTravelPlanJSON())
+        ])
+        let store = makeStore(transport)
+        let draft = TravelPlanDraft(
+            origin: .savedPlace(placeID),
+            preparationMinutes: 30,
+            trafficPreference: .bestGuess,
+            recipientMemberIDs: [],
+            leaveAlertEnabled: false
+        )
+
+        _ = try await store.saveTravelPlan(draft, for: eventID)
+
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(try bodyObject(requests[0])["recipientMemberIDs"] as? [String], [])
+    }
+
     func testRejectsEmptyAndDuplicateRecipientsBeforeTransport() async throws {
         let emptyTransport = RecordingHTTPTransport(responses: [])
         let duplicateTransport = RecordingHTTPTransport(responses: [])
