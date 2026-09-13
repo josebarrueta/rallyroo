@@ -206,6 +206,8 @@ range.
 
 ### Phase 1: arrival target
 
+This phase is independently deployable and preserves compatibility with Events and clients that omit the field.
+
 - Add nullable arrival target through PostgreSQL, server domain/transport, Swift
   domain/transport, recurrence editing, and schedule display.
 - Enforce arrival target at or before Event start.
