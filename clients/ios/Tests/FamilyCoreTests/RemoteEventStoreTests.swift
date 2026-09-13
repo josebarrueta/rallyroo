@@ -142,7 +142,9 @@ final class RemoteEventStoreTests: XCTestCase {
             transport: transport
         )
 
-        _ = try await store.save(sampleEvent(), notifyParticipants: false)
+        var event = sampleEvent()
+        event.arrivalTime = event.startTime.addingTimeInterval(-30 * 60)
+        _ = try await store.save(event, notifyParticipants: false)
 
         let requests = await transport.recordedRequests()
         let request = try XCTUnwrap(requests.first)
@@ -151,6 +153,9 @@ final class RemoteEventStoreTests: XCTestCase {
             [URLQueryItem(name: "notifyParticipants", value: "false")]
         )
         XCTAssertEqual(request.timeoutInterval, 60)
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["arrivalTime"] as? String, "2025-01-02T17:43:20Z")
     }
 
     func testSavesThirtyAndFortyFiveMinuteEventAlertsThroughTheRemoteAPI() async throws {

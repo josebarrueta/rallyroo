@@ -58,6 +58,24 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["At start"].waitForExistence(timeout: 2))
     }
 
+    func testEventEditorOffersAnOptionalArrivalTarget() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["Add"].tap()
+
+        let arriveBy = app.switches["event-arrive-by"]
+        XCTAssertTrue(arriveBy.waitForExistence(timeout: 5))
+        XCTAssertEqual(arriveBy.value as? String, "0")
+        arriveBy.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(arriveBy.value as? String, "1")
+        app.swipeUp()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["event-arrival-time"].waitForExistence(timeout: 5)
+        )
+    }
+
     func testEventWithoutParticipantsSavesWithoutNotificationOptions() {
         let app = localApp()
         app.launch()

@@ -75,6 +75,8 @@ public enum EventOccurrenceExpander {
         var event = source
         event.startTime = startTime
         event.endTime = startTime.addingTimeInterval(source.endTime.timeIntervalSince(source.startTime))
+        let startDelta = startTime.timeIntervalSince(source.startTime)
+        event.arrivalTime = source.arrivalTime.map { $0.addingTimeInterval(startDelta) }
         return EventOccurrence(
             id: "\(source.id.uuidString)-\(Int(startTime.timeIntervalSince1970))",
             event: event,

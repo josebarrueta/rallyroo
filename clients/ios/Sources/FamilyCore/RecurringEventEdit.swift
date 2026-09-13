@@ -217,6 +217,7 @@ public enum RecurringEventEditPlanner {
                 var unaffected = source.copy(id: nextID())
                 unaffected.startTime = continuationStart
                 unaffected.endTime = continuationStart.addingTimeInterval(source.duration)
+                unaffected.arrivalTime = source.arrivalTimeShifted(to: continuationStart)
                 unaffected.recurrence = recurrence.with(weekdays: otherWeekdays)
                 rows.append(unaffected)
             }
@@ -240,6 +241,7 @@ public enum RecurringEventEditPlanner {
                 var continuation = source.copy(id: nextID())
                 continuation.startTime = continuationStart
                 continuation.endTime = continuationStart.addingTimeInterval(source.duration)
+                continuation.arrivalTime = source.arrivalTimeShifted(to: continuationStart)
                 continuation.recurrence = recurrence
                 rows.append(continuation)
             }
@@ -267,6 +269,7 @@ public enum RecurringEventEditPlanner {
         var result = edited.copy(id: source.id)
         result.startTime = start
         result.endTime = start.addingTimeInterval(edited.duration)
+        result.arrivalTime = edited.arrivalTimeShifted(to: start)
         result.recurrenceSeriesID = source.recurrenceSeriesID
         return result
     }
@@ -290,6 +293,11 @@ public enum RecurringEventEditPlanner {
 private extension FamilyEvent {
     var duration: TimeInterval { endTime.timeIntervalSince(startTime) }
 
+    func arrivalTimeShifted(to newStartTime: Date) -> Date? {
+        guard let arrivalTime else { return nil }
+        return newStartTime.addingTimeInterval(arrivalTime.timeIntervalSince(startTime))
+    }
+
     func withoutRecurrence() -> FamilyEvent {
         var result = self
         result.recurrence = nil
@@ -304,6 +312,7 @@ private extension FamilyEvent {
             participantIDs: participantIDs,
             startTime: startTime,
             endTime: endTime,
+            arrivalTime: arrivalTime,
             location: location,
             driver: driver,
             driverMemberID: driverMemberID,

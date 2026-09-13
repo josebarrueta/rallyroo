@@ -550,6 +550,11 @@ private struct EventRow: View {
                 Text(timeRange)
                     .font(compact ? .caption : .subheadline)
                     .foregroundStyle(.secondary)
+                if let arrivalTime = display.event.arrivalTime {
+                    Label(arrivalLabel(for: arrivalTime), systemImage: "flag.checkered")
+                        .font(compact ? .caption2 : .caption)
+                        .foregroundStyle(.secondary)
+                }
                 if !compact && display.event.isReadOnly {
                     Label(
                         display.event.provenance.map(\.sourceName).uniqued().joined(separator: " • "),
@@ -572,5 +577,13 @@ private struct EventRow: View {
         let start = display.event.startTime.formatted(date: .omitted, time: .shortened)
         let end = display.event.endTime.formatted(date: .omitted, time: .shortened)
         return "\(start)–\(end)"
+    }
+
+    private func arrivalLabel(for arrivalTime: Date) -> String {
+        let dateStyle: Date.FormatStyle.DateStyle = Calendar.autoupdatingCurrent.isDate(
+            arrivalTime,
+            inSameDayAs: display.event.startTime
+        ) ? .omitted : .abbreviated
+        return "Arrive by \(arrivalTime.formatted(date: dateStyle, time: .shortened))"
     }
 }
