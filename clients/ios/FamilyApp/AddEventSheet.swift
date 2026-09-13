@@ -131,9 +131,11 @@ struct AddEventSheet: View {
                             displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
                         )
                     }
-                    Picker("Alert", selection: $alertChoice) {
-                        ForEach(EventAlertChoice.allCases) { choice in
-                            Text(choice.title).tag(choice)
+                    if !selectedParticipantIDs.isEmpty {
+                        Picker("Alert", selection: $alertChoice) {
+                            ForEach(EventAlertChoice.allCases) { choice in
+                                Text(choice.title).tag(choice)
+                            }
                         }
                     }
                     Picker("Repeat", selection: $repeatOption) {
@@ -263,6 +265,8 @@ struct AddEventSheet: View {
                     Button("Save") {
                         if recurringSource != nil, onSaveRecurring != nil {
                             isShowingEditScopePrompt = true
+                        } else if selectedParticipantIDs.isEmpty {
+                            save(notifyParticipants: false)
                         } else {
                             isShowingNotifyPrompt = true
                         }
@@ -327,7 +331,11 @@ struct AddEventSheet: View {
 
     private func chooseEditScope(_ scope: EventEditScope) {
         selectedEditScope = scope
-        isShowingNotifyPrompt = true
+        if selectedParticipantIDs.isEmpty {
+            save(notifyParticipants: false)
+        } else {
+            isShowingNotifyPrompt = true
+        }
     }
 
     private func save(notifyParticipants: Bool) {
@@ -411,7 +419,7 @@ struct AddEventSheet: View {
             driverMemberID: driverChoice.memberID,
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
-            alertLeadTime: alertChoice.leadTime,
+            alertLeadTime: selectedParticipantIDs.isEmpty ? nil : alertChoice.leadTime,
             recurrence: recurringSource?.recurrence ?? repeatOption.recurrence(
                 ending: recurrenceEndDate,
                 weekdays: selectedWeekdays.sorted()
