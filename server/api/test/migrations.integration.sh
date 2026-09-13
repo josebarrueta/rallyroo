@@ -54,7 +54,7 @@ run_structured_migrations pre >/dev/null
 
 ledger=$(psql "$DATABASE_URL" -Atc \
   "SELECT version || '|' || name || '|' || app_version || '|' || length(checksum) FROM schema_migrations ORDER BY version")
-[[ $(wc -l <<<"$ledger" | tr -d ' ') == "24" ]]
+[[ $(wc -l <<<"$ledger" | tr -d ' ') == "25" ]]
 grep -q '^1|001_initial.sql|test-release|64$' <<<"$ledger"
 grep -q '^9|009_child_invitation_consent.sql|test-release|64$' <<<"$ledger"
 grep -q '^10|010_calendar_source_visibility.sql|test-release|64$' <<<"$ledger"
@@ -72,6 +72,7 @@ grep -q '^21|021_recurring_event_edit_scopes.sql|test-release|64$' <<<"$ledger"
 grep -q '^22|022_reminder_recurrence.sql|test-release|64$' <<<"$ledger"
 grep -q '^23|023_event_alert_lead_times.sql|test-release|64$' <<<"$ledger"
 grep -q '^24|024_event_arrival_time.sql|test-release|64$' <<<"$ledger"
+grep -q '^25|025_event_travel_plans.sql|test-release|64$' <<<"$ledger"
 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO events (
