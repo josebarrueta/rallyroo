@@ -23,10 +23,12 @@ import {
 } from "./location-search-provider.js";
 import { RallyrooMetrics } from "./metrics.js";
 import { OllamaScheduleDraftExtractor } from "./ollama-schedule-draft-extractor.js";
+import { GoogleRoutingProvider } from "./google-routing-provider.js";
 import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
 import { NotificationCenterModule } from "./notification-center.js";
 import { EventNotificationDispatcher } from "./event-notification-dispatcher.js";
+import { LeaveAlertDispatcher } from "./leave-alert-dispatcher.js";
 import { ReminderNotificationDispatcher } from "./reminder-notification-dispatcher.js";
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import { RedisCache } from "./redis-cache.js";
@@ -37,6 +39,8 @@ import {
 } from "./runtime-configuration.js";
 import { SF511Client } from "./sf511-client.js";
 import { StytchIdentityProvider } from "./stytch-identity-provider.js";
+import { TravelPlanningModule } from "./travel-planning.js";
+import { UnavailableRoutingProvider } from "./travel-preview.js";
 
 const databaseConfiguration = await databasePoolConfiguration();
 
@@ -113,6 +117,20 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
     from: process.env.INVITATION_EMAIL_FROM,
   })
   : new UnavailableInvitationEmailSender();
+const googleRoutesAPIKey = configuredSecret("GOOGLE_ROUTES_API_KEY");
+const travelPlanning = new TravelPlanningModule(
+  repository,
+  googleRoutesAPIKey
+    ? new GoogleRoutingProvider(googleRoutesAPIKey)
+    : new UnavailableRoutingProvider(),
+);
+const leaveAlertDispatcher = googleRoutesAPIKey
+  ? new LeaveAlertDispatcher(
+    repository,
+    new GoogleRoutingProvider(googleRoutesAPIKey),
+    notificationCenter,
+  )
+  : undefined;
 const commuter = new CommuterModule(repository);
 const caltrainPolling = caltrainPollingConfiguration();
 const sf511APIKey = caltrainPolling.enabled ? configuredSecret("SF511_API_KEY") : undefined;
@@ -136,6 +154,7 @@ const app = buildApp({
   readinessCheck: () => repository.checkReadiness(),
   metrics,
   notificationCenter,
+  travelPlanning,
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),
@@ -184,6 +203,9 @@ const notificationDispatchInterval = setInterval(async () => {
       { name: "Reminder notification", operation: reminderNotificationDispatcher.dispatchDue() },
       { name: "Event notification", operation: eventNotificationDispatcher.dispatchDue() },
       { name: "Schedule update notification", operation: scheduleUpdateNotificationDispatcher.dispatchDue() },
+      ...(leaveAlertDispatcher
+        ? [{ name: "Leave alert", operation: leaveAlertDispatcher.dispatchDue() }]
+        : []),
       ...(commuterAlertDispatcher
         ? [{ name: "Commuter alert", operation: commuterAlertDispatcher.dispatchDue() }]
         : []),

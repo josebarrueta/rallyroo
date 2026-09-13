@@ -126,12 +126,13 @@ IDs where possible; encrypt human-readable place data using existing per-Family
 envelope encryption. Do not put addresses, route details, or Member identity in
 logs, metric labels, URLs, or notification deduplication keys.
 
-Provider responses and calculated guidance are non-authoritative. Retain only what
-is allowed by provider terms and needed for bounded scheduling and diagnostics.
-Google permits Place IDs to be stored indefinitely but restricts caching of most
-Routes content. Confirm that persisting a derived duration or leave instant complies
-with current terms before implementation. Any displayed Google-derived guidance
-must satisfy attribution requirements.
+Provider responses and calculated guidance are non-authoritative. Google permits
+Place IDs to be stored indefinitely but restricts caching of most Routes content.
+Phase 2 therefore does not persist route durations, distances, or calculated leave
+instants. The dispatcher keeps only process-local reevaluation times, rebuilds them
+after restart from authoritative Event and Travel plan inputs, and uses durable
+Notification Center deduplication once an alert becomes due. Displayed guidance
+includes required Google Maps attribution.
 
 ## Route calculation
 
@@ -215,10 +216,16 @@ This phase is independently deployable and preserves compatibility with Events a
 
 ### Phase 2: explicit driving plan
 
-- Add Saved Places and one-time explicit origins.
+Implemented in the `feature/event-travel-plans` slice:
+
+- Add encrypted Saved Places and one-time explicit origins.
 - Add one driving Travel plan per Event and explicit recipients.
-- Add Google Routes preview, durable reconciliation, and leave alerts.
-- Keep the alert control hidden until the plan is actionable.
+- Add bounded Google Routes previews, process-local recalculation rebuilt from
+  durable inputs, and deduplicated Notification Center Leave alerts.
+- Keep route-provider failure isolated from Event persistence.
+- Keep Google Routes credentials separately restricted and leave routing disabled
+  until the production 1Password item is provisioned.
+- Hide the alert control when no eligible recipient exists.
 
 ### Phase 3: confirmed suggestions
 

@@ -19,6 +19,7 @@ providerSecrets:
   calendarEncryption: ""
   familyDataEncryption: ""
   googlePlaces: ""
+  googleRoutes: ""
   resendInvitations: ""
   apns: ""
   sf511: ""

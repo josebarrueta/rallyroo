@@ -31,6 +31,7 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set providerSecrets.calendarEncryption=rallyroo-calendar-encryption \
   --set providerSecrets.familyDataEncryption=rallyroo-family-data-encryption \
   --set providerSecrets.googlePlaces=rallyroo-google-places \
+  --set providerSecrets.googleRoutes=rallyroo-google-routes \
   --set providerSecrets.resendInvitations=rallyroo-resend-invitations \
   --set providerSecrets.apns=rallyroo-apns \
   --set providerSecrets.sf511=rallyroo-sf511 \
@@ -87,6 +88,9 @@ grep -q 'secretName: rallyroo-family-data-encryption' "$rendered"
 grep -q 'name: GOOGLE_PLACES_API_KEY_FILE' "$rendered"
 grep -q 'value: /run/secrets/google-places/api-key' "$rendered"
 grep -q 'secretName: rallyroo-google-places' "$rendered"
+grep -q 'name: GOOGLE_ROUTES_API_KEY_FILE' "$rendered"
+grep -q 'value: /run/secrets/google-routes/api-key' "$rendered"
+grep -q 'secretName: rallyroo-google-routes' "$rendered"
 grep -q 'name: RESEND_API_KEY_FILE' "$rendered"
 grep -q 'value: /run/secrets/resend-invitations/api-key' "$rendered"
 grep -q 'secretName: rallyroo-resend-invitations' "$rendered"

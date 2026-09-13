@@ -8,7 +8,8 @@ export type NotificationKind =
   | "schedule_update"
   | "commute_disruption"
   | "driver_assignment"
-  | "saved_conflict";
+  | "saved_conflict"
+  | "leave_time";
 
 export type NotificationDestination = {
   kind: "event" | "reminder" | "commute_subscription" | "settings";

@@ -26,6 +26,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let deviceRegistrationStore: (any DeviceRegistrationStore)?
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let commuterStore: (any CommuterStore)?
+    private let travelPlanningStore: (any TravelPlanningStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -60,6 +61,7 @@ struct FamilyActivityCoordinatorApp: App {
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
             commuterStore = nil
+            travelPlanningStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
@@ -109,6 +111,10 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            travelPlanningStore = RemoteTravelPlanningStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport,
@@ -137,7 +143,8 @@ struct FamilyActivityCoordinatorApp: App {
                         reminderStore: reminderStore,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
-                        commuterStore: commuterStore
+                        commuterStore: commuterStore,
+                        travelPlanningStore: travelPlanningStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     .tag(AppTab.schedule)

@@ -1198,4 +1198,111 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await data.eventsForFamily(account.familyID)).toEqual([]);
     expect(await commuter.state(account)).toMatchObject({ installation: null, subscriptions: [] });
   });
+
+  it("encrypts and round-trips Saved places and Event travel plans", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("travel-parent", "Travel Parent");
+    const eventID = "00000000-0000-4000-8000-000000000251";
+    const placeID = "00000000-0000-4000-8000-000000000252";
+    await data.saveEvent({
+      id: eventID,
+      familyID: account.familyID,
+      title: "Travel event",
+      kidID: null,
+      participantIDs: [account.memberID],
+      startTime: "2026-09-20T18:30:00Z",
+      endTime: "2026-09-20T19:30:00Z",
+      arrivalTime: "2026-09-20T18:00:00Z",
+      location: "Secret destination",
+      driver: null,
+      driverMemberID: account.memberID,
+      source: "manual",
+      status: "confirmed",
+    });
+    await data.saveSavedPlace({
+      id: placeID,
+      familyID: account.familyID,
+      ownerMemberID: account.memberID,
+      visibility: "personal",
+      label: "Secret Home",
+      waypoint: { placeID: "SecretGooglePlaceID" },
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    });
+    await data.saveTravelPlan({
+      familyID: account.familyID,
+      eventID,
+      revision: 1,
+      origin: { kind: "one_time", waypoint: { address: "Secret origin address" } },
+      preparationMinutes: 20,
+      trafficPreference: "best_guess",
+      recipientMemberIDs: [account.memberID],
+      leaveAlertEnabled: true,
+      createdByMemberID: account.memberID,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    });
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const placeRow = await inspection.query<{ details_ciphertext: string }>(
+        "SELECT details_ciphertext FROM saved_places WHERE family_id = $1 AND id = $2::uuid",
+        [account.familyID, placeID],
+      );
+      const planRow = await inspection.query<{ details_ciphertext: string }>(
+        "SELECT details_ciphertext FROM event_travel_plans WHERE family_id = $1 AND event_id = $2::uuid",
+        [account.familyID, eventID],
+      );
+      expect(placeRow.rows[0]!.details_ciphertext).toMatch(/^rr1\./);
+      expect(placeRow.rows[0]!.details_ciphertext).not.toContain("Secret Home");
+      expect(placeRow.rows[0]!.details_ciphertext).not.toContain("SecretGooglePlaceID");
+      expect(planRow.rows[0]!.details_ciphertext).toMatch(/^rr1\./);
+      expect(planRow.rows[0]!.details_ciphertext).not.toContain("Secret origin address");
+    } finally {
+      await inspection.end();
+    }
+
+    expect(await data.savedPlacesForFamily(account.familyID)).toEqual([{
+      id: placeID,
+      familyID: account.familyID,
+      ownerMemberID: account.memberID,
+      visibility: "personal",
+      label: "Secret Home",
+      waypoint: { placeID: "SecretGooglePlaceID" },
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    }]);
+    expect((await data.travelPlanForEvent(account.familyID, eventID))?.origin).toEqual({
+      kind: "one_time",
+      waypoint: { address: "Secret origin address" },
+    });
+    expect(await data.travelPlanForEvent("another-family", eventID)).toBeNull();
+
+    await data.saveTravelPlan({
+      familyID: account.familyID,
+      eventID,
+      revision: 2,
+      origin: { kind: "saved_place", savedPlaceID: placeID },
+      preparationMinutes: 30,
+      trafficPreference: "pessimistic",
+      recipientMemberIDs: [account.memberID],
+      leaveAlertEnabled: false,
+      createdByMemberID: account.memberID,
+      createdAt: "2026-09-10T00:00:00Z",
+      updatedAt: "2026-09-10T00:00:00Z",
+    });
+    const updated = await data.travelPlanForEvent(account.familyID, eventID);
+    expect(updated).toMatchObject({
+      revision: 2,
+      origin: { kind: "saved_place", savedPlaceID: placeID },
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-10T00:00:00.000Z",
+    });
+    await expect(data.saveTravelPlan({ ...updated!, updatedAt: "2026-09-11T00:00:00Z" }))
+      .rejects.toThrow("changed concurrently");
+
+    await data.deleteEvent(account.familyID, eventID);
+    expect(await data.travelPlanForEvent(account.familyID, eventID)).toBeNull();
+    expect(await data.savedPlacesForFamily(account.familyID)).toHaveLength(1);
+  });
 });

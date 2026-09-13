@@ -93,6 +93,7 @@ struct NotificationsView: View {
         case .commuteDisruption: "tram.fill"
         case .driverAssignment: "car.fill"
         case .savedConflict: "exclamationmark.triangle.fill"
+        case .leaveTime: "car.side.fill"
         }
     }
 

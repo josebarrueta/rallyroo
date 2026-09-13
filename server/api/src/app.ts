@@ -33,6 +33,14 @@ import {
   type ScheduleDraftExtractor,
 } from "./schedule-draft-extractor.js";
 import type { NotificationCenterModule } from "./notification-center.js";
+import {
+  TravelPlanningError,
+  type EventTravelPlan,
+  type SavedPlace,
+  type TravelPlanningModule,
+} from "./travel-planning.js";
+import { GoogleRoutingError } from "./google-routing-provider.js";
+import { RoutingUnavailableError, TravelPreviewError } from "./travel-preview.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -109,6 +117,26 @@ const reminderSchema = z.object({
 });
 
 const locationSearchSchema = z.object({ q: z.string().trim().min(2).max(200) });
+const travelWaypointSchema = z.union([
+  z.object({ placeID: z.string().trim().min(1).max(500) }).strict(),
+  z.object({ address: z.string().trim().min(1).max(500) }).strict(),
+]);
+const travelPlanOriginSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("saved_place"), savedPlaceID: z.string().uuid() }).strict(),
+  z.object({ kind: z.literal("one_time"), waypoint: travelWaypointSchema }).strict(),
+]);
+const eventTravelPlanSchema = z.object({
+  origin: travelPlanOriginSchema,
+  preparationMinutes: z.number().int().min(0).max(180),
+  trafficPreference: z.enum(["best_guess", "pessimistic"]),
+  recipientMemberIDs: z.array(z.string().trim().min(1).max(300)).max(20),
+  leaveAlertEnabled: z.boolean(),
+}).strict().refine((plan) => !plan.leaveAlertEnabled || plan.recipientMemberIDs.length > 0);
+const savedPlaceSchema = z.object({
+  visibility: z.enum(["family", "personal"]),
+  label: z.string().trim().min(1).max(100),
+  waypoint: travelWaypointSchema,
+}).strict();
 const scheduleDraftRequestSchema = z.object({
   inputType: z.enum(["text", "voice", "image"]),
   text: z.string().trim().min(1).max(20_000),
@@ -209,9 +237,10 @@ interface Dependencies {
   commuter?: CommuterModule;
   scheduleDraftExtractor?: ScheduleDraftExtractor;
   readinessCheck?: () => Promise<void>;
-  rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts", RouteRateLimit>>;
+  rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts" | "travelPreviews", RouteRateLimit>>;
   metrics?: RallyrooMetrics;
   notificationCenter?: NotificationCenterModule;
+  travelPlanning?: TravelPlanningModule;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -229,6 +258,7 @@ export function buildApp({
   rateLimits = {},
   metrics = new RallyrooMetrics(),
   notificationCenter,
+  travelPlanning,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -237,6 +267,7 @@ export function buildApp({
     invitations: { max: 20, timeWindow: 60 * 60_000 },
     locations: { max: 60, timeWindow: 60_000 },
     scheduleDrafts: { max: 10, timeWindow: 60_000 },
+    travelPreviews: { max: 20, timeWindow: 60_000 },
     ...rateLimits,
   };
   const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispatcher({
@@ -885,6 +916,142 @@ export function buildApp({
     }
   });
 
+  app.get("/v1/saved-places", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    try {
+      return (await travelPlanning.listSavedPlaces(account)).map(clientSavedPlace);
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.post("/v1/saved-places", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const parsed = savedPlaceSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_saved_place" });
+    try {
+      const place = await travelPlanning.saveSavedPlace(account, parsed.data);
+      await repository.markFamilyChanged(account.familyID);
+      return reply.code(201).send(clientSavedPlace(place));
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.put("/v1/saved-places/:id", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const id = (request.params as { id: string }).id;
+    const parsed = savedPlaceSchema.safeParse(request.body);
+    if (!z.string().uuid().safeParse(id).success || !parsed.success) {
+      return reply.code(400).send({ error: "invalid_saved_place" });
+    }
+    try {
+      const place = await travelPlanning.saveSavedPlace(account, { id, ...parsed.data });
+      await repository.markFamilyChanged(account.familyID);
+      return clientSavedPlace(place);
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.delete("/v1/saved-places/:id", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const id = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.code(400).send({ error: "invalid_saved_place" });
+    }
+    try {
+      if (!await travelPlanning.deleteSavedPlace(account, id)) {
+        return reply.code(404).send({ error: "saved_place_not_found" });
+      }
+      await repository.markFamilyChanged(account.familyID);
+      return reply.code(204).send();
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.get("/v1/events/:id/travel-plan", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const eventID = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(eventID).success) {
+      return reply.code(400).send({ error: "invalid_event_id" });
+    }
+    try {
+      const plan = await travelPlanning.travelPlan(account, eventID);
+      return plan
+        ? clientTravelPlan(plan)
+        : reply.code(404).send({ error: "travel_plan_not_found" });
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.put("/v1/events/:id/travel-plan", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const eventID = (request.params as { id: string }).id;
+    const parsed = eventTravelPlanSchema.safeParse(request.body);
+    if (!z.string().uuid().safeParse(eventID).success || !parsed.success) {
+      return reply.code(400).send({ error: "invalid_travel_plan" });
+    }
+    try {
+      const plan = await travelPlanning.saveTravelPlan(account, eventID, parsed.data);
+      await repository.markFamilyChanged(account.familyID);
+      return clientTravelPlan(plan);
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.delete("/v1/events/:id/travel-plan", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const eventID = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(eventID).success) {
+      return reply.code(400).send({ error: "invalid_event_id" });
+    }
+    try {
+      if (!await travelPlanning.deleteTravelPlan(account, eventID)) {
+        return reply.code(404).send({ error: "travel_plan_not_found" });
+      }
+      await repository.markFamilyChanged(account.familyID);
+      return reply.code(204).send();
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
+  app.post("/v1/events/:id/travel-plan/preview", {
+    config: { rateLimit: limits.travelPreviews },
+  }, async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
+    const eventID = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(eventID).success) {
+      return reply.code(400).send({ error: "invalid_event_id" });
+    }
+    const parsed = request.body === undefined
+      ? { success: true as const, data: undefined }
+      : eventTravelPlanSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_travel_plan" });
+    try {
+      const preview = await travelPlanning.preview(account, eventID, parsed.data);
+      return {
+        ...preview,
+        leaveTime: preview.leaveTime.toISOString(),
+        estimatedAt: preview.estimatedAt.toISOString(),
+      };
+    } catch (error) {
+      return sendTravelPlanningError(error, reply);
+    }
+  });
+
   app.put("/v1/devices/:token", async (request, reply) => {
     const account = requiredAccount(request);
     const token = (request.params as { token: string }).token;
@@ -1140,6 +1307,52 @@ function bearerToken(authorization: string | undefined): string | null {
 function requiredAccount(request: FastifyRequest): Account {
   if (!request.account) throw new Error("Authentication hook did not provide an account");
   return request.account;
+}
+
+function clientSavedPlace({ familyID: _familyID, ...place }: SavedPlace) {
+  return place;
+}
+
+function clientTravelPlan({ familyID: _familyID, ...plan }: EventTravelPlan) {
+  return plan;
+}
+
+function sendTravelPlanningError(error: unknown, reply: FastifyReply) {
+  if (error instanceof RoutingUnavailableError) {
+    return reply.code(503).send({ error: "routing_unavailable" });
+  }
+  if (error instanceof GoogleRoutingError) {
+    return reply.code(502).send({ error: "routing_provider_unavailable" });
+  }
+  if (error instanceof TravelPreviewError) {
+    return reply.code(400).send({ error: "invalid_travel_preview" });
+  }
+  if (!(error instanceof TravelPlanningError)) throw error;
+  switch (error.reason) {
+  case "parent_required":
+    return reply.code(403).send({ error: "parent_role_required" });
+  case "travel_plan_forbidden":
+    return reply.code(403).send({ error: "travel_plan_forbidden" });
+  case "event_not_found":
+    return reply.code(404).send({ error: "event_not_found" });
+  case "saved_place_not_found":
+    return reply.code(404).send({ error: "saved_place_not_found" });
+  case "travel_plan_not_found":
+    return reply.code(404).send({ error: "travel_plan_not_found" });
+  case "saved_place_in_use":
+    return reply.code(409).send({ error: "saved_place_in_use" });
+  case "event_missing_arrival_target":
+    return reply.code(409).send({ error: "event_missing_arrival_target" });
+  case "event_missing_destination":
+    return reply.code(409).send({ error: "event_missing_destination" });
+  case "event_no_upcoming_occurrence":
+    return reply.code(409).send({ error: "event_no_upcoming_occurrence" });
+  case "invalid_saved_place":
+    return reply.code(400).send({ error: "invalid_saved_place" });
+  case "invalid_travel_plan":
+  case "invalid_recipients":
+    return reply.code(400).send({ error: "invalid_travel_plan" });
+  }
 }
 
 async function requireParent(request: FastifyRequest, reply: FastifyReply): Promise<Account | null> {

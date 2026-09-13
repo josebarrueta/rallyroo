@@ -28,6 +28,13 @@ import {
 } from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 import type {
+  EventTravelPlan,
+  SavedPlace,
+  TravelPlanOrigin,
+  TravelPlanningRepository,
+} from "./travel-planning.js";
+import type { TravelWaypoint } from "./travel-preview.js";
+import type {
   MemberInboxRecord,
   NotificationCenterRepository,
 } from "./notification-center.js";
@@ -52,7 +59,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -1046,6 +1053,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM saved_places WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM commuter_installations WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM calendar_sources WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM device_tokens WHERE family_id = $1", [row.family_id]);
@@ -1086,6 +1094,19 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
              LIMIT 1
            )
            WHERE family_id = $1 AND enabled_by_member_id = $2`,
+          [row.family_id, row.member_id, subject],
+        );
+        await client.query(
+          `UPDATE event_travel_plans
+           SET created_by_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           )
+           WHERE family_id = $1 AND created_by_member_id = $2`,
           [row.family_id, row.member_id, subject],
         );
         await client.query(
@@ -2244,6 +2265,117 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
+  async savedPlacesForFamily(familyID: string): Promise<SavedPlace[]> {
+    const result = await this.pool.query<SavedPlaceRow>(
+      `SELECT family_id, id::text, owner_member_id, visibility,
+              details_ciphertext, created_at, updated_at
+       FROM saved_places WHERE family_id = $1 ORDER BY created_at, id`,
+      [familyID],
+    );
+    return Promise.all(result.rows.map((row) => this.savedPlaceFromRow(row)));
+  }
+
+  async saveSavedPlace(place: SavedPlace): Promise<void> {
+    const details = await this.familyDataProtector.protect(
+      place.familyID,
+      `saved-place:${place.id}:details`,
+      JSON.stringify({ label: place.label, waypoint: place.waypoint }),
+    );
+    await this.pool.query(
+      `INSERT INTO saved_places
+         (family_id, id, owner_member_id, visibility, details_ciphertext, created_at, updated_at)
+       VALUES ($1, $2::uuid, $3, $4, $5, $6::timestamptz, $7::timestamptz)
+       ON CONFLICT (family_id, id) DO UPDATE SET
+         owner_member_id = EXCLUDED.owner_member_id,
+         visibility = EXCLUDED.visibility,
+         details_ciphertext = EXCLUDED.details_ciphertext,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        place.familyID, place.id, place.ownerMemberID, place.visibility,
+        details, place.createdAt, place.updatedAt,
+      ],
+    );
+  }
+
+  async deleteSavedPlace(familyID: string, placeID: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "DELETE FROM saved_places WHERE family_id = $1 AND id = $2::uuid",
+      [familyID, placeID],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async familyIDsWithTravelPlans(): Promise<string[]> {
+    const result = await this.pool.query<{ family_id: string }>(
+      "SELECT DISTINCT family_id FROM event_travel_plans ORDER BY family_id",
+    );
+    return result.rows.map((row) => row.family_id);
+  }
+
+  async travelPlansForFamily(familyID: string): Promise<EventTravelPlan[]> {
+    const result = await this.pool.query<EventTravelPlanRow>(
+      `SELECT family_id, event_id::text, revision, details_ciphertext,
+              created_by_member_id, created_at, updated_at
+       FROM event_travel_plans WHERE family_id = $1 ORDER BY event_id`,
+      [familyID],
+    );
+    return Promise.all(result.rows.map((row) => this.eventTravelPlanFromRow(row)));
+  }
+
+  async travelPlanForEvent(
+    familyID: string,
+    eventID: string,
+  ): Promise<EventTravelPlan | null> {
+    const result = await this.pool.query<EventTravelPlanRow>(
+      `SELECT family_id, event_id::text, revision, details_ciphertext,
+              created_by_member_id, created_at, updated_at
+       FROM event_travel_plans WHERE family_id = $1 AND event_id = $2::uuid`,
+      [familyID, eventID],
+    );
+    const row = result.rows[0];
+    return row ? this.eventTravelPlanFromRow(row) : null;
+  }
+
+  async saveTravelPlan(plan: EventTravelPlan): Promise<void> {
+    const details = await this.familyDataProtector.protect(
+      plan.familyID,
+      `event-travel-plan:${plan.eventID}:details`,
+      JSON.stringify({
+        origin: plan.origin,
+        preparationMinutes: plan.preparationMinutes,
+        trafficPreference: plan.trafficPreference,
+        recipientMemberIDs: plan.recipientMemberIDs,
+        leaveAlertEnabled: plan.leaveAlertEnabled,
+      }),
+    );
+    const result = await this.pool.query(
+      `INSERT INTO event_travel_plans
+         (family_id, event_id, revision, saved_place_id, details_ciphertext,
+          created_by_member_id, created_at, updated_at)
+       VALUES ($1, $2::uuid, $3, $4::uuid, $5, $6, $7::timestamptz, $8::timestamptz)
+       ON CONFLICT (family_id, event_id) DO UPDATE SET
+         revision = EXCLUDED.revision,
+         saved_place_id = EXCLUDED.saved_place_id,
+         details_ciphertext = EXCLUDED.details_ciphertext,
+         updated_at = EXCLUDED.updated_at
+       WHERE event_travel_plans.revision + 1 = EXCLUDED.revision`,
+      [
+        plan.familyID, plan.eventID, plan.revision,
+        plan.origin.kind === "saved_place" ? plan.origin.savedPlaceID : null,
+        details, plan.createdByMemberID, plan.createdAt, plan.updatedAt,
+      ],
+    );
+    if (result.rowCount !== 1) throw new Error("Event travel plan changed concurrently");
+  }
+
+  async deleteTravelPlan(familyID: string, eventID: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "DELETE FROM event_travel_plans WHERE family_id = $1 AND event_id = $2::uuid",
+      [familyID, eventID],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   private async invitationFromRow(row: InvitationRecordRow): Promise<FamilyInvitation> {
     return {
       id: row.id,
@@ -2431,6 +2563,40 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     };
   }
 
+  private async savedPlaceFromRow(row: SavedPlaceRow): Promise<SavedPlace> {
+    const details = parseSavedPlaceDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `saved-place:${row.id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      ownerMemberID: row.owner_member_id,
+      visibility: row.visibility,
+      ...details,
+      createdAt: asISOString(row.created_at),
+      updatedAt: asISOString(row.updated_at),
+    };
+  }
+
+  private async eventTravelPlanFromRow(row: EventTravelPlanRow): Promise<EventTravelPlan> {
+    const details = parseEventTravelPlanDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `event-travel-plan:${row.event_id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      familyID: row.family_id,
+      eventID: row.event_id,
+      revision: row.revision,
+      ...details,
+      createdByMemberID: row.created_by_member_id,
+      createdAt: asISOString(row.created_at),
+      updatedAt: asISOString(row.updated_at),
+    };
+  }
+
   private async revealLegacyValue(
     familyID: string,
     purpose: string,
@@ -2440,6 +2606,102 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       ? this.familyDataProtector.reveal(familyID, purpose, value)
       : value;
   }
+}
+
+interface SavedPlaceRow {
+  family_id: string;
+  id: string;
+  owner_member_id: string | null;
+  visibility: SavedPlace["visibility"];
+  details_ciphertext: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface EventTravelPlanRow {
+  family_id: string;
+  event_id: string;
+  revision: number;
+  details_ciphertext: string;
+  created_by_member_id: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+function parseTravelWaypoint(value: unknown): TravelWaypoint {
+  if (!value || typeof value !== "object") throw new Error("Invalid protected travel details");
+  const waypoint = value as Record<string, unknown>;
+  const placeID = typeof waypoint.placeID === "string" ? waypoint.placeID.trim() : "";
+  const address = typeof waypoint.address === "string" ? waypoint.address.trim() : "";
+  if ((placeID.length > 0) === (address.length > 0)
+    || placeID.length > 500
+    || address.length > 500) {
+    throw new Error("Invalid protected travel details");
+  }
+  return placeID ? { placeID } : { address };
+}
+
+function parseTravelPlanOrigin(value: unknown): TravelPlanOrigin {
+  if (!value || typeof value !== "object") throw new Error("Invalid protected travel details");
+  const origin = value as Record<string, unknown>;
+  if (origin.kind === "saved_place"
+    && typeof origin.savedPlaceID === "string"
+    && origin.savedPlaceID.length > 0
+    && origin.savedPlaceID.length <= 500) {
+    return { kind: "saved_place", savedPlaceID: origin.savedPlaceID };
+  }
+  if (origin.kind === "one_time") {
+    return { kind: "one_time", waypoint: parseTravelWaypoint(origin.waypoint) };
+  }
+  throw new Error("Invalid protected travel details");
+}
+
+function parseSavedPlaceDetails(value: string): Pick<SavedPlace, "label" | "waypoint"> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Invalid protected travel details");
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected travel details");
+  const details = parsed as Record<string, unknown>;
+  const label = typeof details.label === "string" ? details.label.trim() : "";
+  if (!label || label.length > 100) throw new Error("Invalid protected travel details");
+  return { label, waypoint: parseTravelWaypoint(details.waypoint) };
+}
+
+function parseEventTravelPlanDetails(value: string): Pick<
+  EventTravelPlan,
+  "origin" | "preparationMinutes" | "trafficPreference"
+    | "recipientMemberIDs" | "leaveAlertEnabled"
+> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Invalid protected travel details");
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected travel details");
+  const details = parsed as Record<string, unknown>;
+  const recipientMemberIDs = details.recipientMemberIDs;
+  if (!Number.isInteger(details.preparationMinutes)
+    || (details.preparationMinutes as number) < 0
+    || (details.preparationMinutes as number) > 180
+    || (details.trafficPreference !== "best_guess" && details.trafficPreference !== "pessimistic")
+    || !Array.isArray(recipientMemberIDs)
+    || recipientMemberIDs.length > 20
+    || recipientMemberIDs.some((id) => typeof id !== "string" || !id || id.length > 300)
+    || typeof details.leaveAlertEnabled !== "boolean"
+    || (details.leaveAlertEnabled && recipientMemberIDs.length < 1)) {
+    throw new Error("Invalid protected travel details");
+  }
+  return {
+    origin: parseTravelPlanOrigin(details.origin),
+    preparationMinutes: details.preparationMinutes as number,
+    trafficPreference: details.trafficPreference,
+    recipientMemberIDs: recipientMemberIDs as string[],
+    leaveAlertEnabled: details.leaveAlertEnabled,
+  };
 }
 
 class PostgresFamilyDataKeyStore implements FamilyDataKeyStore {

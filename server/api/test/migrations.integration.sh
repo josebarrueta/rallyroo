@@ -97,7 +97,7 @@ then
 fi
 
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "24" ]]
+[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "25" ]]
 
 # Upgrade the filename-only ledger created by releases before this runner.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -106,7 +106,7 @@ ALTER TABLE schema_migrations DROP COLUMN checksum;
 ALTER TABLE schema_migrations DROP COLUMN app_version;
 SQL
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "24" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "25" ]]
 
 cp -R "$ROOT/migrations" "$tmp/checksum-migrations"
 printf '\n-- changed after deployment\n' >>"$tmp/checksum-migrations/pre/001_initial.sql"

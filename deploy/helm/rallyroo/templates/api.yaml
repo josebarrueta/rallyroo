@@ -108,6 +108,10 @@ spec:
             - name: GOOGLE_PLACES_API_KEY_FILE
               value: /run/secrets/google-places/api-key
             {{- end }}
+            {{- if .Values.providerSecrets.googleRoutes }}
+            - name: GOOGLE_ROUTES_API_KEY_FILE
+              value: /run/secrets/google-routes/api-key
+            {{- end }}
             {{- if .Values.providerSecrets.resendInvitations }}
             - name: RESEND_API_KEY_FILE
               value: /run/secrets/resend-invitations/api-key
@@ -143,7 +147,7 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
-          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
+          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
           volumeMounts:
             {{- if .Values.postgres.credentialsSecret }}
             {{- include "rallyroo.postgresPasswordVolumeMount" . | nindent 12 }}
@@ -168,6 +172,11 @@ spec:
               mountPath: /run/secrets/google-places
               readOnly: true
             {{- end }}
+            {{- if .Values.providerSecrets.googleRoutes }}
+            - name: google-routes-credentials
+              mountPath: /run/secrets/google-routes
+              readOnly: true
+            {{- end }}
             {{- if .Values.providerSecrets.resendInvitations }}
             - name: resend-invitation-credentials
               mountPath: /run/secrets/resend-invitations
@@ -189,7 +198,7 @@ spec:
               readOnly: true
             {{- end }}
           {{- end }}
-      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
+      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability }}
       volumes:
         {{- if .Values.postgres.credentialsSecret }}
         {{- include "rallyroo.postgresPasswordVolume" . | nindent 8 }}
@@ -228,6 +237,15 @@ spec:
             defaultMode: 288
             items:
               - key: GOOGLE_PLACES_API_KEY
+                path: api-key
+        {{- end }}
+        {{- if .Values.providerSecrets.googleRoutes }}
+        - name: google-routes-credentials
+          secret:
+            secretName: {{ .Values.providerSecrets.googleRoutes }}
+            defaultMode: 288
+            items:
+              - key: GOOGLE_ROUTES_API_KEY
                 path: api-key
         {{- end }}
         {{- if .Values.providerSecrets.resendInvitations }}
