@@ -37,6 +37,7 @@ spec:
       calendarEncryption: rallyroo-calendar-encryption
       familyDataEncryption: rallyroo-family-data-encryption
       googlePlaces: rallyroo-google-places
+      googleRoutes: rallyroo-google-routes
       resendInvitations: rallyroo-resend-invitations
       apns: rallyroo-apns
       sf511: rallyroo-sf511
