@@ -49,6 +49,7 @@ export interface FamilyEvent {
   participantIDs: string[];
   startTime: string;
   endTime: string;
+  arrivalTime?: string | null;
   location: string | null;
   driver: string | null;
   driverMemberID?: string | null;

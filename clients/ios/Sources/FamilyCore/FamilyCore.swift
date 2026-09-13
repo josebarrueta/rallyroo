@@ -59,6 +59,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var participantIDs: [KidID]
     public var startTime: Date
     public var endTime: Date
+    public var arrivalTime: Date?
     public var location: String?
     public var driver: String?
     public var driverMemberID: KidID?
@@ -74,6 +75,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         case id, title, kidID, participantIDs, startTime, endTime, location
         case driver, driverMemberID, source, status, recurrence, recurrenceSeriesID, provenance
         case alertLeadTime = "alertLeadTimeMinutes"
+        case arrivalTime
         case isReadOnly = "readOnly"
     }
 
@@ -84,6 +86,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         participantIDs: [KidID] = [],
         startTime: Date,
         endTime: Date,
+        arrivalTime: Date? = nil,
         location: String? = nil,
         driver: String? = nil,
         driverMemberID: KidID? = nil,
@@ -101,6 +104,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.participantIDs = participantIDs.isEmpty ? kidID.map { [$0] } ?? [] : participantIDs
         self.startTime = startTime
         self.endTime = endTime
+        self.arrivalTime = arrivalTime
         self.location = location
         self.driver = driver
         self.driverMemberID = driverMemberID
@@ -121,6 +125,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         participantIDs = try container.decodeIfPresent([KidID].self, forKey: .participantIDs) ?? []
         startTime = try container.decode(Date.self, forKey: .startTime)
         endTime = try container.decode(Date.self, forKey: .endTime)
+        arrivalTime = try container.decodeIfPresent(Date.self, forKey: .arrivalTime)
         location = try container.decodeIfPresent(String.self, forKey: .location)
         driver = try container.decodeIfPresent(String.self, forKey: .driver)
         driverMemberID = try container.decodeIfPresent(KidID.self, forKey: .driverMemberID)
@@ -137,6 +142,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
 
 public enum EventValidationError: Error, Equatable, Sendable {
     case endTimeMustFollowStartTime
+    case arrivalTimeMustNotFollowStartTime
 }
 
 public struct EventConflict: Codable, Equatable, Sendable {
@@ -267,6 +273,9 @@ public actor LocalEventStore: EventStore {
         guard event.endTime > event.startTime else {
             throw EventValidationError.endTimeMustFollowStartTime
         }
+        if let arrivalTime = event.arrivalTime, arrivalTime > event.startTime {
+            throw EventValidationError.arrivalTimeMustNotFollowStartTime
+        }
 
         var savedEvents = try await events()
         savedEvents.removeAll { $0.id == event.id }
@@ -295,6 +304,9 @@ public actor LocalEventStore: EventStore {
         if let previous = recurringMutationResults[idempotencyKey] { return previous }
         guard edit.editedEvent.endTime > edit.editedEvent.startTime else {
             throw EventValidationError.endTimeMustFollowStartTime
+        }
+        if let arrivalTime = edit.editedEvent.arrivalTime, arrivalTime > edit.editedEvent.startTime {
+            throw EventValidationError.arrivalTimeMustNotFollowStartTime
         }
         guard let source = savedEvents.first(where: { $0.id == edit.sourceEventID }) else {
             throw RecurringEventEditError.occurrenceNotInSeries

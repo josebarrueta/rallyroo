@@ -47,6 +47,7 @@ const eventSchema = z.object({
   participantIDs: z.array(z.string()).default([]),
   startTime: z.string().datetime(),
   endTime: z.string().datetime(),
+  arrivalTime: z.string().datetime().nullable().default(null),
   location: z.string().nullable().default(null),
   driver: z.string().nullable().default(null),
   driverMemberID: z.string().trim().min(1).nullable().default(null),
@@ -71,6 +72,8 @@ const eventSchema = z.object({
   message: "driverMemberID and driver cannot both be set",
 }).refine((event) => new Date(event.endTime) > new Date(event.startTime), {
   message: "endTime must follow startTime",
+}).refine((event) => event.arrivalTime == null || new Date(event.arrivalTime) <= new Date(event.startTime), {
+  message: "arrivalTime must not be after startTime",
 }).refine((event) => !event.recurrence || (
   new Date(event.recurrence.endDate) >= new Date(event.startTime)
   && new Date(event.recurrence.endDate).getTime() - new Date(event.startTime).getTime()

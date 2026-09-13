@@ -2349,6 +2349,49 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("persists an optional Event arrival target and rejects one after Event start", async () => {
+    const id = "00000000-0000-4000-8000-000000000024";
+    const data = repository();
+    const app = buildApp({ identityProvider, repository: data });
+    const event = {
+      id,
+      title: "Tournament",
+      kidID: "kid-1",
+      participantIDs: ["kid-1"],
+      startTime: "2026-08-26T18:00:00Z",
+      endTime: "2026-08-26T19:00:00Z",
+      arrivalTime: "2026-08-26T17:30:00Z",
+      location: "Field",
+      driver: null,
+      source: "manual",
+      status: "confirmed",
+    };
+
+    const write = await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=false`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: event,
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const invalid = await app.inject({
+      method: "PUT",
+      url: `/v1/events/${id}?notifyParticipants=false`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: { ...event, arrivalTime: "2026-08-26T18:01:00Z" },
+    });
+
+    expect(write.statusCode).toBe(200);
+    expect(listed.json().find((candidate: { id: string }) => candidate.id === id)?.arrivalTime)
+      .toBe("2026-08-26T17:30:00Z");
+    expect(invalid.statusCode).toBe(400);
+    await app.close();
+  });
+
   it("persists 30 and 45 minute Event alert lead times", async () => {
     for (const alertLeadTimeMinutes of [30, 45]) {
       const last12 = alertLeadTimeMinutes === 30 ? "000000000030" : "000000000045";

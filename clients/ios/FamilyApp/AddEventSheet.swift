@@ -19,6 +19,9 @@ struct AddEventSheet: View {
     @State private var endTime: Date
     @State private var endMode: EventEndMode
     @State private var durationMinutes: Int
+    @State private var arrivalTargetEnabled: Bool
+    @State private var arrivalTarget: Date
+    @State private var previousStartTime: Date
     @State private var alertChoice: EventAlertChoice
     @State private var location: String
     @State private var driverChoice: EventDriverChoice
@@ -69,6 +72,9 @@ struct AddEventSheet: View {
         let initialEndTime = event?.endTime ?? initialStartTime.addingTimeInterval(60 * 60)
         _startTime = State(initialValue: initialStartTime)
         _endTime = State(initialValue: initialEndTime)
+        _arrivalTargetEnabled = State(initialValue: event.map { $0.arrivalTime != nil } ?? false)
+        _arrivalTarget = State(initialValue: event?.arrivalTime ?? initialStartTime)
+        _previousStartTime = State(initialValue: initialStartTime)
         _endMode = State(initialValue: .duration)
         _durationMinutes = State(initialValue: max(
             15,
@@ -130,6 +136,17 @@ struct AddEventSheet: View {
                             in: startTime.addingTimeInterval(60)...,
                             displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
                         )
+                    }
+                    Toggle("Arrive by", isOn: $arrivalTargetEnabled)
+                        .accessibilityIdentifier("event-arrive-by")
+                    if arrivalTargetEnabled {
+                        DatePicker(
+                            "Arrival time",
+                            selection: $arrivalTarget,
+                            in: ...startTime,
+                            displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                        )
+                        .accessibilityIdentifier("event-arrival-time")
                     }
                     if !selectedParticipantIDs.isEmpty {
                         Picker("Alert", selection: $alertChoice) {
@@ -207,7 +224,20 @@ struct AddEventSheet: View {
                 }
             }
             .navigationTitle(existingEvent == nil ? "Add Event" : "Edit Event")
+            .onChange(of: arrivalTargetEnabled) { enabled in
+                if enabled {
+                    arrivalTarget = startTime
+                }
+            }
             .onChange(of: startTime) { newStartTime in
+                if arrivalTargetEnabled {
+                    let offset = arrivalTarget.timeIntervalSince(previousStartTime)
+                    previousStartTime = newStartTime
+                    arrivalTarget = min(newStartTime.addingTimeInterval(offset), newStartTime)
+                } else {
+                    previousStartTime = newStartTime
+                    arrivalTarget = newStartTime
+                }
                 recurrenceEndDate = min(max(recurrenceEndDate, newStartTime), latestRecurrenceEndDate)
                 if endMode == .duration || endTime <= newStartTime {
                     endTime = newStartTime.addingTimeInterval(TimeInterval(durationMinutes * 60))
@@ -379,6 +409,10 @@ struct AddEventSheet: View {
                 alertMessage = "The end time must be after the start time."
                 dismissAfterAlert = false
                 isShowingAlert = true
+            } catch EventValidationError.arrivalTimeMustNotFollowStartTime {
+                alertMessage = "Arrive by must be at or before the event's start time."
+                dismissAfterAlert = false
+                isShowingAlert = true
             } catch {
                 alertMessage = "The event could not be saved."
                 dismissAfterAlert = false
@@ -414,6 +448,7 @@ struct AddEventSheet: View {
             participantIDs: Array(selectedParticipantIDs),
             startTime: startTime,
             endTime: endTime,
+            arrivalTime: arrivalTargetEnabled ? min(arrivalTarget, startTime) : nil,
             location: optionalText(location),
             driver: driverChoice == .other ? optionalText(otherDriver) : nil,
             driverMemberID: driverChoice.memberID,

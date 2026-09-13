@@ -441,6 +441,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         participantIDs: [participantID],
         startTime: "2026-09-01T18:00:00Z",
         endTime: "2026-09-01T19:00:00Z",
+        arrivalTime: "2026-09-01T17:30:00Z",
         location: null,
         driver: null,
         source: "manual",
@@ -474,6 +475,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       expect.objectContaining({
         id: "00000000-0000-4000-8000-000000000099",
         title: "Integration rehearsal",
+        arrivalTime: "2026-09-01T17:30:00.000Z",
         alertLeadTimeMinutes: 30,
         recurrence: expect.objectContaining({ frequency: "weekly", weekdays: [2] }),
       }),
@@ -484,13 +486,15 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       title: string;
       start_time: Date;
       end_time: Date;
+      arrival_time: Date;
       wrapped_key: string;
       result: unknown | null;
       result_ciphertext: string | null;
       notification_title: string;
       notification_body: string;
     }>(
-      `SELECT event.title, event.start_time, event.end_time, family_key.wrapped_key,
+      `SELECT event.title, event.start_time, event.end_time, event.arrival_time,
+              family_key.wrapped_key,
               mutation.result, mutation.result_ciphertext,
               notification.title AS notification_title,
               notification.body AS notification_body
@@ -512,6 +516,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(stored.rows[0]?.notification_body).toMatch(/^rr1\.1\./);
     expect(stored.rows[0]?.start_time.toISOString()).toBe("2026-09-01T18:00:00.000Z");
     expect(stored.rows[0]?.end_time.toISOString()).toBe("2026-09-01T19:00:00.000Z");
+    expect(stored.rows[0]?.arrival_time.toISOString()).toBe("2026-09-01T17:30:00.000Z");
     await reader.close();
   });
 
@@ -556,6 +561,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         driver: "Legacy driver",
         startTime: "2026-09-12T18:00:00.000Z",
         endTime: "2026-09-12T19:00:00.000Z",
+        arrivalTime: null,
       }),
     ]);
     expect(await repository.remindersForFamily(familyID)).toEqual([
