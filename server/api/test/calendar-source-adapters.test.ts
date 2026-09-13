@@ -14,7 +14,12 @@ describe("calendar source security adapters", () => {
 
     expect(protectedURL).not.toContain("private-family-token");
     expect(protection.revealURL(protectedURL)).toBe(url);
-    expect(() => protection.revealURL(`${protectedURL.slice(0, -1)}x`)).toThrow();
+    const segments = protectedURL.split(".");
+    const ciphertext = segments.at(-1)!;
+    const tamperIndex = Math.floor(ciphertext.length / 2);
+    const replacement = ciphertext[tamperIndex] === "A" ? "B" : "A";
+    segments[segments.length - 1] = `${ciphertext.slice(0, tamperIndex)}${replacement}${ciphertext.slice(tamperIndex + 1)}`;
+    expect(() => protection.revealURL(segments.join("."))).toThrow();
   });
 
   it("rejects calendar URLs that target private infrastructure", async () => {

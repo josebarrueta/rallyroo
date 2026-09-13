@@ -11,6 +11,7 @@ struct WeeklyScheduleView: View {
     private let currentMemberID: String?
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let commuterStore: (any CommuterStore)?
+    private let travelPlanningStore: (any TravelPlanningStore)?
     @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
     @State private var isAddingEvent = false
     @State private var editingOccurrence: EventOccurrence?
@@ -21,6 +22,7 @@ struct WeeklyScheduleView: View {
     @State private var scheduleUpdateNotice: String?
     @State private var connectedCalendarCount: Int?
     @State private var commuterState: CommuterState?
+    @State private var travelEvent: FamilyEvent?
 
     init(
         eventStore: any EventStore,
@@ -33,7 +35,8 @@ struct WeeklyScheduleView: View {
         reminderStore: (any ReminderStore)? = nil,
         currentMemberID: String? = nil,
         calendarSourceStore: (any CalendarSourceStore)? = nil,
-        commuterStore: (any CommuterStore)? = nil
+        commuterStore: (any CommuterStore)? = nil,
+        travelPlanningStore: (any TravelPlanningStore)? = nil
      ) {
         self.allowsEditing = allowsEditing
         self.locationSearch = locationSearch
@@ -43,6 +46,7 @@ struct WeeklyScheduleView: View {
         self.currentMemberID = currentMemberID
         self.calendarSourceStore = calendarSourceStore
         self.commuterStore = commuterStore
+        self.travelPlanningStore = travelPlanningStore
         _viewModel = StateObject(
             wrappedValue: WeeklyScheduleViewModel(
                 eventStore: eventStore,
@@ -126,10 +130,24 @@ struct WeeklyScheduleView: View {
                             Text(event.title).font(.headline)
                             LabeledContent("Starts", value: event.startTime.formatted())
                             LabeledContent("Ends", value: event.endTime.formatted())
+                            if let arrivalTime = event.arrivalTime {
+                                LabeledContent("Arrive by", value: arrivalTime.formatted())
+                            }
                             if let location = event.location { LabeledContent("Location", value: location) }
                         }
                     }
                     .navigationTitle("Event details")
+                }
+            }
+            .sheet(item: $travelEvent) { event in
+                if let travelPlanningStore {
+                    TravelPlanSheet(
+                        event: event,
+                        members: viewModel.members,
+                        store: travelPlanningStore,
+                        locationSearch: locationSearch,
+                        readOnly: !allowsEditing
+                    )
                 }
             }
             .sheet(isPresented: $isAddingEvent) {
@@ -185,6 +203,9 @@ struct WeeklyScheduleView: View {
                             occurrence.sourceEvent,
                             idempotencyKey: idempotencyKey
                         )
+                    },
+                    onPlanTravel: travelPlanningStore == nil ? nil : {
+                        travelEvent = occurrence.sourceEvent
                     }
                 )
             }
@@ -347,6 +368,18 @@ struct WeeklyScheduleView: View {
                     linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
                 } else {
                     editingOccurrence = occurrence
+                }
+            }
+        }
+        .contextMenu {
+            if !viewModel.isShowingCachedEvents,
+               travelPlanningStore != nil,
+               occurrence.sourceEvent.arrivalTime != nil,
+               occurrence.sourceEvent.location?.isEmpty == false {
+                Button {
+                    travelEvent = occurrence.sourceEvent
+                } label: {
+                    Label(allowsEditing ? "Plan travel" : "Travel details", systemImage: "car")
                 }
             }
         }

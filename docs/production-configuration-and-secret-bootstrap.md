@@ -57,6 +57,7 @@ Kubernetes Secret keys.
 | `rallyroo-postgres` | `POSTGRES_PASSWORD` | Rallyroo-generated |
 | `rallyroo-stytch` | `STYTCH_SECRET` | Stytch Live environment |
 | `rallyroo-google-places` | `GOOGLE_PLACES_API_KEY` | Google Cloud |
+| `rallyroo-google-routes` | `GOOGLE_ROUTES_API_KEY` | Google Cloud |
 | `rallyroo-resend-invitations` | `RESEND_API_KEY` | Resend, Sending access |
 | `rallyroo-apns` | `APNS_PRIVATE_KEY`, `APNS_KEY_ID` | Apple Developer |
 | `rallyroo-sf511` | `SF511_API_KEY` | 511 SF Bay Open Data |
@@ -193,6 +194,24 @@ Use a separate key from any future client-side Maps SDK key. Google recommends o
 restricted key per application and API restrictions for every key.
 
 Source: [Google Maps Platform security guidance](https://developers.google.com/maps/api-security-best-practices).
+
+### Google Routes
+
+Create a separate server key restricted to **Routes API**, enable Routes API in the
+production project, configure billing alerts and quotas, and store the key in
+`rallyroo-google-routes` → `GOOGLE_ROUTES_API_KEY`. Add the corresponding
+`OnePasswordItem` and set `providerSecrets.googleRoutes` only after the item exists;
+without it, Travel plans remain editable while previews and Leave alerts report as
+unavailable. Never reuse a client-side Maps key.
+
+Route previews display `Google Maps` attribution. Rallyroo does not persist route
+durations, distances, or calculated leave instants; only user-confirmed plan inputs,
+provider-exempt Place IDs, and deduplicated Notification Center intents are durable.
+
+Sources:
+
+- [Google Routes API policies](https://developers.google.com/maps/documentation/routes/policies)
+- [Google Maps Platform security guidance](https://developers.google.com/maps/api-security-best-practices)
 
 ### Resend invitation delivery
 

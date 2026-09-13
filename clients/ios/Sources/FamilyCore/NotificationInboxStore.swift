@@ -7,6 +7,7 @@ public enum InboxNotificationKind: String, Codable, Sendable {
     case commuteDisruption = "commute_disruption"
     case driverAssignment = "driver_assignment"
     case savedConflict = "saved_conflict"
+    case leaveTime = "leave_time"
 }
 
 public struct InboxNotificationDestination: Codable, Equatable, Sendable {

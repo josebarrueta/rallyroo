@@ -12,6 +12,8 @@ import { CommuterModule } from "../src/commuter-module.js";
 import { InMemoryCommuterRepository } from "../src/in-memory-commuter-repository.js";
 import { InMemoryNotificationCenterRepository } from "../src/in-memory-notification-center-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
+import { InMemoryTravelPlanningRepository } from "../src/in-memory-travel-planning-repository.js";
+import { TravelPlanningModule } from "../src/travel-planning.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -2521,5 +2523,133 @@ describe("Rallyroo API", () => {
       expect.objectContaining({ id, title: "Practice", recurrenceSeriesID: id }),
     ]));
     await app.close();
+  });
+});
+
+// Travel planning is tested with an isolated repository so API authorization and
+// transport contracts cannot accidentally rely on the core in-memory store.
+describe("Travel planning HTTP API", () => {
+  const eventID = "00000000-0000-4000-8000-000000000201";
+
+  function appWithTravelPlanning() {
+    const core = repository();
+    const travelRepository = new InMemoryTravelPlanningRepository({
+      members: [
+        { id: "parent-1", familyID: "family-1", name: "Alex", role: "parent", colorTag: "blue", canDrive: true },
+        { id: "kid-1", familyID: "family-1", name: "Emma", role: "kid", colorTag: "purple" },
+      ],
+      events: [{
+        id: eventID,
+        familyID: "family-1",
+        title: "Soccer",
+        kidID: "kid-1",
+        participantIDs: ["kid-1"],
+        startTime: "2026-08-23T18:30:00Z",
+        endTime: "2026-08-23T19:30:00Z",
+        arrivalTime: "2026-08-23T18:00:00Z",
+        location: "Soccer field",
+        driver: null,
+        driverMemberID: "parent-1",
+        source: "manual",
+        status: "confirmed",
+      }],
+    });
+    const travelPlanning = new TravelPlanningModule(travelRepository, {
+      async estimate() {
+        return { durationSeconds: 1_800, distanceMeters: 12_000 };
+      },
+    }, () => new Date("2026-08-23T16:00:00Z"));
+    return buildApp({ identityProvider, repository: core, travelPlanning });
+  }
+
+  it("creates places and plans, previews a route, and hides the family ID", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const placeResponse = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "family",
+          label: "Home",
+          waypoint: { placeID: "ChIJ_home" },
+        },
+      });
+      expect(placeResponse.statusCode).toBe(201);
+      const place = placeResponse.json();
+      expect(place.familyID).toBeUndefined();
+
+      const planResponse = await app.inject({
+        method: "PUT",
+        url: `/v1/events/${eventID}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          origin: { kind: "saved_place", savedPlaceID: place.id },
+          preparationMinutes: 15,
+          trafficPreference: "best_guess",
+          recipientMemberIDs: ["kid-1", "parent-1"],
+          leaveAlertEnabled: true,
+        },
+      });
+      expect(planResponse.statusCode).toBe(200);
+      expect(planResponse.json()).toMatchObject({ eventID, revision: 1 });
+      expect(planResponse.json().familyID).toBeUndefined();
+
+      const preview = await app.inject({
+        method: "POST",
+        url: `/v1/events/${eventID}/travel-plan/preview`,
+        headers: { authorization: "Bearer kid-token" },
+      });
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json()).toMatchObject({
+        leaveTime: "2026-08-23T17:15:00.000Z",
+        durationSeconds: 1_800,
+        provider: "google_routes",
+        attribution: "Google Maps",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("enforces role and strict waypoint validation", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const forbidden = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer kid-token" },
+        payload: { visibility: "family", label: "Home", waypoint: { address: "Home" } },
+      });
+      expect(forbidden.statusCode).toBe(403);
+
+      const invalid = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "personal",
+          label: "Home",
+          waypoint: { address: "Home", placeID: "ChIJ_home" },
+        },
+      });
+      expect(invalid.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reports travel planning as unavailable when the module is disabled", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+      });
+      expect(response.statusCode).toBe(503);
+    } finally {
+      await app.close();
+    }
   });
 });

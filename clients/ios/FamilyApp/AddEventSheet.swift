@@ -5,6 +5,7 @@ struct AddEventSheet: View {
     let onSave: (FamilyEvent, Bool, UUID) async throws -> EventMutationResult
     let onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)?
     let onDelete: ((FamilyEvent, UUID) async throws -> Void)?
+    let onPlanTravel: (() -> Void)?
     let members: [FamilyMember]
 
     private let existingEvent: FamilyEvent?
@@ -52,7 +53,8 @@ struct AddEventSheet: View {
         locationSearch: any LocationSearch = EmptyLocationSearch(),
         onSave: @escaping (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
         onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)? = nil,
-        onDelete: ((FamilyEvent, UUID) async throws -> Void)? = nil
+        onDelete: ((FamilyEvent, UUID) async throws -> Void)? = nil,
+        onPlanTravel: (() -> Void)? = nil
     ) {
         existingEvent = event
         self.recurringSource = recurringSource
@@ -62,6 +64,7 @@ struct AddEventSheet: View {
         self.onSave = onSave
         self.onSaveRecurring = onSaveRecurring
         self.onDelete = onDelete
+        self.onPlanTravel = onPlanTravel
         self.members = members
         self.locationSearch = locationSearch
         _title = State(initialValue: event?.title ?? prefill?.title ?? "")
@@ -220,6 +223,22 @@ struct AddEventSheet: View {
                     }
                     if driverChoice == .other {
                         TextField("Other driver", text: $otherDriver)
+                    }
+                }
+
+                if existingEvent?.arrivalTime != nil,
+                   existingEvent?.location?.isEmpty == false,
+                   onPlanTravel != nil {
+                    Section("Travel") {
+                        Button {
+                            dismiss()
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(250))
+                                onPlanTravel?()
+                            }
+                        } label: {
+                            Label("Plan travel", systemImage: "car")
+                        }
                     }
                 }
             }
