@@ -40,6 +40,26 @@ _Avoid_: Per-assignee completion
 The optional supported interval before a reminder's due instant or an event occurrence's start when the responsible members should be notified. Reminder alerts go to assignees; event alerts go to participants.
 _Avoid_: Event duration, snooze
 
+**Arrival target**:
+The optional latest instant by which travelers intend to reach an Event location. It is at or before the Event start and does not change the Event's occupied time range.
+_Avoid_: Start time, leave time, Event alert
+
+**Travel plan**:
+An optional, Event-associated intention describing how identified travelers get from a confirmed origin to the Event destination by its arrival target.
+_Avoid_: Event, commute subscription, route response
+
+**Saved place**:
+A Member- or Family-owned named location that may be explicitly selected as a travel origin or destination.
+_Avoid_: Location history, inferred position
+
+**Leave time**:
+A recalculated travel-guidance instant derived from an arrival target, route estimate, and applicable preparation allowance. It is not a user-authored Event time.
+_Avoid_: Arrival target, Event start
+
+**Leave alert**:
+A dynamic notification intent telling authorized recipients to begin an Event's Travel plan at its latest calculated leave time. It remains distinct from the Event alert tied to Event start.
+_Avoid_: Event alert, schedule update notification, commute alert
+
 **Notification intent**:
 A typed, durable request to create one authorized Member inbox record and eligible channel-delivery work per recipient. It has a stable deduplication key and is recorded atomically with the authoritative domain change when one exists.
 _Avoid_: APNs payload, delivery receipt, transient banner
