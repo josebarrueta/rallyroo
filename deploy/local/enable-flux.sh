@@ -43,9 +43,12 @@ for item in $onepassword_items; do
     rallyroo-postgres) expected_keys='POSTGRES_PASSWORD' ;;
     rallyroo-stytch) expected_keys='STYTCH_SECRET' ;;
     rallyroo-calendar-encryption) expected_keys='CALENDAR_SOURCE_ENCRYPTION_KEY' ;;
+    rallyroo-family-data-encryption) expected_keys='FAMILY_DATA_ENCRYPTION_KEY' ;;
     rallyroo-google-places) expected_keys='GOOGLE_PLACES_API_KEY' ;;
+    rallyroo-google-routes) expected_keys='GOOGLE_ROUTES_API_KEY' ;;
     rallyroo-resend-invitations) expected_keys='RESEND_API_KEY' ;;
     rallyroo-apns) expected_keys='APNS_KEY_ID,APNS_PRIVATE_KEY' ;;
+    rallyroo-sf511) expected_keys='SF511_API_KEY' ;;
     rallyroo-observability) expected_keys='METRICS_BEARER_TOKEN' ;;
     *) echo "No expected Secret key contract for $item" >&2; exit 1 ;;
   esac
