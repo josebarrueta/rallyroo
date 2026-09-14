@@ -71,7 +71,10 @@ suggestions.
 Set `OLLAMA_BASE_URL` to enable parent-only schedule-draft extraction and optionally
 set `OLLAMA_MODEL` (default `qwen3.8:27b-mlx`). For an API process running directly
 on the Mac, use `http://127.0.0.1:11435`; containers can use the appropriate host
-gateway address. Rallyroo sends bounded transcript, OCR, or typed text plus family
+gateway address. Production uses `https://ollama.rallyroo.dev` and reads the paired
+`OLLAMA_CF_ACCESS_CLIENT_ID` and `OLLAMA_CF_ACCESS_CLIENT_SECRET` from secret files.
+Both credentials must be configured together and are refused for plaintext HTTP
+endpoints. See `docs/secure-ollama-tunnel.md`. Rallyroo sends bounded transcript, OCR, or typed text plus family
 member context. The adapter uses deterministic generation and strict validation;
 unsupported structured-output runtimes fall back to JSON-only generation before the
 same validation. Draft extraction never writes events or reminders and request bodies

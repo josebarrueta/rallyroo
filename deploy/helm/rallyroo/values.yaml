@@ -24,6 +24,7 @@ providerSecrets:
   apns: ""
   sf511: ""
   observability: ""
+  ollamaAccess: ""
 
 runtimeConfig:
   # Production enables this through Flux. Local development continues reading

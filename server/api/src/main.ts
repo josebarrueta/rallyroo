@@ -105,10 +105,18 @@ const calendarSources = calendarEncryptionKey
   })
   : undefined;
 const resendAPIKey = configuredSecret("RESEND_API_KEY");
+const ollamaAccessClientID = configuredSecret("OLLAMA_CF_ACCESS_CLIENT_ID");
+const ollamaAccessClientSecret = configuredSecret("OLLAMA_CF_ACCESS_CLIENT_SECRET");
+if (Boolean(ollamaAccessClientID) !== Boolean(ollamaAccessClientSecret)) {
+  throw new Error("OLLAMA_CF_ACCESS_CLIENT_ID and OLLAMA_CF_ACCESS_CLIENT_SECRET must be configured together");
+}
 const scheduleDraftExtractor = process.env.OLLAMA_BASE_URL
   ? new OllamaScheduleDraftExtractor({
     baseURL: new URL(process.env.OLLAMA_BASE_URL),
     model: process.env.OLLAMA_MODEL ?? "qwen3.8:27b-mlx",
+    ...(ollamaAccessClientID && ollamaAccessClientSecret
+      ? { access: { clientId: ollamaAccessClientID, clientSecret: ollamaAccessClientSecret } }
+      : {}),
   })
   : undefined;
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM

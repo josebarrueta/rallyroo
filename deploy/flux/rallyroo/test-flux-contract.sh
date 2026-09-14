@@ -41,6 +41,11 @@ grep -q '^      sf511: rallyroo-sf511$' "$FLUX_DIR/release.yaml"
 grep -q '^        enabled: true$' "$FLUX_DIR/release.yaml"
 grep -q '^  name: rallyroo-observability$' "$FLUX_DIR/onepassword-items.yaml"
 grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-observability$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^  name: rallyroo-ollama-access$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^  itemPath: vaults/rallyroo-prod/items/rallyroo-ollama-access$' "$FLUX_DIR/onepassword-items.yaml"
+grep -q '^      ollamaAccess: rallyroo-ollama-access$' "$FLUX_DIR/release.yaml"
+grep -q '^        baseURL: https://ollama.rallyroo.dev$' "$FLUX_DIR/release.yaml"
+grep -q "rallyroo-ollama-access) expected_keys='OLLAMA_CF_ACCESS_CLIENT_ID,OLLAMA_CF_ACCESS_CLIENT_SECRET'" "$ENABLE_SCRIPT"
 if grep -Eq '(token|address):[[:space:]]+[^[:space:]]' "$FLUX_DIR/onepassword-items.yaml"; then
   echo "OnePasswordItem manifests must contain references, never secret values" >&2
   exit 1

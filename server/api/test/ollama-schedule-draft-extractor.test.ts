@@ -67,6 +67,31 @@ describe("OllamaScheduleDraftExtractor", () => {
     expect(JSON.stringify(body.messages)).toContain("America/Los_Angeles");
   });
 
+  it("sends Cloudflare Access credentials only to an HTTPS endpoint", async () => {
+    let headers = new Headers();
+    const extractor = new OllamaScheduleDraftExtractor({
+      baseURL: new URL("https://ollama.example.com"),
+      model: "qwen3.8:27b-mlx",
+      access: { clientId: "client-id", clientSecret: "client-secret" },
+      fetch: async (_url, init) => {
+        headers = new Headers(init?.headers);
+        return new Response("unavailable", { status: 503 });
+      },
+    });
+
+    await expect(extractor.extract(request)).rejects.toThrow("unavailable");
+    expect(headers.get("CF-Access-Client-Id")).toBe("client-id");
+    expect(headers.get("CF-Access-Client-Secret")).toBe("client-secret");
+  });
+
+  it("refuses to send Cloudflare Access credentials over plaintext HTTP", () => {
+    expect(() => new OllamaScheduleDraftExtractor({
+      baseURL: new URL("http://127.0.0.1:11435"),
+      model: "qwen3.8:27b-mlx",
+      access: { clientId: "client-id", clientSecret: "client-secret" },
+    })).toThrow("require an HTTPS base URL");
+  });
+
   it("falls back to prompt-constrained JSON when the local runtime lacks structured outputs", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const validContent = `\`\`\`json\n${JSON.stringify({ drafts: [{
