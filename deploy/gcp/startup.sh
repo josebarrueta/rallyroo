@@ -225,6 +225,7 @@ helm upgrade --install onepassword 1password/connect \
   --set operator.authMethod=service-account \
   --set 'operator.watchNamespace={rallyroo}' \
   --set operator.autoRestart=true \
+  --set operator.pollingInterval=7200 \
   --wait --timeout 5m
 EOF
 chmod 0755 /usr/local/sbin/rallyroo-install-onepassword-operator

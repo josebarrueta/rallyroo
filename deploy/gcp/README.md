@@ -101,8 +101,10 @@ sudo rallyroo-set-cloudflare-token
 ```
 
 The first command installs pinned 1Password chart `2.4.1` in service-account mode,
-watching only the `rallyroo` namespace. The second enables the Cloudflare systemd
-service. Configure the named tunnel in Cloudflare to route the public API hostname
+watching only the `rallyroo` namespace. Production polls every two hours to stay
+within 1Password Families service-account daily read limits. After a 429 response,
+the Operator may still retry every 15 minutes until the account-wide window resets.
+The second command enables the Cloudflare systemd service. Configure the named tunnel in Cloudflare to route the public API hostname
 to `http://localhost:30080`; do not add a public GCP firewall rule for that port.
 
 This module installs Flux controllers but intentionally does not apply
