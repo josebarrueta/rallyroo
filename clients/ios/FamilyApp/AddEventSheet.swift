@@ -170,18 +170,41 @@ struct AddEventSheet: View {
                                 .font(.subheadline)
                             HStack(spacing: 6) {
                                 ForEach(EventRecurrence.Weekday.allCases, id: \.rawValue) { weekday in
-                                    Button(weekday.shortTitle) {
-                                        if selectedWeekdays.contains(weekday) && selectedWeekdays.count > 1 {
-                                            selectedWeekdays.remove(weekday)
-                                        } else {
-                                            selectedWeekdays.insert(weekday)
+                                    if recurringSource != nil {
+                                        Text(weekday.shortTitle)
+                                            .font(.subheadline.weight(.medium))
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.75)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 6)
+                                            .foregroundStyle(
+                                                selectedWeekdays.contains(weekday) ? .white : .secondary
+                                            )
+                                            .background(
+                                                selectedWeekdays.contains(weekday)
+                                                    ? AppTheme.purple
+                                                    : Color.secondary.opacity(0.12),
+                                                in: Capsule()
+                                            )
+                                            .accessibilityLabel(weekday.title)
+                                            .accessibilityAddTraits(
+                                                selectedWeekdays.contains(weekday) ? .isSelected : []
+                                            )
+                                    } else {
+                                        Button(weekday.shortTitle) {
+                                            if selectedWeekdays.contains(weekday) && selectedWeekdays.count > 1 {
+                                                selectedWeekdays.remove(weekday)
+                                            } else {
+                                                selectedWeekdays.insert(weekday)
+                                            }
                                         }
+                                        .buttonStyle(.bordered)
+                                        .tint(selectedWeekdays.contains(weekday) ? AppTheme.purple : .secondary)
+                                        .accessibilityLabel(weekday.title)
+                                        .accessibilityAddTraits(
+                                            selectedWeekdays.contains(weekday) ? .isSelected : []
+                                        )
                                     }
-                                    .buttonStyle(.bordered)
-                                    .tint(selectedWeekdays.contains(weekday) ? AppTheme.purple : .secondary)
-                                    .accessibilityLabel(weekday.title)
-                                    .accessibilityAddTraits(selectedWeekdays.contains(weekday) ? .isSelected : [])
-                                    .disabled(recurringSource != nil)
                                 }
                             }
                         }
