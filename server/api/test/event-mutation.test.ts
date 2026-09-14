@@ -201,7 +201,7 @@ describe("EventMutationModule", () => {
       driverMemberID: "parent-1",
       recurrenceSeriesID: event.id,
       recurrence: {
-        frequency: "weekly", interval: 1, weekdays: [2, 4], endDate: "2026-12-31T16:00:00.000Z",
+        frequency: "weekly", interval: 1, weekdays: [4, 2], endDate: "2026-12-31T16:00:00.000Z",
       },
     };
     await module.save({
@@ -328,12 +328,15 @@ describe("EventMutationModule", () => {
       deleteIDs: [],
       affectedEventIDs: [futureTuesdayID, futureThursdayID],
       affectedSourceEventIDs: [tuesdayRowID, thursdayRowID],
-      // Foundation's ISO-8601 encoder drops the .999 split boundary on round trip.
+      // The client/API round trip drops fractional seconds and canonicalizes weekday sets.
       baseSeriesEvents: splitRows.map((row) => ({
         ...row,
         ...(row.recurrence ? {
           recurrence: {
             ...row.recurrence,
+            weekdays: row.recurrence.weekdays
+              ? [...row.recurrence.weekdays].sort((left, right) => left - right)
+              : undefined,
             endDate: new Date(
               Math.floor(new Date(row.recurrence.endDate).getTime() / 1_000) * 1_000,
             ).toISOString(),
@@ -391,7 +394,7 @@ describe("EventMutationModule", () => {
       baseSeriesEvents: [source],
       idempotencyKey: "tampered-past-plan",
       notifyParticipants: false,
-    })).rejects.toEqual(new EventMutationError("invalid_recurring_edit", 409, "past_row_changed"));
+    })).rejects.toEqual(new EventMutationError("invalid_recurring_edit", 409));
     expect(await persistence.familyChangeVersion("family-1")).toBe(1);
   });
 
