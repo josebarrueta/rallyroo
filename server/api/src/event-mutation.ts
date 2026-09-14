@@ -26,7 +26,6 @@ export class EventMutationError extends Error {
       | "invalid_recurring_edit"
       | "event_not_found",
     readonly statusCode: 400 | 403 | 404 | 409,
-    readonly diagnosticReason?: string,
   ) {
     super(code);
     this.name = "EventMutationError";
@@ -410,14 +409,14 @@ function validateConcreteRecurringPlan(input: {
   const currentSeriesIDs = new Set(input.seriesRows.map((event) => event.id.toLowerCase()));
   const baseIDs = normalizedUniqueIDs(input.baseSeriesEvents.map((event) => event.id));
   if (!sameStringSet(currentSeriesIDs, new Set(baseIDs))) {
-    throw new EventMutationError("invalid_recurring_edit", 409, "series_membership_changed");
+    throw new EventMutationError("invalid_recurring_edit", 409);
   }
   const currentByID = new Map(input.seriesRows.map((event) => [event.id.toLowerCase(), event]));
   if (input.baseSeriesEvents.some((base) => {
     const current = currentByID.get(base.id.toLowerCase());
     return !current || eventVersionSignature(base) !== eventVersionSignature(current);
   })) {
-    throw new EventMutationError("invalid_recurring_edit", 409, "series_version_changed");
+    throw new EventMutationError("invalid_recurring_edit", 409);
   }
   const deleteIDs = normalizedUniqueIDs(input.deleteIDs);
   const deleteSet = new Set(deleteIDs);
@@ -437,7 +436,7 @@ function validateConcreteRecurringPlan(input: {
     upsertIDs.add(id);
     const existing = existingByID.get(id);
     if (existing && !currentSeriesIDs.has(id)) {
-      throw new EventMutationError("invalid_recurring_edit", 409, "upsert_id_conflict");
+      throw new EventMutationError("invalid_recurring_edit", 409);
     }
     if (candidate.source !== input.source.source
       || candidate.status !== input.source.status
@@ -464,7 +463,7 @@ function validateConcreteRecurringPlan(input: {
       : false;
     if ((plannedStartsInPast && !existingStartsInPast)
       || (existingStartsInPast && !pastRowIsPreserved(existing!, event))) {
-      throw new EventMutationError("invalid_recurring_edit", 409, "past_row_changed");
+      throw new EventMutationError("invalid_recurring_edit", 409);
     }
     return event;
   });
@@ -472,7 +471,7 @@ function validateConcreteRecurringPlan(input: {
     const existing = existingByID.get(id);
     if (!existing || !currentSeriesIDs.has(id)
       || new Date(existing.startTime) < input.occurrenceStart) {
-      throw new EventMutationError("invalid_recurring_edit", 409, "delete_target_changed");
+      throw new EventMutationError("invalid_recurring_edit", 409);
     }
   }
   const upsertsByID = new Map(upserts.map((event) => [event.id, event]));
@@ -493,7 +492,7 @@ function validateConcreteRecurringPlan(input: {
   const previousDriverMemberIDs = affectedSourceIDs.map((id) => {
     const event = existingByID.get(id);
     if (!event || !currentSeriesIDs.has(id)) {
-      throw new EventMutationError("invalid_recurring_edit", 409, "affected_source_changed");
+      throw new EventMutationError("invalid_recurring_edit", 409);
     }
     return event.driverMemberID;
   });
@@ -531,8 +530,8 @@ function eventVersionSignature(event: FamilyEvent): string {
     title: event.title,
     kidID: event.kidID,
     participantIDs: event.participantIDs,
-    startTime: new Date(event.startTime).getTime(),
-    endTime: new Date(event.endTime).getTime(),
+    startTime: eventVersionSecond(event.startTime),
+    endTime: eventVersionSecond(event.endTime),
     location: event.location,
     driver: event.driver,
     driverMemberID: event.driverMemberID ?? null,
@@ -541,12 +540,16 @@ function eventVersionSignature(event: FamilyEvent): string {
     alertLeadTimeMinutes: event.alertLeadTimeMinutes ?? null,
     recurrence: event.recurrence ? {
       ...event.recurrence,
-      endDate: new Date(event.recurrence.endDate).getTime(),
+      endDate: eventVersionSecond(event.recurrence.endDate),
     } : null,
     recurrenceSeriesID: event.recurrenceSeriesID?.toLowerCase() ?? null,
     readOnly: event.readOnly ?? false,
     provenance: event.provenance ?? [],
   });
+}
+
+function eventVersionSecond(value: string): number {
+  return Math.floor(new Date(value).getTime() / 1_000);
 }
 
 function pastRowIsPreserved(
