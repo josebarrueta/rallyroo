@@ -17,17 +17,26 @@ type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Resp
 interface Configuration {
   baseURL: URL;
   model: string;
+  access?: {
+    clientId: string;
+    clientSecret: string;
+  };
   fetch?: Fetch;
 }
 
 export class OllamaScheduleDraftExtractor implements ScheduleDraftExtractor {
   private readonly chatURL: URL;
   private readonly model: string;
+  private readonly access: Configuration["access"];
   private readonly fetch: Fetch;
 
-  constructor({ baseURL, model, fetch = globalThis.fetch }: Configuration) {
+  constructor({ baseURL, model, access, fetch = globalThis.fetch }: Configuration) {
+    if (access && baseURL.protocol !== "https:") {
+      throw new Error("Ollama Cloudflare Access credentials require an HTTPS base URL");
+    }
     this.chatURL = new URL("/api/chat", baseURL);
     this.model = model;
+    this.access = access;
     this.fetch = fetch;
   }
 
@@ -59,7 +68,15 @@ export class OllamaScheduleDraftExtractor implements ScheduleDraftExtractor {
     try {
       return await this.fetch(this.chatURL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.access
+            ? {
+              "CF-Access-Client-Id": this.access.clientId,
+              "CF-Access-Client-Secret": this.access.clientSecret,
+            }
+            : {}),
+        },
         body: JSON.stringify({
           model: this.model,
           stream: false,

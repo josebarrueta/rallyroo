@@ -64,6 +64,7 @@ Kubernetes Secret keys.
 | `rallyroo-calendar-encryption` | `CALENDAR_SOURCE_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-family-data-encryption` | `FAMILY_DATA_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-observability` | `METRICS_BEARER_TOKEN` | Rallyroo-generated |
+| `rallyroo-ollama-access` | `OLLAMA_CF_ACCESS_CLIENT_ID`, `OLLAMA_CF_ACCESS_CLIENT_SECRET` | Dedicated Cloudflare Access Service Token |
 | `rallyroo-deployment-alert-webhook` | concealed `token`, text `address` | Rallyroo-generated shared HMAC and `https://alerts.rallyroo.dev/flux` |
 | `rallyroo-alert-worker-resend` | `RESEND_API_KEY` | Resend, Full access |
 | `rallyroo-cloudflare-tunnel` | `CLOUDFLARE_TUNNEL_TOKEN` | Cloudflare Zero Trust |
@@ -72,6 +73,11 @@ The alert Worker Resend key and invitation-email Resend key are deliberately
 separate. Invitation delivery should use a domain-restricted Sending-access key.
 Resend custom Events currently requires Full access, so the Worker uses the
 separate Full-access key.
+
+The Ollama Access pair is distinct from the dedicated Mac tunnel token. Kubernetes
+receives only the Access pair; the Mac receives only the tunnel token. Follow
+[`secure-ollama-tunnel.md`](secure-ollama-tunnel.md) for the path-scoped application,
+exact tunnel route, origin Host-header override, installation, and verification.
 
 Production does not store `DATABASE_URL`. PostgreSQL host, port, database, and user
 are readable configuration; only `POSTGRES_PASSWORD` is secret. The API reads the
