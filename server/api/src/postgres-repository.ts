@@ -2048,7 +2048,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        RETURNING reminder.family_id, reminder.id::text, reminder.title,
                  reminder.assignee_ids, reminder.due_at, reminder.status,
                  reminder.completed_at, reminder.completed_by_member_id,
-                 reminder.alert_lead_time_minutes, reminder.created_by_member_id`,
+                 reminder.alert_lead_time_minutes, reminder.created_by_member_id,
+                 reminder.recurrence_frequency, reminder.recurrence_interval,
+                 reminder.recurrence_weekdays, reminder.recurrence_end_date,
+                 reminder.recurrence_series_id`,
       [now.toISOString(), limit],
     );
     return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
