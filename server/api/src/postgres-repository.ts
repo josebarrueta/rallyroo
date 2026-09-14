@@ -1992,20 +1992,29 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query(
       `INSERT INTO family_reminders (
          family_id, id, title, assignee_ids, due_at, status, completed_at,
-         completed_by_member_id, alert_lead_time_minutes, created_by_member_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         completed_by_member_id, alert_lead_time_minutes, created_by_member_id,
+         recurrence_frequency, recurrence_interval, recurrence_weekdays,
+         recurrence_end_date, recurrence_series_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, assignee_ids=EXCLUDED.assignee_ids,
          due_at=EXCLUDED.due_at, status=EXCLUDED.status,
          completed_at=EXCLUDED.completed_at,
          completed_by_member_id=EXCLUDED.completed_by_member_id,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
+         recurrence_frequency=EXCLUDED.recurrence_frequency,
+         recurrence_interval=EXCLUDED.recurrence_interval,
+         recurrence_weekdays=EXCLUDED.recurrence_weekdays,
+         recurrence_end_date=EXCLUDED.recurrence_end_date,
+         recurrence_series_id=EXCLUDED.recurrence_series_id,
          notification_claimed_at=NULL, notification_sent_at=NULL, updated_at=now()`,
       [
         reminder.familyID, reminder.id, protectedTitle, reminder.assigneeIDs,
         reminder.dueAt, reminder.status, reminder.completedAt,
         reminder.completedByMemberID, reminder.alertLeadTimeMinutes,
-        reminder.createdByMemberID,
+        reminder.createdByMemberID, reminder.recurrenceFrequency ?? "weekly",
+        reminder.recurrenceInterval ?? 1, reminder.recurrenceWeekdays ?? [],
+        reminder.recurrenceEndDate ?? null, reminder.recurrenceSeriesID ?? null,
       ],
     );
   }
@@ -2039,7 +2048,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        RETURNING reminder.family_id, reminder.id::text, reminder.title,
                  reminder.assignee_ids, reminder.due_at, reminder.status,
                  reminder.completed_at, reminder.completed_by_member_id,
-                 reminder.alert_lead_time_minutes, reminder.created_by_member_id`,
+                 reminder.alert_lead_time_minutes, reminder.created_by_member_id,
+                 reminder.recurrence_frequency, reminder.recurrence_interval,
+                 reminder.recurrence_weekdays, reminder.recurrence_end_date,
+                 reminder.recurrence_series_id`,
       [now.toISOString(), limit],
     );
     return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
@@ -2925,11 +2937,11 @@ interface ReminderRow {
   completed_by_member_id: string | null;
   alert_lead_time_minutes: FamilyReminder["alertLeadTimeMinutes"];
   created_by_member_id: string;
-  recurrence_frequency: string | null;
+  recurrence_frequency: Exclude<FamilyReminder["recurrenceFrequency"], undefined>;
   recurrence_interval: number | null;
   recurrence_weekdays: number[];
   recurrence_end_date: Date | string | null;
-  recurrence_series_id: string;
+  recurrence_series_id: string | null;
 }
 
 interface CalendarSourceRow {
@@ -3043,6 +3055,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
 }
 
 function reminderFromRow(row: ReminderRow): FamilyReminder {
+  const isSeriesTemplate = row.recurrence_weekdays.length > 0 && row.recurrence_end_date !== null;
   return {
     familyID: row.family_id,
     id: row.id,
@@ -3054,6 +3067,11 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     completedByMemberID: row.completed_by_member_id,
     alertLeadTimeMinutes: row.alert_lead_time_minutes,
     createdByMemberID: row.created_by_member_id,
+    recurrenceFrequency: isSeriesTemplate ? row.recurrence_frequency : null,
+    recurrenceInterval: isSeriesTemplate ? row.recurrence_interval : null,
+    recurrenceWeekdays: isSeriesTemplate ? row.recurrence_weekdays : [],
+    recurrenceEndDate: isSeriesTemplate ? asISOString(row.recurrence_end_date!) : null,
+    recurrenceSeriesID: row.recurrence_series_id,
   };
 }
 

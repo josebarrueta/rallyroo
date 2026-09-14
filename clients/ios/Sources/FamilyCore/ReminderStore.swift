@@ -85,6 +85,29 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
         case recurrenceSeriesID
      }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        assigneeIDs = try container.decode([KidID].self, forKey: .assigneeIDs)
+        dueAt = try container.decode(Date.self, forKey: .dueAt)
+        status = try container.decode(ReminderStatus.self, forKey: .status)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        completedByMemberID = try container.decodeIfPresent(KidID.self, forKey: .completedByMemberID)
+        alertLeadTime = try container.decodeIfPresent(ReminderAlertLeadTime.self, forKey: .alertLeadTime)
+        recurrenceFrequency = try container.decodeIfPresent(
+            ReminderRecurrence.Frequency.self,
+            forKey: .recurrenceFrequency
+        )
+        recurrenceInterval = try container.decodeIfPresent(Int.self, forKey: .recurrenceInterval)
+        recurrenceWeekdays = try container.decodeIfPresent(
+            [ReminderRecurrence.Weekday].self,
+            forKey: .recurrenceWeekdays
+        ) ?? []
+        recurrenceEndDate = try container.decodeIfPresent(Date.self, forKey: .recurrenceEndDate)
+        recurrenceSeriesID = try container.decodeIfPresent(UUID.self, forKey: .recurrenceSeriesID)
+    }
+
     public init(
         id: UUID = UUID(),
         title: String,

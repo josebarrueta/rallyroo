@@ -675,6 +675,11 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         title: "Persistent reminder",
         status: "completed",
         completedByMemberID: session.json().accountID,
+        recurrenceFrequency: null,
+        recurrenceInterval: null,
+        recurrenceWeekdays: [],
+        recurrenceEndDate: null,
+        recurrenceSeriesID: null,
       }),
     ]);
     const members = await reader.inject({

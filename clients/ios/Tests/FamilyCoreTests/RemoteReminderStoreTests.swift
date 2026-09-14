@@ -45,6 +45,21 @@ final class RemoteReminderStoreTests: XCTestCase {
         XCTAssertEqual(savedJSON["alertLeadTimeMinutes"] as? Int, 0)
       }
 
+    func testListsNonRecurringReminderWhenAPIResponseOmitsOptionalRecurrenceFields() async throws {
+        let response = Data(#"[{"id":"ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC101","title":"Bring the permission slip","assigneeIDs":["kid-1"],"dueAt":"2027-01-15T08:00:00.000Z","status":"open","completedAt":null,"completedByMemberID":null,"alertLeadTimeMinutes":0}]"#.utf8)
+        let transport = ReminderHTTPTransport(responses: [HTTPResponse(statusCode: 200, body: response)])
+        let store: any ReminderStore = RemoteReminderStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+
+        let reminders = try await store.reminders()
+
+        XCTAssertEqual(reminders.count, 1)
+        XCTAssertEqual(reminders[0].recurrenceWeekdays, [])
+        XCTAssertNil(reminders[0].recurrenceFrequency)
+    }
+
     func testSavesAndListsRecurringSeriesTemplate() async throws {
         let reminder = FamilyReminder(
             id: UUID(uuidString: "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC201")!,
