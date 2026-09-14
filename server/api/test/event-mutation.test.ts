@@ -391,7 +391,7 @@ describe("EventMutationModule", () => {
       baseSeriesEvents: [source],
       idempotencyKey: "tampered-past-plan",
       notifyParticipants: false,
-    })).rejects.toEqual(new EventMutationError("invalid_recurring_edit", 409));
+    })).rejects.toEqual(new EventMutationError("invalid_recurring_edit", 409, "past_row_changed"));
     expect(await persistence.familyChangeVersion("family-1")).toBe(1);
   });
 

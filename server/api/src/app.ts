@@ -1217,6 +1217,13 @@ export function buildApp({
       });
     } catch (error) {
       if (error instanceof EventMutationError) {
+        if (error.statusCode === 409) {
+          request.log.warn({
+            eventMutationCode: error.code,
+            diagnosticReason: error.diagnosticReason ?? "unspecified",
+            diagnosticFields: error.diagnosticFields,
+          }, "[DEBUG-recurring-edit-409-v2] recurring Event edit rejected");
+        }
         return reply.code(error.statusCode).send({ error: error.code });
       }
       throw error;
