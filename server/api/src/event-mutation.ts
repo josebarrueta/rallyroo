@@ -26,6 +26,8 @@ export class EventMutationError extends Error {
       | "invalid_recurring_edit"
       | "event_not_found",
     readonly statusCode: 400 | 403 | 404 | 409,
+    readonly diagnosticReason?: string,
+    readonly diagnosticFields: string[] = [],
   ) {
     super(code);
     this.name = "EventMutationError";
@@ -409,14 +411,25 @@ function validateConcreteRecurringPlan(input: {
   const currentSeriesIDs = new Set(input.seriesRows.map((event) => event.id.toLowerCase()));
   const baseIDs = normalizedUniqueIDs(input.baseSeriesEvents.map((event) => event.id));
   if (!sameStringSet(currentSeriesIDs, new Set(baseIDs))) {
-    throw new EventMutationError("invalid_recurring_edit", 409);
+    throw new EventMutationError("invalid_recurring_edit", 409, "series_membership_changed");
   }
   const currentByID = new Map(input.seriesRows.map((event) => [event.id.toLowerCase(), event]));
-  if (input.baseSeriesEvents.some((base) => {
+  const changedVersionFields = new Set<string>();
+  for (const base of input.baseSeriesEvents) {
     const current = currentByID.get(base.id.toLowerCase());
-    return !current || eventVersionSignature(base) !== eventVersionSignature(current);
-  })) {
-    throw new EventMutationError("invalid_recurring_edit", 409);
+    if (!current) {
+      changedVersionFields.add("missing_event");
+      continue;
+    }
+    for (const field of eventVersionMismatchFields(base, current)) changedVersionFields.add(field);
+  }
+  if (changedVersionFields.size > 0) {
+    throw new EventMutationError(
+      "invalid_recurring_edit",
+      409,
+      "series_version_changed",
+      [...changedVersionFields].sort(),
+    );
   }
   const deleteIDs = normalizedUniqueIDs(input.deleteIDs);
   const deleteSet = new Set(deleteIDs);
@@ -436,7 +449,7 @@ function validateConcreteRecurringPlan(input: {
     upsertIDs.add(id);
     const existing = existingByID.get(id);
     if (existing && !currentSeriesIDs.has(id)) {
-      throw new EventMutationError("invalid_recurring_edit", 409);
+      throw new EventMutationError("invalid_recurring_edit", 409, "upsert_id_conflict");
     }
     if (candidate.source !== input.source.source
       || candidate.status !== input.source.status
@@ -463,7 +476,7 @@ function validateConcreteRecurringPlan(input: {
       : false;
     if ((plannedStartsInPast && !existingStartsInPast)
       || (existingStartsInPast && !pastRowIsPreserved(existing!, event))) {
-      throw new EventMutationError("invalid_recurring_edit", 409);
+      throw new EventMutationError("invalid_recurring_edit", 409, "past_row_changed");
     }
     return event;
   });
@@ -471,7 +484,7 @@ function validateConcreteRecurringPlan(input: {
     const existing = existingByID.get(id);
     if (!existing || !currentSeriesIDs.has(id)
       || new Date(existing.startTime) < input.occurrenceStart) {
-      throw new EventMutationError("invalid_recurring_edit", 409);
+      throw new EventMutationError("invalid_recurring_edit", 409, "delete_target_changed");
     }
   }
   const upsertsByID = new Map(upserts.map((event) => [event.id, event]));
@@ -492,7 +505,7 @@ function validateConcreteRecurringPlan(input: {
   const previousDriverMemberIDs = affectedSourceIDs.map((id) => {
     const event = existingByID.get(id);
     if (!event || !currentSeriesIDs.has(id)) {
-      throw new EventMutationError("invalid_recurring_edit", 409);
+      throw new EventMutationError("invalid_recurring_edit", 409, "affected_source_changed");
     }
     return event.driverMemberID;
   });
@@ -546,6 +559,14 @@ function eventVersionSignature(event: FamilyEvent): string {
     readOnly: event.readOnly ?? false,
     provenance: event.provenance ?? [],
   });
+}
+
+function eventVersionMismatchFields(left: FamilyEvent, right: FamilyEvent): string[] {
+  const leftVersion = JSON.parse(eventVersionSignature(left)) as Record<string, unknown>;
+  const rightVersion = JSON.parse(eventVersionSignature(right)) as Record<string, unknown>;
+  return Object.keys(leftVersion).filter((field) =>
+    JSON.stringify(leftVersion[field]) !== JSON.stringify(rightVersion[field])
+  );
 }
 
 function eventVersionSecond(value: string): number {
