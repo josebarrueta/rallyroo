@@ -121,6 +121,12 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(event.waitForExistence(timeout: 5))
         event.tap()
         XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        let weekdayTitles = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        let selectedWeekday = weekdayTitles[Calendar.current.component(.weekday, from: Date()) - 1]
+        let selectedWeekdayChip = app.staticTexts[selectedWeekday]
+        XCTAssertTrue(selectedWeekdayChip.waitForExistence(timeout: 5))
+        XCTAssertTrue(selectedWeekdayChip.isSelected)
+        XCTAssertFalse(app.buttons[selectedWeekday].exists)
         app.buttons["Save"].tap()
 
         XCTAssertTrue(app.buttons["Only this occurrence"].waitForExistence(timeout: 5))
