@@ -117,12 +117,13 @@ const reminderSchema = z.object({
 });
 
 const locationSearchSchema = z.object({ q: z.string().trim().min(2).max(200) });
+const canonicalUUIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
 const travelWaypointSchema = z.union([
   z.object({ placeID: z.string().trim().min(1).max(500) }).strict(),
   z.object({ address: z.string().trim().min(1).max(500) }).strict(),
 ]);
 const travelPlanOriginSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("saved_place"), savedPlaceID: z.string().uuid() }).strict(),
+  z.object({ kind: z.literal("saved_place"), savedPlaceID: canonicalUUIDSchema }).strict(),
   z.object({ kind: z.literal("one_time"), waypoint: travelWaypointSchema }).strict(),
 ]);
 const eventTravelPlanSchema = z.object({
@@ -212,7 +213,6 @@ const commuterSubscriptionStatusSchema = z.object({
   status: z.enum(["active", "paused"]),
 });
 const commuterSubscriptionIDSchema = z.string().uuid();
-const canonicalUUIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
 
 const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -944,13 +944,13 @@ export function buildApp({
   app.put("/v1/saved-places/:id", async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const id = (request.params as { id: string }).id;
+    const id = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
     const parsed = savedPlaceSchema.safeParse(request.body);
-    if (!z.string().uuid().safeParse(id).success || !parsed.success) {
+    if (!id.success || !parsed.success) {
       return reply.code(400).send({ error: "invalid_saved_place" });
     }
     try {
-      const place = await travelPlanning.saveSavedPlace(account, { id, ...parsed.data });
+      const place = await travelPlanning.saveSavedPlace(account, { id: id.data, ...parsed.data });
       await repository.markFamilyChanged(account.familyID);
       return clientSavedPlace(place);
     } catch (error) {
@@ -961,12 +961,12 @@ export function buildApp({
   app.delete("/v1/saved-places/:id", async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const id = (request.params as { id: string }).id;
-    if (!z.string().uuid().safeParse(id).success) {
+    const id = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
+    if (!id.success) {
       return reply.code(400).send({ error: "invalid_saved_place" });
     }
     try {
-      if (!await travelPlanning.deleteSavedPlace(account, id)) {
+      if (!await travelPlanning.deleteSavedPlace(account, id.data)) {
         return reply.code(404).send({ error: "saved_place_not_found" });
       }
       await repository.markFamilyChanged(account.familyID);
