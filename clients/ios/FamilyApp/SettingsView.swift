@@ -9,6 +9,9 @@ struct SettingsView: View {
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let memberStore: (any FamilyMemberStore)?
     private let commuterStore: (any CommuterStore)?
+    private let travelPlanningStore: (any TravelPlanningStore)?
+    private let locationSearch: (any LocationSearch)?
+    private let canManageFamilyPlaces: Bool
     private let preferences = ConflictAlertPreferences()
 
     init(
@@ -17,6 +20,9 @@ struct SettingsView: View {
         calendarSourceStore: (any CalendarSourceStore)? = nil,
         memberStore: (any FamilyMemberStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
+        travelPlanningStore: (any TravelPlanningStore)? = nil,
+        locationSearch: (any LocationSearch)? = nil,
+        canManageFamilyPlaces: Bool = false,
         onSignOut: SignOutAction = SignOutAction({}),
         onDeleteAccount: DeleteAccountAction = DeleteAccountAction({})
     ) {
@@ -25,6 +31,9 @@ struct SettingsView: View {
         self.calendarSourceStore = calendarSourceStore
         self.memberStore = memberStore
         self.commuterStore = commuterStore
+        self.travelPlanningStore = travelPlanningStore
+        self.locationSearch = locationSearch
+        self.canManageFamilyPlaces = canManageFamilyPlaces
         self.onSignOut = onSignOut
         self.onDeleteAccount = onDeleteAccount
     }
@@ -59,6 +68,22 @@ struct SettingsView: View {
                             )
                         }
                         Text("Add TeamSnap, school, sports, or other iCalendar subscription links.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let travelPlanningStore, let locationSearch {
+                    Section("Places") {
+                        NavigationLink("Saved places") {
+                            SavedPlacesView(
+                                store: travelPlanningStore,
+                                locationSearch: locationSearch,
+                                currentMemberID: currentMemberID,
+                                canManageFamilyPlaces: canManageFamilyPlaces
+                            )
+                        }
+                        Text("Manage reusable starting locations for travel alerts.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -165,6 +190,261 @@ struct SettingsView: View {
                 try await onDeleteAccount.perform()
             } catch {
                 accountDeletionError = "We couldn't confirm account deletion. Please contact Rallyroo support before signing in again."
+            }
+        }
+    }
+}
+
+private struct SavedPlacesView: View {
+    let store: any TravelPlanningStore
+    let locationSearch: any LocationSearch
+    let currentMemberID: String?
+    let canManageFamilyPlaces: Bool
+    @State private var places: [SavedPlace] = []
+    @State private var editingPlace: SavedPlace?
+    @State private var isAdding = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if places.isEmpty, errorMessage == nil {
+                VStack(spacing: 8) {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("No saved places").font(.headline)
+                    Text("Add a reusable origin such as Home or Work.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical)
+                .accessibilityElement(children: .combine)
+            }
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(places) { place in
+                Button {
+                    if canEdit(place) { editingPlace = place }
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(place.label).font(.headline).foregroundStyle(.primary)
+                            Label(
+                                place.visibility == .family ? "Shared with family" : "Only me",
+                                systemImage: place.visibility == .family ? "person.2" : "person"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if canEdit(place) {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(canEdit(place) ? "Edit this saved place." : "This family place can only be changed by a parent.")
+                .swipeActions {
+                    if canEdit(place) {
+                        Button("Delete", role: .destructive) {
+                            Task { await delete(place) }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Saved places")
+        .toolbar {
+            Button { isAdding = true } label: { Image(systemName: "plus") }
+                .accessibilityLabel("Add saved place")
+        }
+        .task { await load() }
+        .refreshable { await load() }
+        .sheet(isPresented: $isAdding) {
+            SavedPlaceEditor(
+                place: nil,
+                locationSearch: locationSearch,
+                canShareWithFamily: canManageFamilyPlaces
+            ) { draft in
+                _ = try await store.createSavedPlace(draft)
+                await load()
+            }
+        }
+        .sheet(item: $editingPlace) { place in
+            SavedPlaceEditor(
+                place: place,
+                locationSearch: locationSearch,
+                canShareWithFamily: canManageFamilyPlaces
+            ) { draft in
+                _ = try await store.updateSavedPlace(draft, id: place.id)
+                await load()
+            }
+        }
+    }
+
+    private func canEdit(_ place: SavedPlace) -> Bool {
+        place.visibility == .family
+            ? canManageFamilyPlaces
+            : place.ownerMemberID == currentMemberID
+    }
+
+    private func load() async {
+        do {
+            places = try await store.savedPlaces()
+                .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+            errorMessage = nil
+        } catch {
+            errorMessage = "Saved places could not be loaded."
+        }
+    }
+
+    private func delete(_ place: SavedPlace) async {
+        do {
+            try await store.deleteSavedPlace(id: place.id)
+            await load()
+            NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+        } catch let RemoteStoreError.requestFailed(statusCode) where statusCode == 409 {
+            errorMessage = "This place is used by a travel plan. Change that plan's origin before deleting it."
+        } catch {
+            errorMessage = "The saved place could not be deleted."
+        }
+    }
+}
+
+private struct SavedPlaceEditor: View {
+    let place: SavedPlace?
+    let locationSearch: any LocationSearch
+    let canShareWithFamily: Bool
+    let onSave: (SavedPlaceDraft) async throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var label: String
+    @State private var visibility: SavedPlaceVisibility
+    @State private var address: String
+    @State private var selectedWaypoint: TravelWaypoint?
+    @State private var suggestions: [LocationSuggestion] = []
+    @State private var isChangingAddress: Bool
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        place: SavedPlace?,
+        locationSearch: any LocationSearch,
+        canShareWithFamily: Bool,
+        onSave: @escaping (SavedPlaceDraft) async throws -> Void
+    ) {
+        self.place = place
+        self.locationSearch = locationSearch
+        self.canShareWithFamily = canShareWithFamily
+        self.onSave = onSave
+        _label = State(initialValue: place?.label ?? "")
+        _visibility = State(initialValue: place?.visibility ?? (canShareWithFamily ? .family : .personal))
+        _address = State(initialValue: place?.waypoint.address ?? "")
+        _selectedWaypoint = State(initialValue: place?.waypoint)
+        _isChangingAddress = State(initialValue: place == nil)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Place") {
+                    TextField("Name, such as Home", text: $label)
+                    if canShareWithFamily {
+                        Picker("Visible to", selection: $visibility) {
+                            Text("Family").tag(SavedPlaceVisibility.family)
+                            Text("Only me").tag(SavedPlaceVisibility.personal)
+                        }
+                    }
+                }
+                Section("Address") {
+                    if isChangingAddress {
+                        TextField("Street address", text: Binding(
+                            get: { address },
+                            set: { newValue in
+                                address = newValue
+                                selectedWaypoint = nil
+                                suggestions = []
+                            }
+                        ))
+                        .textContentType(.fullStreetAddress)
+                        Button("Find address") { Task { await search() } }
+                            .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                        ForEach(suggestions) { suggestion in
+                            Button {
+                                address = suggestion.address
+                                selectedWaypoint = try? TravelWaypoint(placeID: suggestion.id)
+                                suggestions = []
+                            } label: {
+                                Label(suggestion.address, systemImage: "mappin.and.ellipse")
+                            }
+                        }
+                    } else {
+                        Text(place?.waypoint.address ?? "Saved map location")
+                        Button("Change address") {
+                            address = ""
+                            selectedWaypoint = nil
+                            isChangingAddress = true
+                        }
+                    }
+                }
+                if let errorMessage {
+                    Text(errorMessage).foregroundStyle(.red)
+                }
+            }
+            .navigationTitle(place == nil ? "Add place" : "Edit place")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSaving ? "Saving…" : "Save") { save() }
+                        .disabled(!canSave || isSaving)
+                }
+            }
+        }
+    }
+
+    private var canSave: Bool {
+        !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && waypoint != nil
+    }
+
+    private var waypoint: TravelWaypoint? {
+        if let selectedWaypoint { return selectedWaypoint }
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : try? TravelWaypoint(address: value)
+    }
+
+    private func search() async {
+        do {
+            suggestions = try await locationSearch.suggestions(for: address)
+            errorMessage = nil
+        } catch {
+            suggestions = []
+            errorMessage = "Address search is unavailable. You can still save the address you entered."
+        }
+    }
+
+    private func save() {
+        guard let waypoint else { return }
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                try await onSave(SavedPlaceDraft(
+                    visibility: canShareWithFamily ? visibility : .personal,
+                    label: label,
+                    waypoint: waypoint
+                ))
+                NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                dismiss()
+            } catch let RemoteStoreError.requestFailed(statusCode) where statusCode == 400 {
+                errorMessage = "Another saved place already uses this name. Choose a different name."
+            } catch {
+                errorMessage = "The saved place could not be saved."
             }
         }
     }

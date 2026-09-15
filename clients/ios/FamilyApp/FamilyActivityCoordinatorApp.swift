@@ -181,6 +181,9 @@ struct FamilyActivityCoordinatorApp: App {
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
                         commuterStore: commuterStore,
+                        travelPlanningStore: travelPlanningStore,
+                        locationSearch: locationSearch,
+                        canManageFamilyPlaces: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )

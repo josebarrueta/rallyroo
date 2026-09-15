@@ -2616,6 +2616,44 @@ describe("Travel planning HTTP API", () => {
     }
   });
 
+  it("treats equivalent Saved place labels as idempotent within a visibility scope", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const first = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "family",
+          label: "Home",
+          waypoint: { placeID: "ChIJ_home" },
+        },
+      });
+      const repeated = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "family",
+          label: "  HOME  ",
+          waypoint: { placeID: "ChIJ_other" },
+        },
+      });
+      const places = await app.inject({
+        method: "GET",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+      });
+
+      expect(first.statusCode).toBe(201);
+      expect(repeated.statusCode).toBe(201);
+      expect(repeated.json()).toEqual(first.json());
+      expect(places.json()).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("accepts uppercase Event UUIDs across Travel Plan operations", async () => {
     const app = appWithTravelPlanning();
     try {

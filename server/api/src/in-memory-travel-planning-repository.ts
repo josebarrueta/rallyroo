@@ -1,8 +1,10 @@
 import type { FamilyEvent, FamilyMember } from "./domain.js";
-import type {
-  EventTravelPlan,
-  SavedPlace,
-  TravelPlanningRepository,
+import {
+  normalizedSavedPlaceLabel,
+  SavedPlaceLabelConflictError,
+  type EventTravelPlan,
+  type SavedPlace,
+  type TravelPlanningRepository,
 } from "./travel-planning.js";
 
 export interface InMemoryTravelPlanningRepositoryOptions {
@@ -53,10 +55,20 @@ implements TravelPlanningRepository {
     return (this.savedPlacesByFamily.get(familyID) ?? []).map(clone);
     }
 
-  async saveSavedPlace(place: SavedPlace): Promise<void> {
+  async saveSavedPlace(place: SavedPlace): Promise<SavedPlace> {
     const family = this.savedPlacesByFamily.get(place.familyID) ?? [];
+    const existing = family.find((candidate) => candidate.id === place.id);
+    const equivalent = family.find((candidate) => candidate.id !== place.id
+      && candidate.visibility === place.visibility
+      && candidate.ownerMemberID === place.ownerMemberID
+      && normalizedSavedPlaceLabel(candidate.label) === normalizedSavedPlaceLabel(place.label));
+    if (equivalent) {
+      if (existing) throw new SavedPlaceLabelConflictError();
+      return clone(equivalent);
+    }
     upsert(family, place, (candidate) => candidate.id === place.id);
     this.savedPlacesByFamily.set(place.familyID, family);
+    return clone(place);
     }
 
   async deleteSavedPlace(familyID: string, placeID: string): Promise<boolean> {

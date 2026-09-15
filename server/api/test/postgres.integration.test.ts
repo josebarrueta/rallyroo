@@ -1204,6 +1204,41 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await commuter.state(account)).toMatchObject({ installation: null, subscriptions: [] });
   });
 
+  it("serializes concurrent equivalent Saved place creation across repository instances", async () => {
+    const firstRepository = repositoryForTest();
+    const secondRepository = repositoryForTest();
+    const account = await firstRepository.provisionParentAccount("saved-place-dedupe-parent", "Parent");
+    const timestamp = "2026-09-15T00:00:00Z";
+    const firstID = "00000000-0000-4000-8000-000000000241";
+    const secondID = "00000000-0000-4000-8000-000000000242";
+
+    const [first, second] = await Promise.all([
+      firstRepository.saveSavedPlace({
+        id: firstID,
+        familyID: account.familyID,
+        ownerMemberID: null,
+        visibility: "family",
+        label: "Home",
+        waypoint: { address: "First address" },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+      secondRepository.saveSavedPlace({
+        id: secondID,
+        familyID: account.familyID,
+        ownerMemberID: null,
+        visibility: "family",
+        label: "  HOME  ",
+        waypoint: { address: "Second address" },
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    ]);
+
+    expect(first.id).toBe(second.id);
+    expect(await firstRepository.savedPlacesForFamily(account.familyID)).toHaveLength(1);
+  });
+
   it("encrypts and round-trips Saved places and Event travel plans", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("travel-parent", "Travel Parent");
