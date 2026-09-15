@@ -336,9 +336,13 @@ describe("Rallyroo API", () => {
   it("exposes Prometheus metrics with optional bearer protection", async () => {
     const publicApp = buildApp({ identityProvider, repository: repository() });
     const health = await publicApp.inject({ method: "GET", url: "/health" });
+    const secondHealth = await publicApp.inject({ method: "GET", url: "/health" });
     const publicMetrics = await publicApp.inject({ method: "GET", url: "/metrics" });
 
-    expect(health.headers["x-request-id"]).toBeDefined();
+    expect(health.headers["x-request-id"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(secondHealth.headers["x-request-id"]).not.toBe(health.headers["x-request-id"]);
     expect(publicMetrics.statusCode).toBe(200);
     expect(publicMetrics.body).toContain("rallyroo_http_requests_total");
     expect(publicMetrics.body).toContain('route="/health"');

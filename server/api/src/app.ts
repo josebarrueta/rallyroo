@@ -286,7 +286,7 @@ export function buildApp({
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
     ...(notificationCenter ? { notificationCenter } : {}),
   });
-  const app = Fastify({ logger });
+  const app = Fastify({ logger, genReqId: () => randomUUID() });
   fastifyRateLimit(
     app,
     { global: true, max: 120, timeWindow: 60_000 },
