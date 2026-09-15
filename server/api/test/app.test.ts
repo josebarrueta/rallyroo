@@ -2661,6 +2661,74 @@ describe("Travel planning HTTP API", () => {
     }
   });
 
+  it("accepts uppercase Saved place UUIDs across Travel Plan and place operations", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const created = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "family",
+          label: "Home",
+          waypoint: { placeID: "ChIJ_home" },
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const uppercasePlaceID = String(created.json().id).toUpperCase();
+      const draft = {
+        origin: { kind: "saved_place", savedPlaceID: uppercasePlaceID },
+        preparationMinutes: 15,
+        trafficPreference: "best_guess",
+        recipientMemberIDs: ["kid-1", "parent-1"],
+        leaveAlertEnabled: true,
+      };
+
+      const preview = await app.inject({
+        method: "POST",
+        url: `/v1/events/${eventID}/travel-plan/preview`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: draft,
+      });
+      expect(preview.statusCode).toBe(200);
+
+      const savedPlan = await app.inject({
+        method: "PUT",
+        url: `/v1/events/${eventID}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: draft,
+      });
+      expect(savedPlan.statusCode).toBe(200);
+      expect(savedPlan.json().origin.savedPlaceID).toBe(String(created.json().id));
+
+      const updatedPlace = await app.inject({
+        method: "PUT",
+        url: `/v1/saved-places/${uppercasePlaceID}`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "family",
+          label: "Home base",
+          waypoint: { placeID: "ChIJ_home" },
+        },
+      });
+      expect(updatedPlace.statusCode).toBe(200);
+      expect(updatedPlace.json().label).toBe("Home base");
+
+      expect((await app.inject({
+        method: "DELETE",
+        url: `/v1/events/${eventID}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+      })).statusCode).toBe(204);
+      expect((await app.inject({
+        method: "DELETE",
+        url: `/v1/saved-places/${uppercasePlaceID}`,
+        headers: { authorization: "Bearer parent-token" },
+      })).statusCode).toBe(204);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("enforces role and strict waypoint validation", async () => {
     const app = appWithTravelPlanning();
     try {
