@@ -212,6 +212,7 @@ const commuterSubscriptionStatusSchema = z.object({
   status: z.enum(["active", "paused"]),
 });
 const commuterSubscriptionIDSchema = z.string().uuid();
+const canonicalUUIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
 
 const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -978,12 +979,12 @@ export function buildApp({
   app.get("/v1/events/:id/travel-plan", async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const eventID = (request.params as { id: string }).id;
-    if (!z.string().uuid().safeParse(eventID).success) {
+    const eventID = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
+    if (!eventID.success) {
       return reply.code(400).send({ error: "invalid_event_id" });
     }
     try {
-      const plan = await travelPlanning.travelPlan(account, eventID);
+      const plan = await travelPlanning.travelPlan(account, eventID.data);
       return plan
         ? clientTravelPlan(plan)
         : reply.code(404).send({ error: "travel_plan_not_found" });
@@ -995,13 +996,13 @@ export function buildApp({
   app.put("/v1/events/:id/travel-plan", async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const eventID = (request.params as { id: string }).id;
+    const eventID = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
     const parsed = eventTravelPlanSchema.safeParse(request.body);
-    if (!z.string().uuid().safeParse(eventID).success || !parsed.success) {
+    if (!eventID.success || !parsed.success) {
       return reply.code(400).send({ error: "invalid_travel_plan" });
     }
     try {
-      const plan = await travelPlanning.saveTravelPlan(account, eventID, parsed.data);
+      const plan = await travelPlanning.saveTravelPlan(account, eventID.data, parsed.data);
       await repository.markFamilyChanged(account.familyID);
       return clientTravelPlan(plan);
     } catch (error) {
@@ -1012,12 +1013,12 @@ export function buildApp({
   app.delete("/v1/events/:id/travel-plan", async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const eventID = (request.params as { id: string }).id;
-    if (!z.string().uuid().safeParse(eventID).success) {
+    const eventID = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
+    if (!eventID.success) {
       return reply.code(400).send({ error: "invalid_event_id" });
     }
     try {
-      if (!await travelPlanning.deleteTravelPlan(account, eventID)) {
+      if (!await travelPlanning.deleteTravelPlan(account, eventID.data)) {
         return reply.code(404).send({ error: "travel_plan_not_found" });
       }
       await repository.markFamilyChanged(account.familyID);
@@ -1032,8 +1033,8 @@ export function buildApp({
   }, async (request, reply) => {
     const account = requiredAccount(request);
     if (!travelPlanning) return reply.code(503).send({ error: "travel_planning_unavailable" });
-    const eventID = (request.params as { id: string }).id;
-    if (!z.string().uuid().safeParse(eventID).success) {
+    const eventID = canonicalUUIDSchema.safeParse((request.params as { id: string }).id);
+    if (!eventID.success) {
       return reply.code(400).send({ error: "invalid_event_id" });
     }
     const parsed = request.body === undefined
@@ -1041,7 +1042,7 @@ export function buildApp({
       : eventTravelPlanSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_travel_plan" });
     try {
-      const preview = await travelPlanning.preview(account, eventID, parsed.data);
+      const preview = await travelPlanning.preview(account, eventID.data, parsed.data);
       return {
         ...preview,
         leaveTime: preview.leaveTime.toISOString(),

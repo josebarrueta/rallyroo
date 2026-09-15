@@ -2529,7 +2529,7 @@ describe("Rallyroo API", () => {
 // Travel planning is tested with an isolated repository so API authorization and
 // transport contracts cannot accidentally rely on the core in-memory store.
 describe("Travel planning HTTP API", () => {
-  const eventID = "00000000-0000-4000-8000-000000000201";
+  const eventID = "abcdefab-cdef-4abc-8def-abcdefabcdef";
 
   function appWithTravelPlanning() {
     const core = repository();
@@ -2607,6 +2607,51 @@ describe("Travel planning HTTP API", () => {
         provider: "google_routes",
         attribution: "Google Maps",
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts uppercase Event UUIDs across Travel Plan operations", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const response = await app.inject({
+        method: "PUT",
+        url: `/v1/events/${eventID.toUpperCase()}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          origin: { kind: "one_time", waypoint: { address: "Home" } },
+          preparationMinutes: 15,
+          trafficPreference: "best_guess",
+          recipientMemberIDs: ["kid-1", "parent-1"],
+          leaveAlertEnabled: true,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ eventID, revision: 1 });
+
+      const readResponse = await app.inject({
+        method: "GET",
+        url: `/v1/events/${eventID.toUpperCase()}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+      });
+      expect(readResponse.statusCode).toBe(200);
+      expect(readResponse.json()).toMatchObject({ eventID, revision: 1 });
+
+      const previewResponse = await app.inject({
+        method: "POST",
+        url: `/v1/events/${eventID.toUpperCase()}/travel-plan/preview`,
+        headers: { authorization: "Bearer parent-token" },
+      });
+      expect(previewResponse.statusCode).toBe(200);
+
+      const deleteResponse = await app.inject({
+        method: "DELETE",
+        url: `/v1/events/${eventID.toUpperCase()}/travel-plan`,
+        headers: { authorization: "Bearer parent-token" },
+      });
+      expect(deleteResponse.statusCode).toBe(204);
     } finally {
       await app.close();
     }
