@@ -352,6 +352,11 @@ private struct AddCalendarSourceView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                    if let calendarRequirementMessage {
+                        Label(calendarRequirementMessage, systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Section("Visibility") {
                     Picker("Who can see imported events?", selection: $visibility) {
@@ -375,6 +380,11 @@ private struct AddCalendarSourceView: View {
                             }
                         ))
                     }
+                    if participantIDs.isEmpty {
+                        Label("Choose at least one family member.", systemImage: "person.crop.circle.badge.questionmark")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
@@ -387,10 +397,29 @@ private struct AddCalendarSourceView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isSaving ? "Importing…" : "Import") { add() }
-                        .disabled(validatedURL == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || participantIDs.isEmpty || isSaving)
+                        .disabled(importBlockReason != nil || isSaving)
+                        .accessibilityHint(importBlockReason ?? "Imports this calendar subscription.")
                 }
             }
         }
+    }
+
+    private var importBlockReason: String? {
+        calendarRequirementMessage
+            ?? (participantIDs.isEmpty ? "Choose at least one family member." : nil)
+    }
+
+    private var calendarRequirementMessage: String? {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter a calendar name."
+        }
+        if urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Paste a calendar subscription link."
+        }
+        if validatedURL == nil {
+            return "Enter a valid HTTPS or webcal subscription link."
+        }
+        return nil
     }
 
     private var validatedURL: URL? {
