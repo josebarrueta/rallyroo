@@ -222,6 +222,20 @@ public struct TravelPlanDraft: Codable, Equatable, Sendable {
         self.leaveAlertEnabled = leaveAlertEnabled
      }
 
+    public static func automatic(
+        origin: TravelPlanOrigin,
+        eligibleRecipientIDs: [String],
+        leaveAlertEnabled: Bool
+    ) -> TravelPlanDraft {
+        TravelPlanDraft(
+            origin: origin,
+            preparationMinutes: 0,
+            trafficPreference: .bestGuess,
+            recipientMemberIDs: Array(Set(eligibleRecipientIDs)).sorted(),
+            leaveAlertEnabled: leaveAlertEnabled
+        )
+    }
+
     public func validate() throws {
         guard (0...180).contains(preparationMinutes) else {
             throw TravelPlanningError.invalidPreparationMinutes

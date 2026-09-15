@@ -59,7 +59,7 @@ export interface TravelPlanningRepository {
   eventsForFamily(familyID: string): Promise<FamilyEvent[]>;
   membersForFamily(familyID: string): Promise<FamilyMember[]>;
   savedPlacesForFamily(familyID: string): Promise<SavedPlace[]>;
-  saveSavedPlace(place: SavedPlace): Promise<void>;
+  saveSavedPlace(place: SavedPlace): Promise<SavedPlace>;
   deleteSavedPlace(familyID: string, placeID: string): Promise<boolean>;
   familyIDsWithTravelPlans(): Promise<string[]>;
   travelPlansForFamily(familyID: string): Promise<EventTravelPlan[]>;
@@ -81,6 +81,13 @@ export type TravelPlanningFailureReason =
   | "invalid_saved_place"
   | "invalid_travel_plan"
   | "invalid_recipients";
+
+export class SavedPlaceLabelConflictError extends Error {
+  constructor() {
+    super("saved_place_label_conflict");
+    this.name = "SavedPlaceLabelConflictError";
+  }
+}
 
 export class TravelPlanningError extends Error {
   constructor(public readonly reason: TravelPlanningFailureReason) {
@@ -110,10 +117,19 @@ export class TravelPlanningModule {
     if (draft.visibility !== "family" && draft.visibility !== "personal") {
       throw new TravelPlanningError("invalid_saved_place");
     }
+    const visiblePlaces = await this.listSavedPlaces(account);
     const existing = draft.id
-      ? (await this.listSavedPlaces(account)).find((place) => place.id === draft.id)
+      ? visiblePlaces.find((place) => place.id === draft.id)
       : undefined;
     if (draft.id && !existing) throw new TravelPlanningError("saved_place_not_found");
+    const equivalent = visiblePlaces.find((place) => place.id !== draft.id
+      && place.visibility === draft.visibility
+      && place.ownerMemberID === (draft.visibility === "personal" ? account.memberID : null)
+      && normalizedSavedPlaceLabel(place.label) === normalizedSavedPlaceLabel(label));
+    if (equivalent) {
+      if (draft.id) throw new TravelPlanningError("invalid_saved_place");
+      return equivalent;
+    }
     if (existing?.visibility === "family" && account.role !== "parent") {
       throw new TravelPlanningError("parent_required");
     }
@@ -128,8 +144,14 @@ export class TravelPlanningModule {
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
-    await this.repository.saveSavedPlace(place);
-    return place;
+    try {
+      return await this.repository.saveSavedPlace(place);
+    } catch (error) {
+      if (error instanceof SavedPlaceLabelConflictError) {
+        throw new TravelPlanningError("invalid_saved_place");
+      }
+      throw error;
+    }
   }
 
   async deleteSavedPlace(account: Account, placeID: string): Promise<boolean> {
@@ -267,6 +289,10 @@ export class TravelPlanningModule {
 
 function requireParent(account: Account): void {
   if (account.role !== "parent") throw new TravelPlanningError("parent_required");
+}
+
+export function normalizedSavedPlaceLabel(label: string): string {
+  return label.trim().normalize("NFKC").toLocaleLowerCase("en-US");
 }
 
 function validateLabel(label: unknown): string {

@@ -3,6 +3,19 @@ import XCTest
 @testable import FamilyCore
 
 final class RemoteTravelPlanningStoreTests: XCTestCase {
+    func testAutomaticTravelPlanUsesAllEligibleRecipientsAndNoUserTuning() throws {
+        let draft = TravelPlanDraft.automatic(
+            origin: .oneTime(try TravelWaypoint(address: "Home")),
+            eligibleRecipientIDs: ["member-parent", "member-kid", "member-parent"],
+            leaveAlertEnabled: true
+        )
+
+        XCTAssertEqual(draft.preparationMinutes, 0)
+        XCTAssertEqual(draft.trafficPreference, .bestGuess)
+        XCTAssertEqual(draft.recipientMemberIDs, ["member-kid", "member-parent"])
+        XCTAssertTrue(draft.leaveAlertEnabled)
+    }
+
     // MARK: Fixed identifiers and samples
 
     private let eventID = UUID(uuidString: "00000000-0000-4000-8000-000000000101")!

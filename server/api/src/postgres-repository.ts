@@ -27,11 +27,13 @@ import {
   type WrappedFamilyDataKey,
 } from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
-import type {
-  EventTravelPlan,
-  SavedPlace,
-  TravelPlanOrigin,
-  TravelPlanningRepository,
+import {
+  normalizedSavedPlaceLabel,
+  SavedPlaceLabelConflictError,
+  type EventTravelPlan,
+  type SavedPlace,
+  type TravelPlanOrigin,
+  type TravelPlanningRepository,
 } from "./travel-planning.js";
 import type { TravelWaypoint } from "./travel-preview.js";
 import type {
@@ -2287,26 +2289,56 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return Promise.all(result.rows.map((row) => this.savedPlaceFromRow(row)));
   }
 
-  async saveSavedPlace(place: SavedPlace): Promise<void> {
-    const details = await this.familyDataProtector.protect(
-      place.familyID,
-      `saved-place:${place.id}:details`,
-      JSON.stringify({ label: place.label, waypoint: place.waypoint }),
-    );
-    await this.pool.query(
-      `INSERT INTO saved_places
-         (family_id, id, owner_member_id, visibility, details_ciphertext, created_at, updated_at)
-       VALUES ($1, $2::uuid, $3, $4, $5, $6::timestamptz, $7::timestamptz)
-       ON CONFLICT (family_id, id) DO UPDATE SET
-         owner_member_id = EXCLUDED.owner_member_id,
-         visibility = EXCLUDED.visibility,
-         details_ciphertext = EXCLUDED.details_ciphertext,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        place.familyID, place.id, place.ownerMemberID, place.visibility,
-        details, place.createdAt, place.updatedAt,
-      ],
-    );
+  async saveSavedPlace(place: SavedPlace): Promise<SavedPlace> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [place.familyID]);
+      const rows = await client.query<SavedPlaceRow>(
+        `SELECT family_id, id::text, owner_member_id, visibility,
+                details_ciphertext, created_at, updated_at
+         FROM saved_places WHERE family_id = $1 ORDER BY created_at, id FOR UPDATE`,
+        [place.familyID],
+      );
+      const family = await Promise.all(rows.rows.map((row) => this.savedPlaceFromRow(row)));
+      const existing = family.find((candidate) => candidate.id === place.id);
+      const equivalent = family.find((candidate) => candidate.id !== place.id
+        && candidate.visibility === place.visibility
+        && candidate.ownerMemberID === place.ownerMemberID
+        && normalizedSavedPlaceLabel(candidate.label) === normalizedSavedPlaceLabel(place.label));
+      if (equivalent) {
+        if (existing) throw new SavedPlaceLabelConflictError();
+        await client.query("COMMIT");
+        return equivalent;
+      }
+
+      const details = await this.familyDataProtector.protect(
+        place.familyID,
+        `saved-place:${place.id}:details`,
+        JSON.stringify({ label: place.label, waypoint: place.waypoint }),
+      );
+      await client.query(
+        `INSERT INTO saved_places
+           (family_id, id, owner_member_id, visibility, details_ciphertext, created_at, updated_at)
+         VALUES ($1, $2::uuid, $3, $4, $5, $6::timestamptz, $7::timestamptz)
+         ON CONFLICT (family_id, id) DO UPDATE SET
+           owner_member_id = EXCLUDED.owner_member_id,
+           visibility = EXCLUDED.visibility,
+           details_ciphertext = EXCLUDED.details_ciphertext,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          place.familyID, place.id, place.ownerMemberID, place.visibility,
+          details, place.createdAt, place.updatedAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return place;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async deleteSavedPlace(familyID: string, placeID: string): Promise<boolean> {

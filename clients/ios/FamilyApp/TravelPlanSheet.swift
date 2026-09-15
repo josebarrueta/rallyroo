@@ -27,15 +27,8 @@ struct TravelPlanSheet: View {
             Form {
                 eventSection
                 if readOnly {
-                    if let plan = model.existingPlan {
-                        Section("Plan") {
-                            LabeledContent("Preparation", value: "\(plan.preparationMinutes) min")
-                            LabeledContent(
-                                "Traffic estimate",
-                                value: plan.trafficPreference == .bestGuess ? "Best estimate" : "Extra cautious"
-                            )
-                        }
-                        readOnlyPreviewSection
+                    if model.existingPlan != nil {
+                        previewSection
                     } else if model.isWorking {
                         ProgressView("Loading travel details…")
                     } else {
@@ -46,9 +39,8 @@ struct TravelPlanSheet: View {
                         }
                     }
                 } else {
+                    alertSection
                     originSection
-                    timingSection
-                    recipientSection
                     previewSection
                     if model.existingPlan != nil {
                         Section {
@@ -73,7 +65,7 @@ struct TravelPlanSheet: View {
                     }
                 }
             }
-            .task { await model.load() }
+            .task { await model.load(readOnly: readOnly) }
             .alert("Travel plan", isPresented: Binding(
                 get: { model.message != nil },
                 set: { if !$0 { model.message = nil } }
@@ -109,6 +101,7 @@ struct TravelPlanSheet: View {
                     Text("Private saved place").tag(model.originChoice)
                 }
             }
+            .onChange(of: model.originChoice) { _ in model.originChanged() }
             if model.originChoice == TravelPlanViewModel.oneTimeChoice {
                 TextField("Starting address", text: Binding(
                     get: { model.originAddress },
@@ -125,62 +118,33 @@ struct TravelPlanSheet: View {
                         Label(suggestion.address, systemImage: "mappin.and.ellipse")
                     }
                 }
-                Toggle("Save this origin", isOn: $model.shouldSaveOrigin)
-                if model.shouldSaveOrigin {
-                    TextField("Place name", text: $model.savedPlaceLabel)
-                    Picker("Visible to", selection: $model.savedPlaceVisibility) {
-                        Text("Family").tag(SavedPlaceVisibility.family)
-                        Text("Only me").tag(SavedPlaceVisibility.personal)
-                    }
-                }
-            }
-        }
-    }
-
-    private var timingSection: some View {
-        Section("Timing") {
-            Stepper("Preparation: \(model.preparationMinutes) min", value: $model.preparationMinutes, in: 0...180, step: 5)
-            Picker("Traffic estimate", selection: $model.trafficPreference) {
-                Text("Best estimate").tag(TrafficPreference.bestGuess)
-                Text("Extra cautious").tag(TrafficPreference.pessimistic)
-            }
-            if !model.eligibleMembers.isEmpty {
-                Toggle("Leave alert", isOn: $model.leaveAlertEnabled)
-            }
-        }
-    }
-
-    private var recipientSection: some View {
-        Section("Alert recipients") {
-            ForEach(model.eligibleMembers) { member in
-                Toggle(member.name, isOn: Binding(
-                    get: { model.recipientMemberIDs.contains(member.id.rawValue) },
-                    set: { model.setRecipient(member.id.rawValue, selected: $0) }
-                ))
-            }
-            if model.eligibleMembers.isEmpty {
-                Text("Add an Event participant or assigned driver before planning travel.")
+                Text("To reuse an address, add it under Settings › Saved places.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var readOnlyPreviewSection: some View {
-        Section("Leave time") {
-            Button(model.isPreviewing ? "Calculating…" : "Refresh traffic guidance") {
-                Task { await model.previewSavedPlan() }
+    private var alertSection: some View {
+        Section("Alert") {
+            Toggle("Leave alert", isOn: $model.leaveAlertEnabled)
+                .disabled(model.eligibleMembers.isEmpty)
+            if model.eligibleMembers.isEmpty {
+                Text("Add an Event participant or assigned driver to enable a Leave alert.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("The Event participants and assigned driver will receive the alert.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            .disabled(model.isPreviewing || model.isWorking)
-            previewResult
         }
     }
 
     private var previewSection: some View {
         Section("Leave time") {
-            Button(model.isPreviewing ? "Calculating…" : "Calculate with traffic") {
-                Task { await model.preview() }
+            if model.isPreviewing {
+                ProgressView("Updating traffic…")
             }
-            .disabled(!model.canSave || model.isWorking)
             previewResult
         }
     }
@@ -199,8 +163,12 @@ struct TravelPlanSheet: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("Google Maps")
+        } else if let previewStatusMessage = model.previewStatusMessage {
+            Text(previewStatusMessage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         } else {
-            Text("Traffic guidance is a preview and may change before departure.")
+            Text("Select an origin to see an automatic traffic estimate.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -218,14 +186,10 @@ final class TravelPlanViewModel: ObservableObject {
     @Published var originChoice = oneTimeChoice
     @Published var originAddress = ""
     @Published var suggestions: [LocationSuggestion] = []
-    @Published var shouldSaveOrigin = false
-    @Published var savedPlaceLabel = ""
-    @Published var savedPlaceVisibility = SavedPlaceVisibility.family
-    @Published var preparationMinutes = 15
-    @Published var trafficPreference = TrafficPreference.bestGuess
     @Published var recipientMemberIDs = Set<String>()
     @Published var leaveAlertEnabled = true
     @Published var previewResult: TravelPreview?
+    @Published var previewStatusMessage: String?
     @Published var message: String?
     @Published var isWorking = false
     @Published var isPreviewing = false
@@ -235,6 +199,8 @@ final class TravelPlanViewModel: ObservableObject {
     private let locationSearch: any LocationSearch
     private var selectedOriginPlaceID: String?
     private var selectedOriginAddress: String?
+    private var previewTask: Task<Void, Never>?
+    private var previewGeneration = 0
 
     init(
         event: FamilyEvent,
@@ -257,16 +223,13 @@ final class TravelPlanViewModel: ObservableObject {
         if originChoice == Self.oneTimeChoice {
             let hasOrigin = selectedOriginPlaceID != nil
                 || !originAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let validSavedPlace = !shouldSaveOrigin
-                || !savedPlaceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            return hasOrigin && validSavedPlace
+            return hasOrigin
         }
         return UUID(uuidString: originChoice) != nil
     }
 
-    func load() async {
+    func load(readOnly: Bool) async {
         isWorking = true
-        defer { isWorking = false }
         do {
             async let places = store.savedPlaces()
             async let plan = store.travelPlan(for: event.id)
@@ -275,7 +238,13 @@ final class TravelPlanViewModel: ObservableObject {
                 existingPlan = loadedPlan
                 apply(loadedPlan)
             }
+            isWorking = false
+            if existingPlan != nil {
+                if readOnly { await previewSavedPlan() }
+                else { await preview() }
+            }
         } catch {
+            isWorking = false
             message = "Travel planning could not be loaded."
         }
     }
@@ -295,7 +264,13 @@ final class TravelPlanViewModel: ObservableObject {
             selectedOriginPlaceID = nil
             selectedOriginAddress = nil
         }
-        previewResult = nil
+        invalidatePreview()
+        schedulePreview()
+    }
+
+    func originChanged() {
+        invalidatePreview()
+        schedulePreview(delay: .milliseconds(150))
     }
 
     func selectSuggestion(_ suggestion: LocationSuggestion) {
@@ -303,61 +278,56 @@ final class TravelPlanViewModel: ObservableObject {
         selectedOriginPlaceID = suggestion.id
         selectedOriginAddress = suggestion.address
         suggestions = []
-        previewResult = nil
-    }
-
-    func setRecipient(_ id: String, selected: Bool) {
-        if selected { recipientMemberIDs.insert(id) }
-        else { recipientMemberIDs.remove(id) }
-        previewResult = nil
+        invalidatePreview()
+        schedulePreview(delay: .milliseconds(150))
     }
 
     func preview() async {
         guard let draft = try? makeDraft() else { return }
+        previewGeneration += 1
+        let generation = previewGeneration
         isPreviewing = true
         previewResult = nil
-        defer { isPreviewing = false }
+        previewStatusMessage = nil
+        defer { if generation == previewGeneration { isPreviewing = false } }
         do {
-            previewResult = try await store.previewTravelPlan(draft, for: event.id)
+            let result = try await store.previewTravelPlan(draft, for: event.id)
+            guard generation == previewGeneration else { return }
+            previewResult = result
         } catch let RemoteStoreError.requestFailed(statusCode) where statusCode == 503 {
-            message = "Traffic estimates are temporarily unavailable. You can still save the travel plan."
+            guard generation == previewGeneration else { return }
+            previewStatusMessage = "Traffic is temporarily unavailable. You can still save the travel plan."
         } catch {
-            message = "A leave time could not be calculated right now."
+            guard generation == previewGeneration else { return }
+            previewStatusMessage = "A traffic estimate could not be calculated right now. You can still save the travel plan."
         }
     }
 
     func previewSavedPlan() async {
+        previewGeneration += 1
+        let generation = previewGeneration
         isPreviewing = true
         previewResult = nil
-        defer { isPreviewing = false }
+        previewStatusMessage = nil
+        defer { if generation == previewGeneration { isPreviewing = false } }
         do {
-            previewResult = try await store.previewTravelPlan(for: event.id)
+            let result = try await store.previewTravelPlan(for: event.id)
+            guard generation == previewGeneration else { return }
+            previewResult = result
         } catch let RemoteStoreError.requestFailed(statusCode) where statusCode == 503 {
-            message = "Traffic estimates are temporarily unavailable."
+            guard generation == previewGeneration else { return }
+            previewStatusMessage = "Traffic is temporarily unavailable."
         } catch {
-            message = "A leave time could not be calculated right now."
+            guard generation == previewGeneration else { return }
+            previewStatusMessage = "A traffic estimate could not be calculated right now."
         }
     }
 
     func save() async {
-        guard var draft = try? makeDraft() else { return }
+        guard let draft = try? makeDraft() else { return }
         isWorking = true
         defer { isWorking = false }
         do {
-            if shouldSaveOrigin, originChoice == Self.oneTimeChoice {
-                let place = try await store.createSavedPlace(SavedPlaceDraft(
-                    visibility: savedPlaceVisibility,
-                    label: savedPlaceLabel,
-                    waypoint: try oneTimeWaypoint()
-                ))
-                draft = TravelPlanDraft(
-                    origin: .savedPlace(place.id),
-                    preparationMinutes: draft.preparationMinutes,
-                    trafficPreference: draft.trafficPreference,
-                    recipientMemberIDs: draft.recipientMemberIDs,
-                    leaveAlertEnabled: draft.leaveAlertEnabled
-                )
-            }
             _ = try await store.saveTravelPlan(draft, for: event.id)
             didFinish = true
             NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
@@ -384,11 +354,7 @@ final class TravelPlanViewModel: ObservableObject {
     }
 
     private func apply(_ plan: EventTravelPlan) {
-        preparationMinutes = plan.preparationMinutes
-        trafficPreference = plan.trafficPreference
-        recipientMemberIDs = Set(plan.recipientMemberIDs).intersection(
-            eligibleMembers.map { $0.id.rawValue }
-        )
+        recipientMemberIDs = Set(eligibleMembers.map { $0.id.rawValue })
         leaveAlertEnabled = plan.leaveAlertEnabled && !recipientMemberIDs.isEmpty
         switch plan.origin {
         case let .savedPlace(id): originChoice = id.uuidString
@@ -409,13 +375,28 @@ final class TravelPlanViewModel: ObservableObject {
         } else {
             throw TravelPlanningError.invalidWaypoint
         }
-        return TravelPlanDraft(
+        return TravelPlanDraft.automatic(
             origin: origin,
-            preparationMinutes: preparationMinutes,
-            trafficPreference: trafficPreference,
-            recipientMemberIDs: recipientMemberIDs.sorted(),
+            eligibleRecipientIDs: eligibleMembers.map { $0.id.rawValue },
             leaveAlertEnabled: leaveAlertEnabled
         )
+    }
+
+    private func invalidatePreview() {
+        previewGeneration += 1
+        isPreviewing = false
+        previewResult = nil
+        previewStatusMessage = nil
+    }
+
+    private func schedulePreview(delay: Duration = .milliseconds(700)) {
+        previewTask?.cancel()
+        guard canSave else { return }
+        previewTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await self?.preview()
+        }
     }
 
     private func oneTimeWaypoint() throws -> TravelWaypoint {
