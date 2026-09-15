@@ -8,10 +8,12 @@ import FamilyCore
 
 struct ScheduleCaptureSheet: View {
     let members: [FamilyMember]
+    private let initialImageData: Data?
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var intake: ScheduleDraftIntake
     @State private var isShowingNotifyPrompt = false
+    @State private var didConsumeInitialImage = false
      @State private var speechLanguage: SpeechLanguage = .english
 
      enum SpeechLanguage: String, CaseIterable, Identifiable {
@@ -31,11 +33,13 @@ struct ScheduleCaptureSheet: View {
     init(
         extractor: any ScheduleDraftExtractor,
         members: [FamilyMember],
+        initialImageData: Data? = nil,
         onSaveEvent: @escaping @MainActor (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
         onSaveReminder: @escaping @MainActor (FamilyReminder) async throws -> Void,
         speechLocale: Locale = Locale(identifier: "en-US")
     ) {
         self.members = members
+        self.initialImageData = initialImageData
         let persistence = ClosureScheduleDraftPersistence(
             onSaveEvent: onSaveEvent,
             onSaveReminder: onSaveReminder
@@ -211,6 +215,11 @@ struct ScheduleCaptureSheet: View {
                 dismiss()
             }
             .interactiveDismissDisabled(intake.phase == .saving)
+            .task {
+                guard !didConsumeInitialImage, let initialImageData else { return }
+                didConsumeInitialImage = true
+                intake.completeImageSelection(initialImageData)
+            }
             .onDisappear { intake.cancel() }
         }
     }

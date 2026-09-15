@@ -26,7 +26,7 @@ def sanitized_failure_output(output, environment):
     text = output.decode(errors='replace') if isinstance(output, bytes) else output
     for name in ('APPLE_API_KEY_ID', 'APPLE_API_ISSUER_ID', 'ASC_API_PRIVATE_KEY',
                  'APPLE_DISTRIBUTION_CERT', 'APPLE_DISTRIBUTION_CERT_PWD',
-                 'APPLE_PROVISIONING_PROFILE'):
+                 'APPLE_PROVISIONING_PROFILE', 'APPLE_SHARE_EXTENSION_PROVISIONING_PROFILE'):
         value = environment.get(name, '')
         if value:
             text = text.replace(value, '<REDACTED>')
@@ -82,17 +82,60 @@ def verify(app, build):
     for key, value in {"application-identifier": "5LS29Z8553.dev.rallyroo.app",
                        "com.apple.developer.team-identifier": "5LS29Z8553",
                        "aps-environment": "production",
-                       "com.apple.developer.applesignin": ["Default"]}.items():
+                       "com.apple.developer.applesignin": ["Default"],
+                       "com.apple.security.application-groups": ["group.dev.rallyroo.app"]}.items():
         if entitlements.get(key) != value:
             raise RuntimeError(f"Signing validation failed: {key}")
     if entitlements.get("get-task-allow", False):
         raise RuntimeError("Debug entitlement in distribution archive")
+    extension = app / "PlugIns/FamilyAppShare.appex"
+    if not extension.is_dir():
+        raise RuntimeError("Archive validation failed: Share Extension missing")
+    with (extension / "Info.plist").open("rb") as f:
+        extension_info = plistlib.load(f)
+    if extension_info.get("CFBundleIdentifier") != "dev.rallyroo.app.share":
+        raise RuntimeError("Archive validation failed: Share Extension bundle identifier")
+    if extension_info.get("CFBundleVersion") != build:
+        raise RuntimeError("Archive validation failed: Share Extension build number")
+    extension_entitlements = plistlib.loads(
+        run(["codesign", "-d", "--entitlements", ":-", str(extension)])
+    )
+    for key, value in {"application-identifier": "5LS29Z8553.dev.rallyroo.app.share",
+                       "com.apple.developer.team-identifier": "5LS29Z8553",
+                       "com.apple.security.application-groups": ["group.dev.rallyroo.app"]}.items():
+        if extension_entitlements.get(key) != value:
+            raise RuntimeError(f"Share Extension signing validation failed: {key}")
+    if extension_entitlements.get("get-task-allow", False):
+        raise RuntimeError("Debug entitlement in Share Extension distribution archive")
     return info["CFBundleShortVersionString"]
+
+
+def install_profile(root, encoded, filename, expected_bundle_id):
+    profile = root / filename
+    profile.write_bytes(base64.b64decode(encoded))
+    decoded = plistlib.loads(run(["security", "cms", "-D", "-i", str(profile)]))
+    if decoded.get("ProvisionedDevices") or decoded.get("ProvisionsAllDevices"):
+        raise RuntimeError("App Store distribution profile required")
+    if decoded.get("TeamIdentifier") != ["5LS29Z8553"]:
+        raise RuntimeError("Wrong provisioning team")
+    entitlements = decoded.get("Entitlements", {})
+    if entitlements.get("application-identifier") != f"5LS29Z8553.{expected_bundle_id}":
+        raise RuntimeError("Wrong provisioning bundle identifier")
+    if entitlements.get("com.apple.security.application-groups") != ["group.dev.rallyroo.app"]:
+        raise RuntimeError("Provisioning profile is missing the Rallyroo App Group")
+    profile_dir = Path.home() / "Library/MobileDevice/Provisioning Profiles"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    candidate = profile_dir / (decoded["UUID"] + ".mobileprovision")
+    if candidate.exists():
+        raise RuntimeError("Refusing to overwrite existing provisioning profile")
+    shutil.copyfile(profile, candidate)
+    return decoded, candidate
 
 
 def main():
     required = ["APPLE_API_KEY_ID", "APPLE_API_ISSUER_ID", "ASC_API_PRIVATE_KEY",
-                "APPLE_DISTRIBUTION_CERT", "APPLE_PROVISIONING_PROFILE"]
+                "APPLE_DISTRIBUTION_CERT", "APPLE_PROVISIONING_PROFILE",
+                "APPLE_SHARE_EXTENSION_PROVISIONING_PROFILE"]
     for name in required:
         if not os.environ.get(name):
             raise RuntimeError(f"Missing GitHub secret: {name}")
@@ -106,24 +149,19 @@ def main():
         root = Path(temp)
         keychain = root / "signing.keychain-db"
         password = secrets.token_hex(32)
-        profile_path = None
+        profile_paths = []
         try:
             cert = root / "distribution.p12"
             cert.write_bytes(base64.b64decode(os.environ["APPLE_DISTRIBUTION_CERT"]))
-            profile = root / "profile.mobileprovision"
-            profile.write_bytes(base64.b64decode(os.environ["APPLE_PROVISIONING_PROFILE"]))
-            decoded = plistlib.loads(run(["security", "cms", "-D", "-i", str(profile)]))
-            if decoded.get("ProvisionedDevices") or decoded.get("ProvisionsAllDevices"):
-                raise RuntimeError("App Store distribution profile required")
-            if decoded.get("TeamIdentifier") != ["5LS29Z8553"]:
-                raise RuntimeError("Wrong provisioning team")
-            profile_dir = Path.home() / "Library/MobileDevice/Provisioning Profiles"
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            candidate = profile_dir / (decoded["UUID"] + ".mobileprovision")
-            if candidate.exists():
-                raise RuntimeError("Refusing to overwrite existing provisioning profile")
-            profile_path = candidate
-            shutil.copyfile(profile, profile_path)
+            decoded, app_profile_path = install_profile(
+                root, os.environ["APPLE_PROVISIONING_PROFILE"],
+                "app.mobileprovision", "dev.rallyroo.app"
+            )
+            extension_decoded, extension_profile_path = install_profile(
+                root, os.environ["APPLE_SHARE_EXTENSION_PROVISIONING_PROFILE"],
+                "share.mobileprovision", "dev.rallyroo.app.share"
+            )
+            profile_paths.extend([app_profile_path, extension_profile_path])
             security(["create-keychain", "-p", password, str(keychain)])
             security(["unlock-keychain", "-p", password, str(keychain)])
             security(["set-keychain-settings", "-lut", "3600", str(keychain)])
@@ -142,7 +180,8 @@ def main():
                  "-configuration", "Release", "-destination", "generic/platform=iOS",
                  "-archivePath", str(archive), "CODE_SIGN_STYLE=Manual",
                  "CODE_SIGN_IDENTITY=Apple Distribution", "DEVELOPMENT_TEAM=5LS29Z8553",
-                 f"PROVISIONING_PROFILE_SPECIFIER={decoded['UUID']}",
+                 f"APP_PROVISIONING_PROFILE_SPECIFIER={decoded['UUID']}",
+                 f"SHARE_EXTENSION_PROVISIONING_PROFILE_SPECIFIER={extension_decoded['UUID']}",
                  f"OTHER_CODE_SIGN_FLAGS=--keychain {keychain}",
                  f"CURRENT_PROJECT_VERSION={build}", "archive"])
             app = archive / "Products/Applications/FamilyApp.app"
@@ -150,7 +189,10 @@ def main():
             options = root / "ExportOptions.plist"
             options.write_bytes(plistlib.dumps({"method": "app-store-connect", "teamID": "5LS29Z8553",
                 "signingStyle": "manual", "signingCertificate": "Apple Distribution",
-                "provisioningProfiles": {"dev.rallyroo.app": decoded["UUID"]},
+                "provisioningProfiles": {
+                    "dev.rallyroo.app": decoded["UUID"],
+                    "dev.rallyroo.app.share": extension_decoded["UUID"],
+                },
                 "manageAppVersionAndBuildNumber": False, "uploadSymbols": True}))
             run(["xcodebuild", "-exportArchive", "-archivePath", str(archive),
                  "-exportPath", str(root / "export"), "-exportOptionsPlist", str(options)])
@@ -182,8 +224,9 @@ end
             subprocess.run(["security", "list-keychains", "-d", "user", "-s", *original_keychains],
                            capture_output=True)
             subprocess.run(["security", "delete-keychain", str(keychain)], capture_output=True)
-            if profile_path and profile_path.exists():
-                profile_path.unlink()
+            for profile_path in profile_paths:
+                if profile_path.exists():
+                    profile_path.unlink()
 
 
 if __name__ == "__main__":

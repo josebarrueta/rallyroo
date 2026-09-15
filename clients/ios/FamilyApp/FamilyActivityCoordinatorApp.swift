@@ -27,6 +27,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
+    private let sharedCaptureQueue: SharedScheduleCaptureQueue?
     private let dataIsSynced: Bool
 
     init() {
@@ -123,6 +124,7 @@ struct FamilyActivityCoordinatorApp: App {
             )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
+        sharedCaptureQueue = try? SharedScheduleCaptureQueue.appGroup()
     }
 
     var body: some Scene {
@@ -201,6 +203,7 @@ struct FamilyActivityCoordinatorApp: App {
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
                 .task { await monitorFamilyChanges() }
+                .task { await consumeSharedCaptureIfAvailable(for: session.role) }
                 .task {
                     unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
                         .filter { $0.readAt == nil }.count
@@ -228,10 +231,21 @@ struct FamilyActivityCoordinatorApp: App {
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                        Task { await consumeSharedCaptureIfAvailable(for: session.role) }
                     }
                 }
             }
         }
+    }
+
+    @MainActor
+    private func consumeSharedCaptureIfAvailable(for role: AccountRole) async {
+        guard role == .parent,
+              scheduleDraftExtractor != nil,
+              let sharedCaptureQueue,
+              let imageData = try? sharedCaptureQueue.dequeueOldest() else { return }
+        selectedTab = .schedule
+        NotificationCenter.default.post(name: .sharedScheduleCaptureReceived, object: imageData)
     }
 
     @MainActor
