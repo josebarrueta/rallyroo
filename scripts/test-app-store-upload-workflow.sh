@@ -27,5 +27,8 @@ assert 'skip_submission: true' in fastfile, 'TestFlight must explicitly skip bet
 assert 'groups:' not in fastfile, 'Named groups can invoke external beta review'
 assert 'distribute_external' not in fastfile, 'Automation must not perform distribution'
 assert 'submit_for_review' not in fastfile, 'Automation must not submit for review'
+assert 'APPLE_SHARE_EXTENSION_PROVISIONING_PROFILE' in source, 'Share Extension profile is required'
+assert '"dev.rallyroo.app.share": extension_decoded["UUID"]' in source, 'Export must sign Share Extension'
+assert 'PlugIns/FamilyAppShare.appex' in source, 'Archive must verify embedded Share Extension'
 PY
 echo 'TestFlight workflow contract passed'
