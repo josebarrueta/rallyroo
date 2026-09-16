@@ -22,6 +22,10 @@ import {
 } from "./location-search-provider.js";
 import { RallyrooMetrics } from "./metrics.js";
 import {
+  OccurrenceLifecycleError,
+  OccurrenceLifecycleModule,
+} from "./occurrence-lifecycle.js";
+import {
   NoopPushNotificationProvider,
   type PushNotificationProvider,
 } from "./push-notification-provider.js";
@@ -47,6 +51,13 @@ declare module "fastify" {
     account: Account | null;
   }
 }
+
+const occurrenceReferenceSchema = z.object({
+  kind: z.enum(["event", "reminder"]),
+  seriesID: z.string().uuid(),
+  scheduledAt: z.string().datetime(),
+  scope: z.enum(["this_occurrence", "this_weekday_future", "all_future"]).default("this_occurrence"),
+});
 
 const timeZoneSchema = z.string().refine((value) => {
   try {
@@ -287,6 +298,7 @@ export function buildApp({
     pushNotificationProvider,
     ...(notificationCenter ? { notificationCenter } : {}),
   });
+  const occurrenceLifecycle = new OccurrenceLifecycleModule(repository);
   const eventMutations = new EventMutationModule({
     persistence: repository,
     importedEvents: {
@@ -828,6 +840,54 @@ export function buildApp({
     return clientReminder(reminder);
   });
 
+  app.post("/v1/occurrences/skip", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+    }
+    try {
+      return await occurrenceLifecycle.skip(account, parsed.data, parsed.data.scope);
+    } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/occurrences/delete", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+     }
+    try {
+      return await occurrenceLifecycle.delete(account, parsed.data, parsed.data.scope);
+     } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+       }
+      throw error;
+     }
+   });
+
+  app.post("/v1/occurrences/acknowledge", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+    }
+    try {
+      return await occurrenceLifecycle.acknowledge(account, parsed.data);
+    } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
+    }
+  });
+
   app.post("/v1/reminders/:id/complete", async (request, reply) => {
     const account = requiredAccount(request);
     const reminderID = (request.params as { id: string }).id.toLowerCase();
@@ -1121,15 +1181,30 @@ export function buildApp({
 
   app.get("/v1/events", async (request) => {
     const account = requiredAccount(request);
-    const events = [
-      ...await repository.eventsForFamily(account.familyID),
-      ...(calendarSources ? await calendarSources.events(account.familyID, account.memberID) : []),
-    ];
+    const [events, occurrenceStates] = await Promise.all([
+         (async () => {
+          const familyEvents = await repository.eventsForFamily(account.familyID);
+          const imported = calendarSources
+               ? await calendarSources.events(account.familyID, account.memberID)
+               : [];
+          return [...familyEvents, ...imported];
+         })(),
+        repository.occurrenceStatesForFamily(account.familyID),
+     ]);
     const visible = account.role === "parent"
-      ? events
-      : events.filter((event) => event.participantIDs.includes(account.memberID));
-    return visible.map(clientEvent);
-  });
+        ? events
+        : events.filter((event) => event.participantIDs.includes(account.memberID));
+    return visible.map((event) => {
+       const seriesID = (event.recurrenceSeriesID ?? event.id).toLowerCase();
+       const statesForSeries = occurrenceStates
+          .filter((state) =>
+              state.reference.kind === "event"
+               && state.reference.seriesID === seriesID
+          );
+       if (statesForSeries.length === 0) return clientEvent(event);
+       return clientEvent({ ...event, occurrenceStates: statesForSeries });
+    });
+   });
 
   app.put("/v1/events/:id", async (request, reply) => {
     const account = requiredAccount(request);

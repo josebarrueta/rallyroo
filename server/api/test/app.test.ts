@@ -1042,6 +1042,90 @@ describe("Rallyroo API", () => {
     }
   });
 
+  it("lets a Member acknowledge one concrete recurring Event occurrence", async () => {
+    const data = repository();
+    const seriesID = "00000000-0000-4000-8000-000000000399";
+    await data.saveEvent({
+      id: seriesID, familyID: "family-1", title: "Weekly practice", kidID: "kid-1",
+      participantIDs: ["kid-1", "parent-1"], startTime: "2026-09-10T00:30:00.000Z",
+      endTime: "2026-09-10T01:30:00.000Z", location: null, driver: null,
+      source: "manual", status: "confirmed", recurrenceSeriesID: seriesID,
+      recurrence: {
+        frequency: "weekly", interval: 1, weekdays: [3], timeZone: "America/Los_Angeles",
+        endDate: "2026-09-24T00:30:00.000Z",
+      },
+    });
+    const app = buildApp({ identityProvider, repository: data });
+    const response = await app.inject({
+      method: "POST", url: "/v1/occurrences/acknowledge",
+      headers: { authorization: "Bearer kid-token" },
+      payload: { kind: "event", seriesID, scheduledAt: "2026-09-17T00:30:00.000Z" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      reference: { kind: "event", seriesID, scheduledAt: "2026-09-17T00:30:00.000Z" },
+      disposition: "scheduled", acknowledgedMemberIDs: ["kid-1"],
+    });
+    await app.close();
+  });
+
+  it("requires a parent to skip an Event occurrence", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const reference = {
+      kind: "event", seriesID: "00000000-0000-4000-8000-000000000001",
+      scheduledAt: "2026-08-23T16:00:00.000Z",
+    };
+    const kidResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/skip",
+      headers: { authorization: "Bearer kid-token" }, payload: reference,
+    });
+    const parentResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/skip",
+      headers: { authorization: "Bearer parent-token" }, payload: reference,
+    });
+    expect(kidResponse.statusCode).toBe(403);
+    expect(kidResponse.json()).toEqual({ error: "parent_required" });
+    expect(parentResponse.statusCode).toBe(200);
+    const skipBody = parentResponse.json();
+    expect(Array.isArray(skipBody)).toBe(true);
+    expect(skipBody[0]).toMatchObject({ disposition: "skipped" });
+    const eventsResponse = await app.inject({
+      method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const event = eventsResponse.json().find((item: { id: string }) =>
+      item.id === reference.seriesID
+    );
+    expect(event.occurrenceStates).toMatchObject([{
+      reference,
+      disposition: "skipped",
+    }]);
+    await app.close();
+  });
+
+  it("requires a parent to delete an Event occurrence as a durable tombstone", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const reference = {
+      kind: "event", seriesID: "00000000-0000-4000-8000-000000000001",
+      scheduledAt: "2026-08-23T16:00:00.000Z",
+     };
+    const kidResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/delete",
+      headers: { authorization: "Bearer kid-token" }, payload: reference,
+     });
+    const parentResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/delete",
+      headers: { authorization: "Bearer parent-token" }, payload: reference,
+     });
+    expect(kidResponse.statusCode).toBe(403);
+    expect(kidResponse.json()).toEqual({ error: "parent_required" });
+    expect(parentResponse.statusCode).toBe(200);
+    const deleteBody = parentResponse.json();
+    expect(Array.isArray(deleteBody)).toBe(true);
+    expect(deleteBody[0]).toMatchObject({ disposition: "deleted" });
+    await app.close();
+   });
+
   it("advances the family change cursor after a mutation", async () => {
     const data = repository();
     const app = buildApp({ identityProvider, repository: data });

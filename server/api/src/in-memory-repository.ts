@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
+import type {
+  Account,
+  FamilyEvent,
+  FamilyInvitation,
+  FamilyMember,
+  FamilyReminder,
+  ScheduleOccurrenceReference,
+  ScheduleOccurrenceState,
+} from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type {
   ClaimedScheduleUpdateNotification,
@@ -30,6 +38,7 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   private readonly sentReminderNotifications = new Set<string>();
   private readonly claimedEventNotifications = new Map<string, Date>();
   private readonly sentEventNotifications = new Set<string>();
+  private readonly occurrenceStates = new Map<string, ScheduleOccurrenceState>();
   private readonly eventMutationResults = new Map<string, StoredEventMutationResult>();
   private readonly scheduleUpdateNotifications = new Map<string, {
     familyID: string;
@@ -396,6 +405,13 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
         const notifyAt = occurrenceTime - event.alertLeadTimeMinutes * 60 * 1_000;
         if (notifyAt > now.getTime() || occurrenceTime < oldestOccurrence) continue;
         const occurrenceISO = occurrenceStart.toISOString();
+        const occurrenceState = this.occurrenceStates.get(occurrenceStateKey(event.familyID, {
+          kind: "event",
+          seriesID: event.recurrenceSeriesID ?? event.id,
+          scheduledAt: occurrenceISO,
+        }));
+        if (occurrenceState?.disposition !== undefined
+          && occurrenceState.disposition !== "scheduled") continue;
         const key = eventNotificationKey(event.familyID, event.id, occurrenceISO);
         const claimedAt = this.claimedEventNotifications.get(key);
         if (this.sentEventNotifications.has(key) || (claimedAt && claimedAt.getTime() >= staleClaim)) continue;
@@ -411,6 +427,57 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
       );
     }
     return due;
+  }
+
+  async occurrenceStatesForFamily(
+    familyID: string,
+   ): Promise<ScheduleOccurrenceState[]> {
+    return [...this.occurrenceStates.values()]
+       .filter((state) => state.familyID === familyID)
+       .map((state) => structuredClone(state));
+   }
+
+  async setOccurrenceDisposition(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    disposition: ScheduleOccurrenceState["disposition"],
+  ): Promise<ScheduleOccurrenceState> {
+    const key = occurrenceStateKey(familyID, reference);
+    const existing = this.occurrenceStates.get(key);
+    const state: ScheduleOccurrenceState = {
+      familyID,
+      reference,
+      disposition,
+      acknowledgedMemberIDs: existing?.acknowledgedMemberIDs ?? [],
+      overrideEntityID: existing?.overrideEntityID ?? null,
+      completedAt: existing?.completedAt ?? null,
+      completedByMemberID: existing?.completedByMemberID ?? null,
+    };
+    this.occurrenceStates.set(key, state);
+    return structuredClone(state);
+  }
+
+  async acknowledgeOccurrence(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    memberID: string,
+  ): Promise<ScheduleOccurrenceState> {
+    const key = occurrenceStateKey(familyID, reference);
+    const existing = this.occurrenceStates.get(key);
+    const state: ScheduleOccurrenceState = {
+      familyID,
+      reference,
+      disposition: existing?.disposition ?? "scheduled",
+      acknowledgedMemberIDs: [...new Set([
+        ...(existing?.acknowledgedMemberIDs ?? []),
+        memberID,
+      ])].sort(),
+      overrideEntityID: existing?.overrideEntityID ?? null,
+      completedAt: existing?.completedAt ?? null,
+      completedByMemberID: existing?.completedByMemberID ?? null,
+    };
+    this.occurrenceStates.set(key, state);
+    return structuredClone(state);
   }
 
   async markEventNotificationSent(
@@ -504,6 +571,13 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     if (index >= 0) this.events[index] = structuredClone(event);
     else this.events.push(structuredClone(event));
   }
+}
+
+function occurrenceStateKey(
+  familyID: string,
+  reference: ScheduleOccurrenceReference,
+): string {
+  return `${familyID}:${reference.kind}:${reference.seriesID.toLowerCase()}:${reference.scheduledAt}`;
 }
 
 function eventNotificationKey(familyID: string, eventID: string, occurrenceStart: string): string {

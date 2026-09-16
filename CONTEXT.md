@@ -24,8 +24,28 @@ _Avoid_: Event, appointment
 A parent-authorized create, update, or delete of a native Event, serialized per Family and identified by a stable idempotency key. Its authoritative Event change, Family change cursor, and optional schedule update notification intent are recorded atomically before external delivery is attempted.
 _Avoid_: Imported calendar refresh, Event occurrence, transport retry
 
+**Recurrence series**:
+The rule and shared details from which bounded Event or Reminder occurrences are scheduled.
+_Avoid_: Occurrence, copied Event
+
+**Schedule occurrence**:
+One logically stable scheduled instance of a recurrence series, identified by its kind, series, and original scheduled instant even when its effective details are later overridden.
+_Avoid_: Series template, notification delivery
+
+**Occurrence acknowledgement**:
+A Member-specific record that the Member has seen a schedule occurrence. It does not alter the Family schedule or another Member's acknowledgement.
+_Avoid_: Completion, skip, notification delivery receipt
+
+**Occurrence disposition**:
+The Family-wide scheduling status of an occurrence: scheduled, skipped, or deleted. A skipped occurrence remains in Family history; a deleted occurrence is hidden but retains a durable tombstone so recurrence expansion cannot recreate it.
+_Avoid_: Member acknowledgement, Reminder completion, modification
+
+**Occurrence override**:
+Changed effective details for one schedule occurrence. Modification is not a disposition: an overridden occurrence remains scheduled unless separately skipped or deleted.
+_Avoid_: New recurrence series, occurrence acknowledgement
+
 **Assignee**:
-A family member responsible for a reminder. A reminder may have multiple assignees, but its completion state is shared.
+A family member responsible for a reminder. A reminder occurrence may have multiple assignees, but its completion state is shared.
 _Avoid_: Participant, attendee
 
 **Due instant**:
@@ -33,8 +53,8 @@ The date and time by which a reminder should be completed.
 _Avoid_: Start time, event time
 
 **Completion**:
-The shared state transition that marks a reminder complete for every assignee and records when and by which member it was completed.
-_Avoid_: Per-assignee completion
+The shared state transition that marks one Reminder occurrence complete for every assignee and records when and by which Member it was completed.
+_Avoid_: Per-assignee completion, occurrence acknowledgement
 
 **Alert lead time**:
 The optional supported interval before a reminder's due instant or an event occurrence's start when the responsible members should be notified. Reminder alerts go to assignees; event alerts go to participants.

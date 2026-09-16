@@ -188,8 +188,8 @@ final class RemoteEventStoreTests: XCTestCase {
         source.recurrence = EventRecurrence(
             frequency: .weekly,
             weekdays: [.thursday],
+            endDate: source.startTime.addingTimeInterval(30 * 24 * 60 * 60),
             timeZone: "America/Los_Angeles",
-            endDate: source.startTime.addingTimeInterval(30 * 24 * 60 * 60)
         )
         source.recurrenceSeriesID = source.id
         let responseEncoder = JSONEncoder()
