@@ -647,7 +647,7 @@ private enum RepeatOption: String, CaseIterable, Identifiable {
         weekdays: [EventRecurrence.Weekday]
     ) -> EventRecurrence? {
         let timeZone = TimeZone.autoupdatingCurrent.identifier
-        switch self {
+        return switch self {
         case .never: nil
         case .daily: EventRecurrence(frequency: .daily, timeZone: timeZone, endDate: endDate)
         case .weekly: EventRecurrence(
