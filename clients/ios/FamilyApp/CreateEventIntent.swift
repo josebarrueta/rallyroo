@@ -1,4 +1,4 @@
-import AppIntents
+@preconcurrency import AppIntents
 import FamilyCore
 import Foundation
 
@@ -15,12 +15,13 @@ actor NoOpOAuthWebSession: OAuthWebSession {
 
 // MARK: - Create Event Intent
 
-@available(iOS 16.0, *)
-struct CreateEventIntent: AppIntent {
-    @MainActor static var title: LocalizedStringResource =
+@MainActor
+    @available(iOS 16.0, *)
+    struct CreateEventIntent: AppIntent {
+    static var title: LocalizedStringResource =
          "Create a family schedule event"
 
-    @MainActor static var description = IntentDescription(
+    static var description = IntentDescription(
          "Creates a new event in the family schedule.")
 
     // MARK: Parameters
@@ -60,7 +61,7 @@ struct CreateEventIntent: AppIntent {
         )
     var location: String?
 
-    @MainActor static var openAppWhenRun = false
+    static var openAppWhenRun = false
 
     // MARK: Execute
 
