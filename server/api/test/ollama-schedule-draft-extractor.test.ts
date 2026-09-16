@@ -92,7 +92,9 @@ describe("OllamaScheduleDraftExtractor", () => {
     })).toThrow("require an HTTPS base URL");
   });
 
-  it("falls back to prompt-constrained JSON when the local runtime lacks structured outputs", async () => {
+  it.each([400, 501])(
+    "falls back to prompt-constrained JSON when structured outputs return %i",
+    async (unsupportedStatus) => {
     const bodies: Array<Record<string, unknown>> = [];
     const validContent = `\`\`\`json\n${JSON.stringify({ drafts: [{
       kind: "reminder", title: "Bring cleats", memberIDs: ["kid-1"],
@@ -105,7 +107,7 @@ describe("OllamaScheduleDraftExtractor", () => {
       fetch: async (_url, init) => {
         bodies.push(JSON.parse(String(init?.body)));
         return bodies.length === 1
-          ? new Response("not supported", { status: 501 })
+          ? new Response("not supported", { status: unsupportedStatus })
           : new Response(JSON.stringify({ message: { content: validContent }, done: true }), { status: 200 });
       },
     });
@@ -114,7 +116,8 @@ describe("OllamaScheduleDraftExtractor", () => {
     expect(bodies[0]?.format).toMatchObject({ type: "object" });
     expect(bodies[1]).not.toHaveProperty("format");
     expect(JSON.stringify(bodies[1]?.messages)).toContain("outputSchema");
-  });
+    },
+  );
 
   it("accepts the first validated JSON object when the local runtime repeats it after a think marker", async () => {
     const draftResult = JSON.stringify({ drafts: [{

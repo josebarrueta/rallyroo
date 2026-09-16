@@ -43,8 +43,8 @@ export class OllamaScheduleDraftExtractor implements ScheduleDraftExtractor {
   async extract(request: ScheduleDraftExtractionRequest): Promise<ScheduleDraftResult> {
     const schema = z.toJSONSchema(scheduleDraftResultSchema);
     let response = await this.chat(request, schema);
-    if (response.status === 501) {
-      // Some local accelerators expose Ollama chat but not grammar-constrained output.
+    if (response.status === 400 || response.status === 501) {
+      // Some local accelerators expose Ollama chat but reject grammar-constrained output.
       // The response is still treated as untrusted and validated against the same schema.
       response = await this.chat(request);
     }
