@@ -512,8 +512,8 @@ struct AddEventSheet: View {
             frequency: recurrence.frequency,
             interval: recurrence.interval,
             weekdays: recurrence.weekdays,
-            endDate: recurrence.endDate,
-            timeZone: TimeZone.autoupdatingCurrent.identifier
+            timeZone: TimeZone.autoupdatingCurrent.identifier,
+            endDate: recurrence.endDate
         )
     }
 
@@ -649,21 +649,21 @@ private enum RepeatOption: String, CaseIterable, Identifiable {
         let timeZone = TimeZone.autoupdatingCurrent.identifier
         return switch self {
         case .never: nil
-        case .daily: EventRecurrence(frequency: .daily, endDate: endDate, timeZone: timeZone)
+        case .daily: EventRecurrence(frequency: .daily, timeZone: timeZone, endDate: endDate)
         case .weekly: EventRecurrence(
             frequency: .weekly,
             weekdays: weekdays,
-            endDate: endDate,
             timeZone: timeZone
+            endDate: endDate
         )
         case .biweekly: EventRecurrence(
             frequency: .weekly,
             interval: 2,
             weekdays: weekdays,
-            endDate: endDate,
             timeZone: timeZone
+            endDate: endDate
         )
-        case .monthly: EventRecurrence(frequency: .monthly, endDate: endDate, timeZone: timeZone)
+        case .monthly: EventRecurrence(frequency: .monthly, timeZone: timeZone, endDate: endDate)
         }
     }
 }
