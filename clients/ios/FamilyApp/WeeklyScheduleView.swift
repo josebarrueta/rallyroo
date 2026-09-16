@@ -666,7 +666,7 @@ struct LifecycleScopeSheet: View {
 
  // MARK: - Weekday scope choices
 
-private struct WeekDayScope: String, CaseIterable, Identifiable {
+private enum WeekDayScope: String, CaseIterable, Identifiable {
      case justThis = "Just this one"
      case weekdayFuture = "This weekday and future"
      case allFuture = "All future"
