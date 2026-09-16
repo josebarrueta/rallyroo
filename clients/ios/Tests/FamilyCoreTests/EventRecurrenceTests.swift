@@ -55,8 +55,8 @@ final class EventRecurrenceTests: XCTestCase {
             recurrence: EventRecurrence(
                 frequency: .weekly,
                 weekdays: [.wednesday],
-                timeZone: "America/Los_Angeles",
-                endDate: rangeEnd
+                endDate: rangeEnd,
+                timeZone: "America/Los_Angeles"
             )
         )
         var viewerCalendar = Calendar(identifier: .gregorian)

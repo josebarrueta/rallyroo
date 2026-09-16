@@ -793,6 +793,137 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(rows.every((event) => event.recurrenceSeriesID === seriesID)).toBe(true);
   });
 
+  it("atomically records concurrent Member acknowledgements for one occurrence", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const account = await first.provisionParentAccount("occurrence-parent", "Parent");
+    await first.saveMember({
+      id: "kid-occurrence", familyID: account.familyID, name: "Kid",
+      role: "kid", colorTag: "purple",
+    });
+    const reference = {
+      kind: "event" as const, seriesID: "abcdefab-cdef-4abc-8def-abcdefabc399",
+      scheduledAt: "2026-09-17T00:30:00.000Z",
+    };
+    await Promise.all([
+      first.acknowledgeOccurrence(account.familyID, reference, account.memberID),
+      second.acknowledgeOccurrence(account.familyID, reference, "kid-occurrence"),
+    ]);
+    const state = await first.acknowledgeOccurrence(account.familyID, reference, account.memberID);
+    expect(state.acknowledgedMemberIDs).toEqual(["kid-occurrence", account.memberID].sort());
+    expect(state.disposition).toBe("scheduled");
+  });
+
+  it("does not claim a skipped recurring Event occurrence", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("skipped-event-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc398";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Daily practice", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-12T15:00:00Z",
+      },
+    });
+    await data.setOccurrenceDisposition(account.familyID, {
+      kind: "event", seriesID: eventID, scheduledAt: "2026-09-11T15:00:00.000Z",
+    }, "skipped");
+    expect(await data.claimDueEventNotifications(new Date("2026-09-11T14:00:00Z"), 100))
+      .toEqual([]);
+  });
+
+  it("does not claim a deleted recurring Event occurrence", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("deleted-event-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc397";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Daily practice", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-12T15:00:00Z",
+      },
+    });
+    await data.setOccurrenceDisposition(account.familyID, {
+      kind: "event", seriesID: eventID, scheduledAt: "2026-09-11T15:00:00.000Z",
+    }, "deleted");
+    expect(await data.claimDueEventNotifications(new Date("2026-09-11T14:00:00Z"), 100))
+        .toEqual([]);
+    });
+
+  it("skips all future occurrences via scoped disposition", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("scoped-skip-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc400";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Daily walk", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-15T08:00:00.000Z",
+      endTime: "2026-09-15T09:00:00.000Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-18T08:00:00.000Z",
+        },
+      });
+    await data.setOccurrenceDisposition(account.familyID, {
+      kind: "event", seriesID: eventID, scheduledAt: "2026-09-15T08:00:00.000Z",
+      }, "skipped");
+    const claimsAfterOneSkip = await data.claimDueEventNotifications(
+        new Date("2026-09-16T07:00:00Z"), 100);
+     expect(claimsAfterOneSkip.map((c) => c.occurrenceStart)).not.toEqual([]);
+     for (const day of ["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"]) {
+      await data.setOccurrenceDisposition(account.familyID, {
+        kind: "event", seriesID: eventID, scheduledAt: `${day}T08:00:00.000Z`,
+        }, "skipped");
+      }
+    const claimsAfterAllSkip = await data.claimDueEventNotifications(
+        new Date("2026-09-16T07:00:00Z"), 100);
+     expect(claimsAfterAllSkip).toEqual([]);
+    await data.deleteEvent(account.familyID, eventID);
+   });
+
+  it("serializes concurrent scoped disposition writes on the same series", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("concurrency-skip-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc401";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Concurrent skip", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-15T08:00:00.000Z",
+      endTime: "2026-09-15T09:00:00.000Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-16T08:00:00.000Z",
+        },
+      });
+    const ref15 = { kind: "event" as const, seriesID: eventID, scheduledAt: "2026-09-15T08:00:00.000Z" };
+    const ref16 = { kind: "event" as const, seriesID: eventID, scheduledAt: "2026-09-16T08:00:00.000Z" };
+    await Promise.all([
+        data.setOccurrenceDisposition(account.familyID, ref15, "skipped"),
+        data.setOccurrenceDisposition(account.familyID, ref16, "deleted"),
+      ]);
+    const states = await data.occurrenceStatesForFamily(account.familyID);
+    const s15 = states.find((s) =>
+        s.reference.seriesID === eventID &&
+        s.reference.scheduledAt === "2026-09-15T08:00:00.000Z");
+    const s16 = states.find((s) =>
+        s.reference.seriesID === eventID &&
+        s.reference.scheduledAt === "2026-09-16T08:00:00.000Z");
+     expect(s15?.disposition).toBe("skipped");
+     expect(s16?.disposition).toBe("deleted");
+   await data.deleteEvent(account.familyID, eventID);
+   });
+
+
   it("claims a due recurring event occurrence once across concurrent workers", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("event-notification-parent", "Notifier");

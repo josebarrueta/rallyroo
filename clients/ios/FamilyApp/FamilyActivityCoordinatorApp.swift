@@ -21,13 +21,12 @@ struct FamilyActivityCoordinatorApp: App {
     private let authentication: any Authentication
     private let locationSearch: any LocationSearch
     private let invitationStore: (any FamilyInvitationStore)?
+    private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let changeMonitor: (any FamilyChangeMonitor)?
     private let deviceRegistrationStore: (any DeviceRegistrationStore)?
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let commuterStore: (any CommuterStore)?
-    private let travelPlanningStore: (any TravelPlanningStore)?
-    private let sharedCaptureQueue: SharedScheduleCaptureQueue?
     private let dataIsSynced: Bool
 
     init() {
@@ -57,12 +56,12 @@ struct FamilyActivityCoordinatorApp: App {
             memberStore = LocalFamilyMemberStore(storageURL: AppStorage.membersURL)
             locationSearch = EmptyLocationSearch()
             invitationStore = nil
+            occurrenceLifecycleStore = nil
             calendarSourceStore = nil
             changeMonitor = nil
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil
             commuterStore = nil
-            travelPlanningStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
@@ -87,6 +86,11 @@ struct FamilyActivityCoordinatorApp: App {
             reminderAlertScheduler = nil
             eventAlertScheduler = nil
             memberStore = RemoteFamilyMemberStore(baseURL: baseURL, transport: authenticatedTransport)
+            occurrenceLifecycleStore = RemoteOccurrenceLifecycleStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport,
+                authToken: { try await remoteAuthentication.currentSession()?.accessToken }
+              )
             locationSearch = RemoteLocationSearch(baseURL: baseURL, transport: authenticatedTransport)
             invitationStore = RemoteFamilyInvitationStore(
                 baseURL: baseURL,
@@ -112,10 +116,6 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
-            travelPlanningStore = RemoteTravelPlanningStore(
-                baseURL: baseURL,
-                transport: authenticatedTransport
-            )
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport,
@@ -124,7 +124,6 @@ struct FamilyActivityCoordinatorApp: App {
             )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
-        sharedCaptureQueue = try? SharedScheduleCaptureQueue.appGroup()
     }
 
     var body: some Scene {
@@ -146,7 +145,7 @@ struct FamilyActivityCoordinatorApp: App {
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         commuterStore: commuterStore,
-                        travelPlanningStore: travelPlanningStore
+                        occurrenceLifecycleStore: occurrenceLifecycleStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     .tag(AppTab.schedule)
@@ -183,9 +182,6 @@ struct FamilyActivityCoordinatorApp: App {
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
                         commuterStore: commuterStore,
-                        travelPlanningStore: travelPlanningStore,
-                        locationSearch: locationSearch,
-                        canManageFamilyPlaces: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )
@@ -203,7 +199,6 @@ struct FamilyActivityCoordinatorApp: App {
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
                 .task { await monitorFamilyChanges() }
-                .task { await consumeSharedCaptureIfAvailable(for: session.role) }
                 .task {
                     unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
                         .filter { $0.readAt == nil }.count
@@ -231,21 +226,10 @@ struct FamilyActivityCoordinatorApp: App {
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-                        Task { await consumeSharedCaptureIfAvailable(for: session.role) }
                     }
                 }
             }
         }
-    }
-
-    @MainActor
-    private func consumeSharedCaptureIfAvailable(for role: AccountRole) async {
-        guard role == .parent,
-              scheduleDraftExtractor != nil,
-              let sharedCaptureQueue,
-              let imageData = try? sharedCaptureQueue.dequeueOldest() else { return }
-        selectedTab = .schedule
-        NotificationCenter.default.post(name: .sharedScheduleCaptureReceived, object: imageData)
     }
 
     @MainActor
