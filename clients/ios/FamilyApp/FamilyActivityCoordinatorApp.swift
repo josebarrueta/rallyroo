@@ -78,7 +78,7 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport,
                 cacheURL: AppStorage.remoteEventsCacheURL,
-                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+                authToken: { try await remoteAuthentication.currentSession()?.accessToken }
             )
             reminderStore = RemoteReminderStore(baseURL: baseURL, transport: authenticatedTransport)
             // Hosted alerts notify participants and assignees through APNs. Scheduling
@@ -89,7 +89,7 @@ struct FamilyActivityCoordinatorApp: App {
             occurrenceLifecycleStore = RemoteOccurrenceLifecycleStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport,
-                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+                authToken: { try await remoteAuthentication.currentSession()?.accessToken }
               )
             locationSearch = RemoteLocationSearch(baseURL: baseURL, transport: authenticatedTransport)
             invitationStore = RemoteFamilyInvitationStore(
@@ -120,7 +120,7 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport,
                 cacheURL: AppStorage.remoteNotificationsCacheURL,
-                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+                authToken: { try await remoteAuthentication.currentSession()?.accessToken }
             )
         }
         notificationStore = LocalConflictNotificationStore(storageURL: AppStorage.notificationsURL)
