@@ -653,14 +653,14 @@ private enum RepeatOption: String, CaseIterable, Identifiable {
         case .weekly: EventRecurrence(
             frequency: .weekly,
             weekdays: weekdays,
-            timeZone: timeZone
+            timeZone: timeZone,
             endDate: endDate
         )
         case .biweekly: EventRecurrence(
             frequency: .weekly,
             interval: 2,
             weekdays: weekdays,
-            timeZone: timeZone
+            timeZone: timeZone,
             endDate: endDate
         )
         case .monthly: EventRecurrence(frequency: .monthly, timeZone: timeZone, endDate: endDate)
