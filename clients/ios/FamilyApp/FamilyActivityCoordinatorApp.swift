@@ -235,3 +235,69 @@ struct FamilyActivityCoordinatorApp: App {
 extension Notification.Name {
     static let familyDataDidChange = Notification.Name("familyDataDidChange")
 }
+
+
+// MARK: - AppStorage
+
+enum AppStorage {
+     static var eventsURL: URL {
+        storageDirectory
+              .appendingPathComponent("events")
+              .appendingPathExtension("json")
+      }
+
+     static var remoteEventsCacheURL: URL {
+        storageDirectory.appendingPathComponent("remote-events-cache").appendingPathExtension("json")
+      }
+
+     static var localInboxURL: URL {
+        storageDirectory.appendingPathComponent("notification-inbox").appendingPathExtension("json")
+      }
+
+     static var remoteNotificationsCacheURL: URL {
+        storageDirectory.appendingPathComponent("remote-notifications-cache").appendingPathExtension("json")
+      }
+
+     static var notificationsURL: URL {
+        storageDirectory.appendingPathComponent("conflicts").appendingPathExtension("json")
+      }
+
+     static var remindersURL: URL {
+        storageDirectory.appendingPathComponent("reminders").appendingPathExtension("json")
+      }
+
+     static var membersURL: URL {
+        storageDirectory
+              .appendingPathComponent("members")
+              .appendingPathExtension("json")
+      }
+
+     static func resetForUnifiedFamilyMembersIfNeeded() {
+        let resetKey = "didResetForStringMemberIDs"
+        guard !UserDefaults.standard.bool(forKey: resetKey) else { return }
+        try? FileManager.default.removeItem(at: storageDirectory)
+        UserDefaults.standard.set(true, forKey: resetKey)
+      }
+
+      #if DEBUG
+     static func resetForUITesting() {
+        guard FileManager.default.fileExists(atPath: storageDirectory.path) else {
+            return
+          }
+
+        do {
+            try FileManager.default.removeItem(at: storageDirectory)
+          } catch {
+            fatalError("Unable to reset UI test storage: \(error)")
+          }
+      }
+      #endif
+
+     private static var storageDirectory: URL {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+          )[0]
+          .appending(path: "FamilyActivityCoordinator")
+      }
+}
