@@ -127,7 +127,10 @@ export class OccurrenceLifecycleModule {
       const events = await this.repository.eventsForFamily(account.familyID);
       if (eventOccurrenceExists(events, reference)) return reference;
      }
-     // Reminder expansion is added as the next vertical lifecycle slice.
+      if (reference.kind === "reminder") {
+        const reminders = await this.repository.remindersForFamily(account.familyID);
+        if (reminderOccurrenceExists(reminders, reference)) return reference;
+         }
     throw new OccurrenceLifecycleError("occurrence_not_found", 404);
    }
 }
@@ -161,4 +164,17 @@ function eventOccurrenceExists(
     return eventOccurrenceStarts(event, scheduledAt)
        .some((start) => start.getTime() === scheduledAt.getTime());
    });
+}
+
+function reminderOccurrenceExists(
+  reminders: FamilyReminder[],
+  reference: ScheduleOccurrenceReference,
+): boolean {
+  const scheduledAt = new Date(reference.scheduledAt);
+  return reminders.some((reminder) => {
+    const seriesID = (reminder.recurrenceSeriesID ?? reminder.id).toLowerCase();
+    if (seriesID !== reference.seriesID) return false;
+    // For now, check the base dueAt matches; full expansion is a next slice.
+    return new Date(reminder.dueAt).getTime() === scheduledAt.getTime();
+    });
 }

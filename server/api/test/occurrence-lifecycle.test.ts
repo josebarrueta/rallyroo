@@ -174,3 +174,77 @@ describe("OccurrenceLifecycleModule", () => {
       });
     });
 });
+
+describe("OccurrenceLifecycleModule - Reminders", () => {
+  const reminderSeriesID = "00000000-0000-4000-8000-000000000401";
+  const reminder = {
+    id: reminderSeriesID,
+    familyID: "family-1",
+    title: "Water the plants",
+    assigneeIDs: ["parent-1"],
+    dueAt: "2026-09-15T09:00:00.000Z",
+    status: "open" as const,
+    completedAt: null,
+    completedByMemberID: null,
+    alertLeadTimeMinutes: null,
+    createdByMemberID: "parent-1",
+    recurrenceSeriesID: reminderSeriesID,
+   };
+
+  class MemoryReminderRepository implements OccurrenceLifecycleRepository {
+    async eventsForFamily() { return []; }
+    async remindersForFamily() { return [reminder]; }
+
+    async setOccurrenceDisposition(
+      familyID: string,
+      reference: import("../src/domain.js").ScheduleOccurrenceState["reference"],
+      disposition: import("../src/domain.js").ScheduleOccurrenceState["disposition"],
+      ): Promise<import("../src/domain.js").ScheduleOccurrenceState> {
+        return {
+          familyID,
+          reference,
+          disposition,
+          acknowledgedMemberIDs: [],
+          overrideEntityID: null,
+          completedAt: null,
+          completedByMemberID: null,
+            };
+          }
+
+    async acknowledgeOccurrence(
+      familyID: string,
+      reference: import("../src/domain.js").ScheduleOccurrenceState["reference"],
+      memberID: string,
+      ): Promise<import("../src/domain.js").ScheduleOccurrenceState> {
+        return {
+          familyID,
+          reference,
+          disposition: "scheduled",
+          acknowledgedMemberIDs: [memberID],
+          overrideEntityID: null,
+          completedAt: null,
+          completedByMemberID: null,
+            };
+          }
+  }
+
+  it("lets a parent acknowledge a Reminder occurrence", async () => {
+    const repo = new MemoryReminderRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const state = await lifecycle.acknowledge(account, {
+      kind: "reminder", seriesID: reminderSeriesID, scheduledAt: "2026-09-15T09:00:00.000Z",
+       });
+    expect(state.acknowledgedMemberIDs).toContain(account.memberID);
+    expect(state.disposition).toBe("scheduled");
+     });
+
+  it("rejects an unknown Reminder occurrence", async () => {
+    const repo = new MemoryReminderRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    await expect(lifecycle.acknowledge(account, {
+      kind: "reminder",
+      seriesID: "00000000-0000-4000-8000-000000000998",
+      scheduledAt: "2026-09-15T09:00:00.000Z",
+       })).rejects.toThrow("occurrence_not_found");
+     });
+});
