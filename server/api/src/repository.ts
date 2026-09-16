@@ -1,4 +1,12 @@
-import type { Account, FamilyEvent, FamilyInvitation, FamilyMember, FamilyReminder } from "./domain.js";
+import type {
+  Account,
+  FamilyEvent,
+  FamilyInvitation,
+  FamilyMember,
+  FamilyReminder,
+  ScheduleOccurrenceReference,
+  ScheduleOccurrenceState,
+} from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type { EventMutationPersistence } from "./event-mutation-persistence.js";
 
@@ -47,6 +55,16 @@ export interface RallyrooRepository extends EventMutationPersistence {
     occurrenceStart: string,
     claimedAt: Date,
   ): Promise<void>;
+  acknowledgeOccurrence(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    memberID: string,
+  ): Promise<ScheduleOccurrenceState>;
+  setOccurrenceDisposition(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    disposition: ScheduleOccurrenceState["disposition"],
+  ): Promise<ScheduleOccurrenceState>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   saveReminder(reminder: FamilyReminder): Promise<void>;
   deleteReminder(familyID: string, reminderID: string): Promise<void>;

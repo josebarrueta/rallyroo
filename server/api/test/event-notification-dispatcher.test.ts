@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EventNotificationDispatcher } from "../src/event-notification-dispatcher.js";
 import type { FamilyEvent } from "../src/domain.js";
 import { InMemoryRallyrooRepository } from "../src/in-memory-repository.js";
+import { OccurrenceLifecycleModule } from "../src/occurrence-lifecycle.js";
 
 const event: FamilyEvent = {
   id: "00000000-0000-4000-8000-000000000101",
@@ -165,6 +166,31 @@ describe("EventNotificationDispatcher", () => {
     expect(tuesday).toEqual([]);
     expect(wednesday.map((notification) => notification.occurrenceStart))
       .toEqual(["2026-09-17T00:30:00.000Z"]);
+  });
+
+  it("does not claim an alert for a skipped occurrence", async () => {
+    const repository = new InMemoryRallyrooRepository();
+    const series = {
+      ...event,
+      startTime: "2026-09-01T18:00:00.000Z",
+      endTime: "2026-09-01T19:00:00.000Z",
+      alertLeadTimeMinutes: 15 as const,
+      recurrenceSeriesID: event.id,
+      recurrence: {
+        frequency: "daily" as const, interval: 1, timeZone: "UTC",
+        endDate: "2026-09-03T18:00:00.000Z",
+      },
+    };
+    await repository.saveEvent(series);
+    await new OccurrenceLifecycleModule(repository).skip({
+      identitySubject: "parent-subject", familyID: event.familyID,
+      memberID: "parent-1", role: "parent",
+    }, {
+      kind: "event", seriesID: event.id, scheduledAt: "2026-09-02T18:00:00.000Z",
+    });
+    expect(await repository.claimDueEventNotifications(
+      new Date("2026-09-02T17:45:00.000Z"), 100,
+    )).toEqual([]);
   });
 
   it("releases a failed event delivery claim for retry", async () => {

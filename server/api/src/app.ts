@@ -22,6 +22,10 @@ import {
 } from "./location-search-provider.js";
 import { RallyrooMetrics } from "./metrics.js";
 import {
+  OccurrenceLifecycleError,
+  OccurrenceLifecycleModule,
+} from "./occurrence-lifecycle.js";
+import {
   NoopPushNotificationProvider,
   type PushNotificationProvider,
 } from "./push-notification-provider.js";
@@ -47,6 +51,12 @@ declare module "fastify" {
     account: Account | null;
   }
 }
+
+const occurrenceReferenceSchema = z.object({
+  kind: z.enum(["event", "reminder"]),
+  seriesID: z.string().uuid(),
+  scheduledAt: z.string().datetime(),
+});
 
 const timeZoneSchema = z.string().refine((value) => {
   try {
@@ -287,6 +297,7 @@ export function buildApp({
     pushNotificationProvider,
     ...(notificationCenter ? { notificationCenter } : {}),
   });
+  const occurrenceLifecycle = new OccurrenceLifecycleModule(repository);
   const eventMutations = new EventMutationModule({
     persistence: repository,
     importedEvents: {
@@ -826,6 +837,38 @@ export function buildApp({
     await repository.saveReminder(reminder);
     await repository.markFamilyChanged(account.familyID);
     return clientReminder(reminder);
+  });
+
+  app.post("/v1/occurrences/skip", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+    }
+    try {
+      return await occurrenceLifecycle.skip(account, parsed.data);
+    } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/occurrences/acknowledge", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+    }
+    try {
+      return await occurrenceLifecycle.acknowledge(account, parsed.data);
+    } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+      }
+      throw error;
+    }
   });
 
   app.post("/v1/reminders/:id/complete", async (request, reply) => {

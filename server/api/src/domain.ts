@@ -68,6 +68,26 @@ export interface FamilyEvent {
   }>;
 }
 
+export type ScheduleOccurrenceKind = "event" | "reminder";
+export type ScheduleOccurrenceDisposition = "scheduled" | "skipped" | "deleted";
+
+export interface ScheduleOccurrenceReference {
+  kind: ScheduleOccurrenceKind;
+  seriesID: string;
+  /** The occurrence's original scheduled instant; overrides never change this identity. */
+  scheduledAt: string;
+}
+
+export interface ScheduleOccurrenceState {
+  familyID: string;
+  reference: ScheduleOccurrenceReference;
+  disposition: ScheduleOccurrenceDisposition;
+  acknowledgedMemberIDs: string[];
+  overrideEntityID: string | null;
+  completedAt: string | null;
+  completedByMemberID: string | null;
+}
+
 export type ReminderFrequency = "weekly" | "biweekly";
 export type ReminderWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 

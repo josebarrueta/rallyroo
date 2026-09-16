@@ -793,6 +793,49 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(rows.every((event) => event.recurrenceSeriesID === seriesID)).toBe(true);
   });
 
+  it("atomically records concurrent Member acknowledgements for one occurrence", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const account = await first.provisionParentAccount("occurrence-parent", "Parent");
+    await first.saveMember({
+      id: "kid-occurrence", familyID: account.familyID, name: "Kid",
+      role: "kid", colorTag: "purple",
+    });
+    const reference = {
+      kind: "event" as const, seriesID: "abcdefab-cdef-4abc-8def-abcdefabc399",
+      scheduledAt: "2026-09-17T00:30:00.000Z",
+    };
+    await Promise.all([
+      first.acknowledgeOccurrence(account.familyID, reference, account.memberID),
+      second.acknowledgeOccurrence(account.familyID, reference, "kid-occurrence"),
+    ]);
+    const state = await first.acknowledgeOccurrence(account.familyID, reference, account.memberID);
+    expect(state.acknowledgedMemberIDs).toEqual(["kid-occurrence", account.memberID].sort());
+    expect(state.disposition).toBe("scheduled");
+  });
+
+  it("does not claim a skipped recurring Event occurrence", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("skipped-event-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc398";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Daily practice", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-12T15:00:00Z",
+      },
+    });
+    await data.setOccurrenceDisposition(account.familyID, {
+      kind: "event", seriesID: eventID, scheduledAt: "2026-09-11T15:00:00.000Z",
+    }, "skipped");
+    expect(await data.claimDueEventNotifications(new Date("2026-09-11T14:00:00Z"), 100))
+      .toEqual([]);
+  });
+
   it("claims a due recurring event occurrence once across concurrent workers", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("event-notification-parent", "Notifier");

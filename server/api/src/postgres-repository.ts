@@ -8,6 +8,8 @@ import type {
   FamilyInvitation,
   FamilyMember,
   FamilyReminder,
+  ScheduleOccurrenceReference,
+  ScheduleOccurrenceState,
 } from "./domain.js";
 import type {
   ClaimedCommuteAlert,
@@ -1723,6 +1725,52 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query("DELETE FROM events WHERE family_id = $1 AND id = $2", [familyID, eventID]);
   }
 
+  async setOccurrenceDisposition(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    disposition: ScheduleOccurrenceState["disposition"],
+  ): Promise<ScheduleOccurrenceState> {
+    const result = await this.pool.query<ScheduleOccurrenceStateRow>(
+      `INSERT INTO schedule_occurrence_states (
+         family_id, kind, series_id, scheduled_at, disposition
+       ) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (family_id, kind, series_id, scheduled_at) DO UPDATE
+       SET disposition = EXCLUDED.disposition, updated_at = now()
+       RETURNING family_id, kind, series_id::text, scheduled_at, disposition,
+                 acknowledged_member_ids, override_entity_id::text,
+                 completed_at, completed_by_member_id`,
+      [familyID, reference.kind, reference.seriesID, reference.scheduledAt, disposition],
+    );
+    return occurrenceStateFromRow(result.rows[0]!);
+  }
+
+  async acknowledgeOccurrence(
+    familyID: string,
+    reference: ScheduleOccurrenceReference,
+    memberID: string,
+  ): Promise<ScheduleOccurrenceState> {
+    const result = await this.pool.query<ScheduleOccurrenceStateRow>(
+      `INSERT INTO schedule_occurrence_states (
+         family_id, kind, series_id, scheduled_at, acknowledged_member_ids
+       ) VALUES ($1, $2, $3, $4, ARRAY[$5]::text[])
+       ON CONFLICT (family_id, kind, series_id, scheduled_at) DO UPDATE
+       SET acknowledged_member_ids = ARRAY(
+             SELECT DISTINCT acknowledged_member_id
+             FROM unnest(
+               schedule_occurrence_states.acknowledged_member_ids
+               || EXCLUDED.acknowledged_member_ids
+             ) AS acknowledged_member_id
+             ORDER BY acknowledged_member_id
+           ),
+           updated_at = now()
+       RETURNING family_id, kind, series_id::text, scheduled_at, disposition,
+                 acknowledged_member_ids, override_entity_id::text,
+                 completed_at, completed_by_member_id`,
+      [familyID, reference.kind, reference.seriesID, reference.scheduledAt, memberID],
+    );
+    return occurrenceStateFromRow(result.rows[0]!);
+  }
+
   async claimDueEventNotifications(now: Date, limit: number): Promise<DueEventNotification[]> {
     const client = await this.pool.connect();
     try {
@@ -1745,6 +1793,22 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       const revealedEvents = await Promise.all(
         events.rows.map((row) => this.eventFromRow(row)),
       );
+      const suppressedResult = await client.query<{
+        family_id: string;
+        series_id: string;
+        scheduled_at: Date | string;
+      }>(
+        `SELECT family_id, series_id::text, scheduled_at
+         FROM schedule_occurrence_states
+         WHERE kind = 'event'
+           AND disposition <> 'scheduled'
+           AND scheduled_at >= $1::timestamptz - interval '5 minutes'
+           AND scheduled_at <= $1::timestamptz + interval '1 day'`,
+        [now.toISOString()],
+      );
+      const suppressed = new Set(suppressedResult.rows.map((row) =>
+        `${row.family_id}:${row.series_id}:${asISOString(row.scheduled_at)}`
+      ));
       const due = revealedEvents.flatMap((event) => {
         // A recurrence authored in local calendar time cannot be dispatched safely
         // unless that calendar's time zone was persisted with the series.
@@ -1753,7 +1817,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         return eventOccurrenceStarts(event, through)
           .filter((start) => {
             const notifyAt = start.getTime() - event.alertLeadTimeMinutes! * 60 * 1_000;
-            return notifyAt <= now.getTime() && start.getTime() >= now.getTime() - 5 * 60 * 1_000;
+            const stateKey = `${event.familyID}:${event.recurrenceSeriesID ?? event.id}:${start.toISOString()}`;
+            return notifyAt <= now.getTime()
+              && start.getTime() >= now.getTime() - 5 * 60 * 1_000
+              && !suppressed.has(stateKey);
           })
           .map((start) => ({ event, occurrenceStart: start.toISOString() }));
       }).sort((left, right) => left.occurrenceStart.localeCompare(right.occurrenceStart));
@@ -2961,6 +3028,18 @@ interface ScheduleUpdateNotificationRow {
   claimed_at: Date | string;
 }
 
+interface ScheduleOccurrenceStateRow {
+  family_id: string;
+  kind: ScheduleOccurrenceReference["kind"];
+  series_id: string;
+  scheduled_at: Date | string;
+  disposition: ScheduleOccurrenceState["disposition"];
+  acknowledged_member_ids: string[];
+  override_entity_id: string | null;
+  completed_at: Date | string | null;
+  completed_by_member_id: string | null;
+}
+
 interface ReminderRow {
   family_id: string;
   id: string;
@@ -3066,6 +3145,22 @@ function eventValues(event: FamilyEvent): unknown[] {
     event.recurrence ? JSON.stringify(event.recurrence) : null,
     event.recurrenceSeriesID ?? null,
   ];
+}
+
+function occurrenceStateFromRow(row: ScheduleOccurrenceStateRow): ScheduleOccurrenceState {
+  return {
+    familyID: row.family_id,
+    reference: {
+      kind: row.kind,
+      seriesID: row.series_id,
+      scheduledAt: asISOString(row.scheduled_at),
+    },
+    disposition: row.disposition,
+    acknowledgedMemberIDs: row.acknowledged_member_ids,
+    overrideEntityID: row.override_entity_id,
+    completedAt: row.completed_at ? asISOString(row.completed_at) : null,
+    completedByMemberID: row.completed_by_member_id,
+  };
 }
 
 function eventFromRow(row: EventRow): FamilyEvent {
