@@ -333,6 +333,7 @@ private extension EventRecurrence {
             frequency: frequency,
             interval: interval,
             weekdays: weekdays ?? self.weekdays,
+            timeZone: timeZone,
             endDate: endDate ?? self.endDate
         )
     }

@@ -42,6 +42,39 @@ final class EventRecurrenceTests: XCTestCase {
         ])
     }
 
+    func testExpandsWeeklyEventUsingSeriesTimeZoneInsteadOfViewerTimeZone() throws {
+        let sourceStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-09-10T00:30:00Z"))
+        let rangeEnd = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-09-24T00:31:00Z"))
+        let event = FamilyEvent(
+            title: "Practice",
+            kidID: KidID(rawValue: "kid-1"),
+            startTime: sourceStart,
+            endTime: sourceStart.addingTimeInterval(3600),
+            source: .manual,
+            status: .confirmed,
+            recurrence: EventRecurrence(
+                frequency: .weekly,
+                weekdays: [.wednesday],
+                timeZone: "America/Los_Angeles",
+                endDate: rangeEnd
+            )
+        )
+        var viewerCalendar = Calendar(identifier: .gregorian)
+        viewerCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+
+        let starts = EventOccurrenceExpander.occurrences(
+            of: [event],
+            in: DateInterval(start: sourceStart, end: rangeEnd),
+            calendar: viewerCalendar
+        ).map(\.event.startTime)
+
+        XCTAssertEqual(starts, [
+            sourceStart,
+            sourceStart.addingTimeInterval(7 * 24 * 3600),
+            sourceStart.addingTimeInterval(14 * 24 * 3600),
+        ])
+    }
+
     func testExpandsEveryTwoWeeksWithinVisibleRange() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

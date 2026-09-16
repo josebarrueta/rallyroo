@@ -38,6 +38,8 @@ export interface EventRecurrence {
   frequency: "daily" | "weekly" | "monthly";
   interval: number;
   weekdays?: Array<1 | 2 | 3 | 4 | 5 | 6 | 7> | undefined;
+  /** IANA time-zone identifier used to preserve the series' local wall-clock time. */
+  timeZone?: string | undefined;
   endDate: string;
 }
 

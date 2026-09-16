@@ -22,17 +22,20 @@ public struct EventRecurrence: Codable, Equatable, Sendable {
     public let frequency: Frequency
     public let interval: Int
     public let weekdays: [Weekday]?
+    public let timeZone: String?
     public let endDate: Date
 
     public init(
         frequency: Frequency,
         interval: Int = 1,
         weekdays: [Weekday]? = nil,
+        timeZone: String? = nil,
         endDate: Date
     ) {
         self.frequency = frequency
         self.interval = max(1, interval)
         self.weekdays = weekdays.map { Array(Set($0)).sorted() }
+        self.timeZone = timeZone
         self.endDate = endDate
     }
 }
@@ -63,9 +66,23 @@ public enum EventOccurrenceExpander {
             return [occurrence(source: source, startTime: source.startTime)]
         }
 
+        var recurrenceCalendar = calendar
+        if let identifier = recurrence.timeZone, let timeZone = TimeZone(identifier: identifier) {
+            recurrenceCalendar.timeZone = timeZone
+        }
         let startTimes = recurrence.frequency == .weekly && recurrence.weekdays?.isEmpty == false
-            ? weeklyStartTimes(from: source.startTime, recurrence: recurrence, through: range.end, calendar: calendar)
-            : regularStartTimes(from: source.startTime, recurrence: recurrence, through: range.end, calendar: calendar)
+            ? weeklyStartTimes(
+                from: source.startTime,
+                recurrence: recurrence,
+                through: range.end,
+                calendar: recurrenceCalendar
+            )
+            : regularStartTimes(
+                from: source.startTime,
+                recurrence: recurrence,
+                through: range.end,
+                calendar: recurrenceCalendar
+            )
         return startTimes
             .filter { $0 >= range.start && $0 < range.end && $0 <= recurrence.endDate }
             .map { occurrence(source: source, startTime: $0) }
