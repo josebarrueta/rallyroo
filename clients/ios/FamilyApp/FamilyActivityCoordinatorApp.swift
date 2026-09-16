@@ -144,7 +144,8 @@ struct FamilyActivityCoordinatorApp: App {
                         reminderStore: reminderStore,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
-                        commuterStore: commuterStore
+                        commuterStore: commuterStore,
+                        occurrenceLifecycleStore: occurrenceLifecycleStore
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     .tag(AppTab.schedule)
