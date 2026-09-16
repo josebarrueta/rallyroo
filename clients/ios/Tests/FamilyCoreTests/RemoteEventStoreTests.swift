@@ -188,6 +188,7 @@ final class RemoteEventStoreTests: XCTestCase {
         source.recurrence = EventRecurrence(
             frequency: .weekly,
             weekdays: [.thursday],
+            timeZone: "America/Los_Angeles",
             endDate: source.startTime.addingTimeInterval(30 * 24 * 60 * 60)
         )
         source.recurrenceSeriesID = source.id
@@ -251,7 +252,9 @@ final class RemoteEventStoreTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(json["scope"] as? String, "thisWeekdayAndFuture")
         XCTAssertEqual(json["notifyParticipants"] as? Bool, false)
-        XCTAssertEqual((json["event"] as? [String: Any])?["title"] as? String, "Thursday carpool")
+        let eventJSON = json["event"] as? [String: Any]
+        XCTAssertEqual(eventJSON?["title"] as? String, "Thursday carpool")
+        XCTAssertEqual((eventJSON?["recurrence"] as? [String: Any])?["timeZone"] as? String, "America/Los_Angeles")
         XCTAssertEqual((json["upserts"] as? [[String: Any]])?.count, 1)
         XCTAssertEqual((json["affectedEventIDs"] as? [String])?.count, 1)
         XCTAssertEqual((json["affectedSourceEventIDs"] as? [String])?.count, 1)

@@ -497,11 +497,23 @@ struct AddEventSheet: View {
             source: existingEvent?.source ?? .manual,
             status: existingEvent?.status ?? .confirmed,
             alertLeadTime: selectedParticipantIDs.isEmpty ? nil : alertChoice.leadTime,
-            recurrence: recurringSource?.recurrence ?? repeatOption.recurrence(
-                ending: recurrenceEndDate,
-                weekdays: selectedWeekdays.sorted()
-            ),
+            recurrence: selectedRecurrence,
             recurrenceSeriesID: recurringSource?.recurrenceSeriesID
+        )
+    }
+
+    private var selectedRecurrence: EventRecurrence? {
+        guard let recurrence = recurringSource?.recurrence ?? repeatOption.recurrence(
+            ending: recurrenceEndDate,
+            weekdays: selectedWeekdays.sorted()
+        ) else { return nil }
+        guard recurrence.timeZone == nil else { return recurrence }
+        return EventRecurrence(
+            frequency: recurrence.frequency,
+            interval: recurrence.interval,
+            weekdays: recurrence.weekdays,
+            timeZone: TimeZone.autoupdatingCurrent.identifier,
+            endDate: recurrence.endDate
         )
     }
 
@@ -634,12 +646,24 @@ private enum RepeatOption: String, CaseIterable, Identifiable {
         ending endDate: Date,
         weekdays: [EventRecurrence.Weekday]
     ) -> EventRecurrence? {
-        switch self {
+        let timeZone = TimeZone.autoupdatingCurrent.identifier
+        return switch self {
         case .never: nil
-        case .daily: EventRecurrence(frequency: .daily, endDate: endDate)
-        case .weekly: EventRecurrence(frequency: .weekly, weekdays: weekdays, endDate: endDate)
-        case .biweekly: EventRecurrence(frequency: .weekly, interval: 2, weekdays: weekdays, endDate: endDate)
-        case .monthly: EventRecurrence(frequency: .monthly, endDate: endDate)
+        case .daily: EventRecurrence(frequency: .daily, timeZone: timeZone, endDate: endDate)
+        case .weekly: EventRecurrence(
+            frequency: .weekly,
+            weekdays: weekdays,
+            timeZone: timeZone,
+            endDate: endDate
+        )
+        case .biweekly: EventRecurrence(
+            frequency: .weekly,
+            interval: 2,
+            weekdays: weekdays,
+            timeZone: timeZone,
+            endDate: endDate
+        )
+        case .monthly: EventRecurrence(frequency: .monthly, timeZone: timeZone, endDate: endDate)
         }
     }
 }

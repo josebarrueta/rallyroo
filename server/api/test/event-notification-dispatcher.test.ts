@@ -65,6 +65,7 @@ describe("EventNotificationDispatcher", () => {
       recurrence: {
         frequency: "daily",
         interval: 1,
+        timeZone: "UTC",
         endDate: "2026-09-03T18:00:00.000Z",
       },
     });
@@ -95,6 +96,7 @@ describe("EventNotificationDispatcher", () => {
         frequency: "weekly",
         interval: 1,
         weekdays: [1, 3],
+        timeZone: "UTC",
         endDate: "2026-09-16T18:00:00.000Z",
       },
     });
@@ -112,6 +114,57 @@ describe("EventNotificationDispatcher", () => {
       .toEqual(["2026-09-07T18:00:00.000Z"]);
     expect(wednesday.map((notification) => notification.occurrenceStart))
       .toEqual(["2026-09-09T18:00:00.000Z"]);
+  });
+
+  it("does not dispatch ambiguous legacy recurrence alerts without a time zone", async () => {
+    const repository = new InMemoryRallyrooRepository();
+    await repository.saveEvent({
+      ...event,
+      startTime: "2026-09-10T00:30:00.000Z",
+      endTime: "2026-09-10T01:30:00.000Z",
+      alertLeadTimeMinutes: 0,
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [3],
+        endDate: "2026-09-24T00:30:00.000Z",
+      },
+    });
+
+    expect(await repository.claimDueEventNotifications(
+      new Date("2026-09-16T00:30:00.000Z"),
+      100,
+    )).toEqual([]);
+  });
+
+  it("uses the recurrence time zone instead of UTC for weekly occurrence alerts", async () => {
+    const repository = new InMemoryRallyrooRepository();
+    await repository.saveEvent({
+      ...event,
+      startTime: "2026-09-10T00:30:00.000Z", // Wednesday 5:30 PM in Los Angeles.
+      endTime: "2026-09-10T01:30:00.000Z",
+      alertLeadTimeMinutes: 0,
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [3],
+        endDate: "2026-09-24T00:30:00.000Z",
+        timeZone: "America/Los_Angeles",
+      },
+    });
+
+    const tuesday = await repository.claimDueEventNotifications(
+      new Date("2026-09-16T00:30:00.000Z"),
+      100,
+    );
+    const wednesday = await repository.claimDueEventNotifications(
+      new Date("2026-09-17T00:30:00.000Z"),
+      100,
+    );
+
+    expect(tuesday).toEqual([]);
+    expect(wednesday.map((notification) => notification.occurrenceStart))
+      .toEqual(["2026-09-17T00:30:00.000Z"]);
   });
 
   it("releases a failed event delivery claim for retry", async () => {

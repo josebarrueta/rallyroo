@@ -1746,6 +1746,9 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         events.rows.map((row) => this.eventFromRow(row)),
       );
       const due = revealedEvents.flatMap((event) => {
+        // A recurrence authored in local calendar time cannot be dispatched safely
+        // unless that calendar's time zone was persisted with the series.
+        if (event.recurrence && !event.recurrence.timeZone) return [];
         const through = new Date(now.getTime() + event.alertLeadTimeMinutes! * 60 * 1_000);
         return eventOccurrenceStarts(event, through)
           .filter((start) => {

@@ -48,6 +48,15 @@ declare module "fastify" {
   }
 }
 
+const timeZoneSchema = z.string().refine((value) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}, { message: "must be an IANA time-zone identifier" });
+
 const eventSchema = z.object({
   id: z.string().uuid(),
   title: z.string().trim().min(1),
@@ -72,6 +81,7 @@ const eventSchema = z.object({
       z.literal(1), z.literal(2), z.literal(3), z.literal(4),
       z.literal(5), z.literal(6), z.literal(7),
     ])).min(1).transform((days) => [...new Set(days)].sort()).optional(),
+    timeZone: timeZoneSchema.optional(),
     endDate: z.string().datetime(),
   }).refine((recurrence) => recurrence.frequency === "weekly" || recurrence.weekdays === undefined, {
     message: "weekdays are supported only for weekly recurrence",

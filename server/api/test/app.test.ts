@@ -2283,6 +2283,7 @@ describe("Rallyroo API", () => {
         frequency: "weekly",
         interval: 1,
         weekdays: [1, 3],
+        timeZone: "America/Los_Angeles",
         endDate: "2027-01-01T18:00:00Z",
       },
     });
@@ -2314,6 +2315,7 @@ describe("Rallyroo API", () => {
     const saved = (await data.eventsForFamily("family-1")).find((event) => event.id === id);
     expect(response.statusCode).toBe(200);
     expect(saved?.recurrence?.weekdays).toEqual([1, 3]);
+    expect(saved?.recurrence?.timeZone).toBe("America/Los_Angeles");
     await app.close();
   });
 
@@ -2339,6 +2341,7 @@ describe("Rallyroo API", () => {
           frequency: "weekly",
           interval: 1,
           weekdays: [7, 3, 3],
+          timeZone: "America/Los_Angeles",
           endDate: "2026-12-31T23:59:59Z"
         }
       },
@@ -2351,7 +2354,40 @@ describe("Rallyroo API", () => {
     const saved = (await data.eventsForFamily("family-1")).find(
       (event) => event.id === "00000000-0000-4000-8000-000000000002",
     );
-    expect(saved?.recurrence).toMatchObject({ frequency: "weekly", weekdays: [3, 7] });
+    expect(saved?.recurrence).toMatchObject({
+      frequency: "weekly",
+      weekdays: [3, 7],
+      timeZone: "America/Los_Angeles",
+    });
+    await app.close();
+  });
+
+  it("rejects an invalid recurrence time zone", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const response = await app.inject({
+      method: "PUT",
+      url: "/v1/events/00000000-0000-4000-8000-000000000098",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: "00000000-0000-4000-8000-000000000098",
+        title: "Practice",
+        kidID: "kid-1",
+        participantIDs: ["kid-1"],
+        startTime: "2026-09-09T17:30:00Z",
+        endTime: "2026-09-09T18:30:00Z",
+        source: "manual",
+        status: "confirmed",
+        recurrence: {
+          frequency: "weekly",
+          interval: 1,
+          weekdays: [3],
+          timeZone: "not/a-time-zone",
+          endDate: "2026-12-31T23:59:59Z",
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
     await app.close();
   });
 

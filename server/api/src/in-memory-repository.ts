@@ -389,6 +389,7 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     const candidates: DueEventNotification[] = [];
     for (const event of this.events) {
       if (event.alertLeadTimeMinutes === null || event.alertLeadTimeMinutes === undefined) continue;
+      if (event.recurrence && !event.recurrence.timeZone) continue;
       const through = new Date(now.getTime() + event.alertLeadTimeMinutes * 60 * 1_000);
       for (const occurrenceStart of eventOccurrenceStarts(event, through)) {
         const occurrenceTime = occurrenceStart.getTime();

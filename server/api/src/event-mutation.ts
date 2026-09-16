@@ -542,6 +542,7 @@ function eventVersionSignature(event: FamilyEvent): string {
       frequency: event.recurrence.frequency,
       interval: event.recurrence.interval,
       weekdays: [...(event.recurrence.weekdays ?? [])].sort((left, right) => left - right),
+      timeZone: event.recurrence.timeZone ?? null,
       endDate: eventVersionSecond(event.recurrence.endDate),
     } : null,
     recurrenceSeriesID: event.recurrenceSeriesID?.toLowerCase() ?? null,
@@ -566,6 +567,7 @@ function pastRowIsPreserved(
       && existingRecurrence.interval === plannedRecurrence.interval
       && JSON.stringify(existingRecurrence.weekdays ?? null)
         === JSON.stringify(plannedRecurrence.weekdays ?? null)
+      && (existingRecurrence.timeZone ?? null) === (plannedRecurrence.timeZone ?? null)
       && new Date(plannedRecurrence.endDate) <= new Date(existingRecurrence.endDate)
     : plannedRecurrence == null;
   return recurrenceShapeMatches
@@ -618,12 +620,19 @@ function preserveWeeklyWeekdays(
   recurrence: FamilyEvent["recurrence"],
   existingRecurrence: FamilyEvent["recurrence"],
 ): FamilyEvent["recurrence"] {
+  if (!recurrence) return recurrence;
   const existingWeekdays = existingRecurrence?.weekdays;
-  return recurrence?.frequency === "weekly"
-    && recurrence.weekdays === undefined
-    && existingWeekdays?.length
-    ? { ...recurrence, weekdays: existingWeekdays }
-    : recurrence;
+  return {
+    ...recurrence,
+    ...(recurrence.frequency === "weekly"
+      && recurrence.weekdays === undefined
+      && existingWeekdays?.length
+      ? { weekdays: existingWeekdays }
+      : {}),
+    ...(recurrence.timeZone === undefined && existingRecurrence?.timeZone
+      ? { timeZone: existingRecurrence.timeZone }
+      : {}),
+  };
 }
 
 export function detectEventConflicts(

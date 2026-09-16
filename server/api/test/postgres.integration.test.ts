@@ -813,6 +813,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       recurrence: {
         frequency: "daily",
         interval: 1,
+        timeZone: "UTC",
         endDate: "2026-09-12T15:00:00Z",
       },
     });

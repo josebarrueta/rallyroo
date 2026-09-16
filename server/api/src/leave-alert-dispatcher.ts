@@ -42,6 +42,7 @@ export class LeaveAlertDispatcher {
         if (result.evaluated >= maximumCandidates) break;
         const event = events.find((candidate) => candidate.id === plan.eventID);
         if (!plan.leaveAlertEnabled || !event?.arrivalTime || !event.location?.trim()) continue;
+        if (event.recurrence && !event.recurrence.timeZone) continue;
         const baseStart = new Date(event.startTime);
         const baseArrival = new Date(event.arrivalTime);
         const arrivalOffset = baseStart.getTime() - baseArrival.getTime();
