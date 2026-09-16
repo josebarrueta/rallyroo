@@ -57,6 +57,10 @@ public struct EventOccurrence: Identifiable, Equatable, Sendable {
         self.sourceEvent = sourceEvent
         self.disposition = disposition
       }
+    /// The recurrence series identity for lifecycle references.
+    public var sourceSeriesID: UUID {
+        sourceEvent.recurrenceSeriesID ?? sourceEvent.id
+    }
 }
 
 public enum EventOccurrenceExpander {
