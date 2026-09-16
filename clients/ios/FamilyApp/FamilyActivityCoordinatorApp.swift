@@ -86,6 +86,11 @@ struct FamilyActivityCoordinatorApp: App {
             reminderAlertScheduler = nil
             eventAlertScheduler = nil
             memberStore = RemoteFamilyMemberStore(baseURL: baseURL, transport: authenticatedTransport)
+            occurrenceLifecycleStore = RemoteOccurrenceLifecycleStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport,
+                accountID: { try await remoteAuthentication.currentSession()?.accountID }
+              )
             locationSearch = RemoteLocationSearch(baseURL: baseURL, transport: authenticatedTransport)
             invitationStore = RemoteFamilyInvitationStore(
                 baseURL: baseURL,
