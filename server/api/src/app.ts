@@ -855,6 +855,22 @@ export function buildApp({
     }
   });
 
+  app.post("/v1/occurrences/delete", async (request, reply) => {
+    const account = requiredAccount(request);
+    const parsed = occurrenceReferenceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_occurrence_reference" });
+     }
+    try {
+      return await occurrenceLifecycle.delete(account, parsed.data);
+     } catch (error) {
+      if (error instanceof OccurrenceLifecycleError) {
+        return reply.code(error.statusCode).send({ error: error.code });
+       }
+      throw error;
+     }
+   });
+
   app.post("/v1/occurrences/acknowledge", async (request, reply) => {
     const account = requiredAccount(request);
     const parsed = occurrenceReferenceSchema.safeParse(request.body);

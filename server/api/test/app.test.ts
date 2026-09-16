@@ -1101,6 +1101,27 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("requires a parent to delete an Event occurrence as a durable tombstone", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const reference = {
+      kind: "event", seriesID: "00000000-0000-4000-8000-000000000001",
+      scheduledAt: "2026-08-23T16:00:00.000Z",
+     };
+    const kidResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/delete",
+      headers: { authorization: "Bearer kid-token" }, payload: reference,
+     });
+    const parentResponse = await app.inject({
+      method: "POST", url: "/v1/occurrences/delete",
+      headers: { authorization: "Bearer parent-token" }, payload: reference,
+     });
+    expect(kidResponse.statusCode).toBe(403);
+    expect(kidResponse.json()).toEqual({ error: "parent_required" });
+    expect(parentResponse.statusCode).toBe(200);
+    expect(parentResponse.json()).toMatchObject({ disposition: "deleted" });
+    await app.close();
+   });
+
   it("advances the family change cursor after a mutation", async () => {
     const data = repository();
     const app = buildApp({ identityProvider, repository: data });

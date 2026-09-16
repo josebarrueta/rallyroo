@@ -45,6 +45,17 @@ export class OccurrenceLifecycleModule {
     return this.repository.setOccurrenceDisposition(account.familyID, reference, "skipped");
   }
 
+  async delete(
+    account: Account,
+    untrustedReference: ScheduleOccurrenceReference,
+   ): Promise<ScheduleOccurrenceState> {
+    if (account.role !== "parent") {
+      throw new OccurrenceLifecycleError("parent_required", 403);
+      }
+    const reference = await this.requireOccurrence(account, untrustedReference);
+    return this.repository.setOccurrenceDisposition(account.familyID, reference, "deleted");
+    }
+
   async acknowledge(
     account: Account,
     untrustedReference: ScheduleOccurrenceReference,

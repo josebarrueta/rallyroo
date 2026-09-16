@@ -91,6 +91,16 @@ describe("OccurrenceLifecycleModule", () => {
     expect(state.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
   });
 
+  it("lets a parent delete an occurrence as a durable tombstone", async () => {
+    const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
+    const state = await lifecycle.delete(account, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+     });
+    expect(state.disposition).toBe("deleted");
+    expect(state.reference.seriesID).toBe(series.id);
+    expect(state.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
+    });
+
   it("records a Member acknowledgement against a stable Event occurrence reference", async () => {
     const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
     const state = await lifecycle.acknowledge(account, {

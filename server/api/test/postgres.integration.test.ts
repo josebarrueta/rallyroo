@@ -836,6 +836,28 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       .toEqual([]);
   });
 
+  it("does not claim a deleted recurring Event occurrence", async () => {
+    const data = repositoryForTest();
+    const account = await data.provisionParentAccount("deleted-event-parent", "Parent");
+    const eventID = "abcdefab-cdef-4abc-8def-abcdefabc397";
+    await data.saveEvent({
+      id: eventID, familyID: account.familyID, title: "Daily practice", kidID: null,
+      participantIDs: [account.memberID], startTime: "2026-09-10T15:00:00Z",
+      endTime: "2026-09-10T16:00:00Z", location: null, driver: null,
+      source: "manual", status: "confirmed", alertLeadTimeMinutes: 60,
+      recurrenceSeriesID: eventID,
+      recurrence: {
+        frequency: "daily", interval: 1, timeZone: "UTC",
+        endDate: "2026-09-12T15:00:00Z",
+      },
+    });
+    await data.setOccurrenceDisposition(account.familyID, {
+      kind: "event", seriesID: eventID, scheduledAt: "2026-09-11T15:00:00.000Z",
+    }, "deleted");
+    expect(await data.claimDueEventNotifications(new Date("2026-09-11T14:00:00Z"), 100))
+        .toEqual([]);
+   });
+
   it("claims a due recurring event occurrence once across concurrent workers", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("event-notification-parent", "Notifier");
