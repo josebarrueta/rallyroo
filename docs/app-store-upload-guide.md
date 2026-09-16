@@ -48,7 +48,16 @@ file/stdin upload, never by pasting values into command arguments or chat:
 - `APPLE_DISTRIBUTION_CERT`: base64 .p12 including its private key.
 - `APPLE_DISTRIBUTION_CERT_PWD`: .p12 password (may be empty).
 - `APPLE_PROVISIONING_PROFILE`: base64 App Store distribution profile for
-  `dev.rallyroo.app`, team `5LS29Z8553`, including Apple sign-in and production APNs.
+  `dev.rallyroo.app`, team `5LS29Z8553`, including Apple sign-in, production APNs,
+  and App Group `group.dev.rallyroo.app`.
+- `APPLE_SHARE_EXTENSION_PROVISIONING_PROFILE`: base64 App Store distribution
+  profile for `dev.rallyroo.app.share`, team `5LS29Z8553`, including App Group
+  `group.dev.rallyroo.app`.
+
+Register the App Group first, associate it with both identifiers, and regenerate
+both profiles after the capability is enabled. The containing app and Share
+Extension must use the exact same App Group; do not reuse either profile for the
+other bundle identifier.
 
 Use a narrowly scoped key with the permissions necessary to upload and manage
 internal TestFlight distribution (App Manager); do not use an Admin key.
@@ -79,7 +88,9 @@ numbering migration, not a silent fallback.
 The script validates bundle ID, build number, iOS 26-or-later SDK, remote production
 configuration, iPhone-only device family, privacy manifest presence/parseability, encryption
 flag, code signature, Apple sign-in, production APNs, team/application identifiers,
-and absence of a debug entitlement before export/upload.
+and absence of a debug entitlement before export/upload. It also verifies the
+embedded `dev.rallyroo.app.share` extension, matching build number, and the shared
+App Group entitlements on both signed bundles.
 
 Credentials live in a private temporary directory and ephemeral keychain. Keychain
 password commands are sent over stdin to `security -i`, not process arguments.

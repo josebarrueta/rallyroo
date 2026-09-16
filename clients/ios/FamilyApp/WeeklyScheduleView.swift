@@ -19,6 +19,7 @@ struct WeeklyScheduleView: View {
     @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
+    @State private var sharedCaptureImageData: Data?
     @State private var scheduleUpdateNotice: String?
     @State private var connectedCalendarCount: Int?
     @State private var commuterState: CommuterState?
@@ -159,11 +160,18 @@ struct WeeklyScheduleView: View {
                     )
                 }
             }
-            .sheet(isPresented: $isCapturingSchedule) {
+            .sheet(isPresented: Binding(
+                get: { isCapturingSchedule },
+                set: { presented in
+                    isCapturingSchedule = presented
+                    if !presented { sharedCaptureImageData = nil }
+                }
+            )) {
                 if allowsEditing, let scheduleDraftExtractor, let reminderStore {
                     ScheduleCaptureSheet(
                         extractor: scheduleDraftExtractor,
                         members: viewModel.members,
+                        initialImageData: sharedCaptureImageData,
                         onSaveEvent: { event, notifyParticipants, idempotencyKey in
                             try await viewModel.addEvent(
                                 event,
@@ -174,6 +182,14 @@ struct WeeklyScheduleView: View {
                         onSaveReminder: { try await reminderStore.save($0) }
                     )
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sharedScheduleCaptureReceived)) { note in
+                guard allowsEditing,
+                      scheduleDraftExtractor != nil,
+                      reminderStore != nil,
+                      let imageData = note.object as? Data else { return }
+                sharedCaptureImageData = imageData
+                isCapturingSchedule = true
             }
             .sheet(item: $editingOccurrence) { occurrence in
                 AddEventSheet(

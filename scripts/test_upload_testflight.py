@@ -49,11 +49,26 @@ Actionable: Unauthorized (401)
                 "DTSDKName": "iphoneos26.3"}
         entitlements = {"application-identifier": "5LS29Z8553.dev.rallyroo.app",
                         "com.apple.developer.team-identifier": "5LS29Z8553",
-                        "aps-environment": "production", "com.apple.developer.applesignin": ["Default"]}
+                        "aps-environment": "production", "com.apple.developer.applesignin": ["Default"],
+                        "com.apple.security.application-groups": ["group.dev.rallyroo.app"]}
+        extension_entitlements = {
+            "application-identifier": "5LS29Z8553.dev.rallyroo.app.share",
+            "com.apple.developer.team-identifier": "5LS29Z8553",
+            "com.apple.security.application-groups": ["group.dev.rallyroo.app"],
+        }
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
+            extension = app / "PlugIns/FamilyAppShare.appex"
+            extension.mkdir(parents=True)
+            (extension / "Info.plist").write_bytes(plistlib.dumps({
+                "CFBundleIdentifier": "dev.rallyroo.app.share",
+                "CFBundleVersion": "101.1.0",
+            }))
             (app / "PrivacyInfo.xcprivacy").write_bytes(plistlib.dumps({}))
-            with patch.object(upload, "run", return_value=plistlib.dumps(entitlements)):
+            def signing_output(args):
+                selected = extension_entitlements if str(extension) in args else entitlements
+                return plistlib.dumps(selected)
+            with patch.object(upload, "run", side_effect=signing_output):
                 (app / "Info.plist").write_bytes(plistlib.dumps(good))
                 self.assertEqual(upload.verify(app, "101.1.0"), "1.0")
                 for key in good.keys() - {"CFBundleShortVersionString"}:
