@@ -70,6 +70,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var recurrenceSeriesID: UUID?
     public var isReadOnly: Bool
     public var provenance: [EventProvenance]
+    public var occurrenceStates: [ScheduleOccurrenceState]?
 
     private enum CodingKeys: String, CodingKey {
         case id, title, kidID, participantIDs, startTime, endTime, location
@@ -77,6 +78,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         case alertLeadTime = "alertLeadTimeMinutes"
         case arrivalTime
         case isReadOnly = "readOnly"
+        case occurrenceStates
     }
 
     public init(
@@ -96,7 +98,8 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         recurrence: EventRecurrence? = nil,
         recurrenceSeriesID: UUID? = nil,
         isReadOnly: Bool = false,
-        provenance: [EventProvenance] = []
+        provenance: [EventProvenance] = [],
+        occurrenceStates: [ScheduleOccurrenceState]? = nil
     ) {
         self.id = id
         self.title = title
@@ -115,6 +118,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.recurrenceSeriesID = recurrenceSeriesID ?? (recurrence == nil ? nil : id)
         self.isReadOnly = isReadOnly
         self.provenance = provenance
+        self.occurrenceStates = occurrenceStates
     }
 
     public init(from decoder: Decoder) throws {
@@ -137,6 +141,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
             ?? (recurrence == nil ? nil : id)
         isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
         provenance = try container.decodeIfPresent([EventProvenance].self, forKey: .provenance) ?? []
+        occurrenceStates = try container.decodeIfPresent([ScheduleOccurrenceState].self, forKey: .occurrenceStates)
     }
 }
 
@@ -438,4 +443,33 @@ public actor LocalEventStore: EventStore {
             recurringMutationResults: recurringMutationResults
         )).write(to: storageURL, options: .atomic)
     }
+}
+
+// MARK: - Recurrence occurrence lifecycle
+
+public enum ScheduleOccurrenceKind: String, Codable, Sendable {
+    case event
+    case reminder
+}
+
+public enum ScheduleOccurrenceDisposition: String, Codable, Sendable {
+    case scheduled
+    case skipped
+    case deleted
+}
+
+public struct ScheduleOccurrenceReference: Codable, Equatable, Sendable {
+    public let kind: ScheduleOccurrenceKind
+    public let seriesID: UUID
+    public let scheduledAt: Date
+}
+
+public struct ScheduleOccurrenceState: Codable, Equatable, Sendable {
+    public let familyID: String
+    public let reference: ScheduleOccurrenceReference
+    public let disposition: ScheduleOccurrenceDisposition
+    public let acknowledgedMemberIDs: [String]
+    public let overrideEntityID: UUID?
+    public let completedAt: Date?
+    public let completedByMemberID: String?
 }
