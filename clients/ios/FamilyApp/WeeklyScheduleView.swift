@@ -487,13 +487,7 @@ struct WeeklyScheduleView: View {
                      )
                  }
              }
-            // Acknowledgment
-            if occurrence.disposition == .acknowledged,
-               allowsEditing, !viewModel.isShowingCachedEvents, occurrenceLifecycleStore != nil {
-                Label("Acknowledged by you", systemImage: "checkmark.circle.fill")
-                     .labelStyle(.titleAndIcon)
-                     .foregroundStyle(.green)
-             }
+            // Acknowledged-by-you: per-member; deferred
          }
      }
 
@@ -824,12 +818,7 @@ private struct EventRow: View {
                              .padding(.horizontal, 6)
                              .padding(.vertical, 2)
                              .background(Color.gray.opacity(0.3), in: Capsule())
-                     } else if disposition == .acknowledged {
-                        Image(systemName: "checkmark.circle.fill")
-                             .font(.caption)
-                             .foregroundStyle(.green)
                      }
-                }
                 if !display.participantNames.isEmpty {
                     Text(display.participantNames.joined(separator: " • "))
                          .font(.subheadline)
