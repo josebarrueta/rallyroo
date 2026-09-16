@@ -819,6 +819,7 @@ private struct EventRow: View {
                              .padding(.vertical, 2)
                              .background(Color.gray.opacity(0.3), in: Capsule())
                      }
+                }
                 if !display.participantNames.isEmpty {
                     Text(display.participantNames.joined(separator: " • "))
                          .font(.subheadline)
