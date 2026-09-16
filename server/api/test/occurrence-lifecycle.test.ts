@@ -32,11 +32,11 @@ const series: FamilyEvent = {
     weekdays: [3],
     timeZone: "America/Los_Angeles",
     endDate: "2026-09-24T00:30:00.000Z",
-  },
-};
+    },
+  };
 
 class MemoryOccurrenceRepository implements OccurrenceLifecycleRepository {
-  state: ScheduleOccurrenceState | null = null;
+  states: ScheduleOccurrenceState[] = [];
 
   async eventsForFamily(): Promise<FamilyEvent[]> { return [series]; }
   async remindersForFamily() { return []; }
@@ -45,77 +45,132 @@ class MemoryOccurrenceRepository implements OccurrenceLifecycleRepository {
     familyID: string,
     reference: ScheduleOccurrenceState["reference"],
     disposition: ScheduleOccurrenceState["disposition"],
-  ) {
-    this.state = this.buildState(familyID, reference, { disposition });
-    return this.state;
-  }
+    ): Promise<ScheduleOccurrenceState> {
+      const state: ScheduleOccurrenceState = {
+          familyID,
+          reference,
+          disposition,
+          acknowledgedMemberIDs: [],
+          overrideEntityID: null,
+          completedAt: null,
+          completedByMemberID: null,
+          };
+      this.states.push(state);
+      return state;
+      }
 
   async acknowledgeOccurrence(
     familyID: string,
     reference: ScheduleOccurrenceState["reference"],
     memberID: string,
-  ) {
-    this.state = this.buildState(familyID, reference, {
-      acknowledgedMemberIDs: [...new Set([
-        ...(this.state?.acknowledgedMemberIDs ?? []), memberID,
-      ])].sort(),
-    });
-    return this.state;
-  }
-
-  private buildState(
-    familyID: string,
-    reference: ScheduleOccurrenceState["reference"],
-    changes: Partial<ScheduleOccurrenceState>,
-  ): ScheduleOccurrenceState {
-    return {
-      familyID,
-      reference,
-      disposition: this.state?.disposition ?? "scheduled",
-      acknowledgedMemberIDs: this.state?.acknowledgedMemberIDs ?? [],
-      overrideEntityID: this.state?.overrideEntityID ?? null,
-      completedAt: this.state?.completedAt ?? null,
-      completedByMemberID: this.state?.completedByMemberID ?? null,
-      ...changes,
-    };
-  }
+    ): Promise<ScheduleOccurrenceState> {
+      const existing = this.states.find(
+          (s) => s.reference.seriesID === reference.seriesID && s.reference.scheduledAt === reference.scheduledAt,
+          );
+      const acknowledgedMemberIDs = existing
+          ? [...new Set([...existing.acknowledgedMemberIDs, memberID])].sort()
+          : [memberID];
+      const state: ScheduleOccurrenceState = {
+          familyID,
+          reference,
+          disposition: existing?.disposition ?? "scheduled",
+          acknowledgedMemberIDs,
+          overrideEntityID: existing?.overrideEntityID ?? null,
+          completedAt: existing?.completedAt ?? null,
+          completedByMemberID: existing?.completedByMemberID ?? null,
+          };
+      const idx = this.states.findIndex(
+          (s) => s.reference.seriesID === reference.seriesID && s.reference.scheduledAt === reference.scheduledAt,
+          );
+      if (idx >= 0) this.states[idx] = state; else this.states.push(state);
+      return state;
+      }
 }
 
 describe("OccurrenceLifecycleModule", () => {
   it("lets a parent skip one Event occurrence without deleting its history", async () => {
-    const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
-    const state = await lifecycle.skip(account, {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const results = await lifecycle.skip(account, {
       kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
-    });
-    expect(state.disposition).toBe("skipped");
-    expect(state.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
+      }, "this_occurrence");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.disposition).toBe("skipped");
+    expect(results[0]!.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
   });
 
   it("lets a parent delete an occurrence as a durable tombstone", async () => {
-    const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
-    const state = await lifecycle.delete(account, {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const results = await lifecycle.delete(account, {
       kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+      }, "this_occurrence");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.disposition).toBe("deleted");
+    expect(results[0]!.reference.seriesID).toBe(series.id);
+    expect(results[0]!.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
+    });
+
+  it("skips all future occurrences when scope is all_future", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const results = await lifecycle.skip(account, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+      }, "all_future");
+     // All future occurrences (2026-09-24 only, since 09-17 and 09-10 are in the past relative to 09-17)
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r) => r.disposition === "skipped")).toBe(true);
+    expect(results.some((r) => r.reference.scheduledAt >= "2026-09-17T00:30:00.000Z")).toBe(true);
+    expect(results.some((r) => r.reference.scheduledAt <= "2026-09-10T00:30:00.000Z")).toBe(false);
      });
-    expect(state.disposition).toBe("deleted");
-    expect(state.reference.seriesID).toBe(series.id);
-    expect(state.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
+
+  it("skips this weekday and future when scope is this_weekday_future", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const results = await lifecycle.skip(account, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+      }, "this_weekday_future");
+     // Should skip 09-17 and 09-24 (both Wednesdays)
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r) => r.disposition === "skipped")).toBe(true);
+    expect(results.every((r) => r.reference.scheduledAt >= "2026-09-17T00:30:00.000Z")).toBe(true);
+     });
+
+  it("lets a non-parent skip an Event occurrence", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const child: Account = { ...account, role: "kid", memberID: "kid-1" };
+    await expect(lifecycle.skip(child, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+      })).rejects.toThrow("parent_required");
+    });
+
+  it("throws for unknown occurrence reference", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    await expect(lifecycle.skip(account, {
+      kind: "event",
+      seriesID: "00000000-0000-4000-8000-000000000999",
+      scheduledAt: "2026-09-17T00:30:00.000Z",
+      })).rejects.toThrow("occurrence_not_found");
     });
 
   it("records a Member acknowledgement against a stable Event occurrence reference", async () => {
-    const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
     const state = await lifecycle.acknowledge(account, {
       kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
-    });
+      });
     expect(state).toEqual({
       familyID: account.familyID,
       reference: {
         kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
-      },
+        },
       disposition: "scheduled",
       acknowledgedMemberIDs: [account.memberID],
       overrideEntityID: null,
       completedAt: null,
       completedByMemberID: null,
+      });
     });
-  });
 });

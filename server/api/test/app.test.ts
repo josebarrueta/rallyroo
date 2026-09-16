@@ -1086,7 +1086,9 @@ describe("Rallyroo API", () => {
     expect(kidResponse.statusCode).toBe(403);
     expect(kidResponse.json()).toEqual({ error: "parent_required" });
     expect(parentResponse.statusCode).toBe(200);
-    expect(parentResponse.json()).toMatchObject({ disposition: "skipped" });
+    const skipBody = parentResponse.json();
+    expect(Array.isArray(skipBody)).toBe(true);
+    expect(skipBody[0]).toMatchObject({ disposition: "skipped" });
     const eventsResponse = await app.inject({
       method: "GET", url: "/v1/events",
       headers: { authorization: "Bearer parent-token" },
@@ -1118,7 +1120,9 @@ describe("Rallyroo API", () => {
     expect(kidResponse.statusCode).toBe(403);
     expect(kidResponse.json()).toEqual({ error: "parent_required" });
     expect(parentResponse.statusCode).toBe(200);
-    expect(parentResponse.json()).toMatchObject({ disposition: "deleted" });
+    const deleteBody = parentResponse.json();
+    expect(Array.isArray(deleteBody)).toBe(true);
+    expect(deleteBody[0]).toMatchObject({ disposition: "deleted" });
     await app.close();
    });
 
