@@ -65,6 +65,7 @@ export interface RallyrooRepository extends EventMutationPersistence {
     reference: ScheduleOccurrenceReference,
     disposition: ScheduleOccurrenceState["disposition"],
   ): Promise<ScheduleOccurrenceState>;
+  occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   saveReminder(reminder: FamilyReminder): Promise<void>;
   deleteReminder(familyID: string, reminderID: string): Promise<void>;

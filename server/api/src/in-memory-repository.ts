@@ -429,6 +429,14 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     return due;
   }
 
+  async occurrenceStatesForFamily(
+    familyID: string,
+   ): Promise<ScheduleOccurrenceState[]> {
+    return [...this.occurrenceStates.values()]
+       .filter((state) => state.familyID === familyID)
+       .map((state) => structuredClone(state));
+   }
+
   async setOccurrenceDisposition(
     familyID: string,
     reference: ScheduleOccurrenceReference,

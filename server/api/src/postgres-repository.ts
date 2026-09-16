@@ -1725,6 +1725,19 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     await this.pool.query("DELETE FROM events WHERE family_id = $1 AND id = $2", [familyID, eventID]);
   }
 
+
+  async occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]> {
+    const result = await this.pool.query<ScheduleOccurrenceStateRow>(
+      `SELECT family_id, kind, series_id::text, scheduled_at, disposition,
+             acknowledged_member_ids, override_entity_id::text,
+             completed_at, completed_by_member_id
+      FROM schedule_occurrence_states
+     WHERE family_id = $1
+     ORDER BY kind, series_id, scheduled_at`,
+      [familyID],
+     );
+    return result.rows.map((row) => occurrenceStateFromRow(row));
+     }
   async setOccurrenceDisposition(
     familyID: string,
     reference: ScheduleOccurrenceReference,

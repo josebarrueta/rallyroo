@@ -1164,15 +1164,30 @@ export function buildApp({
 
   app.get("/v1/events", async (request) => {
     const account = requiredAccount(request);
-    const events = [
-      ...await repository.eventsForFamily(account.familyID),
-      ...(calendarSources ? await calendarSources.events(account.familyID, account.memberID) : []),
-    ];
+    const [events, occurrenceStates] = await Promise.all([
+         (async () => {
+          const familyEvents = await repository.eventsForFamily(account.familyID);
+          const imported = calendarSources
+               ? await calendarSources.events(account.familyID, account.memberID)
+               : [];
+          return [...familyEvents, ...imported];
+         })(),
+        repository.occurrenceStatesForFamily(account.familyID),
+     ]);
     const visible = account.role === "parent"
-      ? events
-      : events.filter((event) => event.participantIDs.includes(account.memberID));
-    return visible.map(clientEvent);
-  });
+        ? events
+        : events.filter((event) => event.participantIDs.includes(account.memberID));
+    return visible.map((event) => {
+       const seriesID = (event.recurrenceSeriesID ?? event.id).toLowerCase();
+       const statesForSeries = occurrenceStates
+          .filter((state) =>
+              state.reference.kind === "event"
+               && state.reference.seriesID === seriesID
+          );
+       if (statesForSeries.length === 0) return clientEvent(event);
+       return clientEvent({ ...event, occurrenceStates: statesForSeries });
+    });
+   });
 
   app.put("/v1/events/:id", async (request, reply) => {
     const account = requiredAccount(request);

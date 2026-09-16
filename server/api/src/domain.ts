@@ -60,6 +60,7 @@ export interface FamilyEvent {
   alertLeadTimeMinutes?: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
   recurrence?: EventRecurrence | null;
   recurrenceSeriesID?: string | null;
+  occurrenceStates?: ScheduleOccurrenceState[];
   readOnly?: boolean;
   provenance?: Array<{
     sourceID: string;
