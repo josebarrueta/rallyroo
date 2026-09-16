@@ -16,11 +16,12 @@ actor NoOpOAuthWebSession: OAuthWebSession {
 // MARK: - Create Event Intent
 
 @available(iOS 16.0, *)
+@MainActor
 struct CreateEventIntent: AppIntent {
-    @nonisolated(unsafe) static var title: LocalizedStringResource =
+    static var title: LocalizedStringResource =
          "Create a family schedule event"
 
-    @nonisolated(unsafe) static var description = IntentDescription(
+    static var description = IntentDescription(
          "Creates a new event in the family schedule.")
 
     // MARK: Parameters
@@ -60,7 +61,7 @@ struct CreateEventIntent: AppIntent {
         )
     var location: String?
 
-    @nonisolated(unsafe) static var openAppWhenRun = false
+    static var openAppWhenRun = false
 
     // MARK: Execute
 
