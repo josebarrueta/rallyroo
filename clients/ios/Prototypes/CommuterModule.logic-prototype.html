@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rallyroo Commuter Module — Logic Prototype</title>
+<style>
+:root{--ink:#17211d;--muted:#66736d;--paper:#f5f4ef;--card:#fff;--line:#d9ddd8;--accent:#28785c;--warn:#a64b32;--soft:#e8f3ee}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:1080px;margin:auto;padding:40px 22px 80px}h1{font-size:32px;margin:0 0 8px}h2{font-size:19px;margin:0 0 14px}p{color:var(--muted);max-width:820px}.notice{border-left:4px solid var(--accent);background:var(--soft);padding:12px 16px;margin:22px 0}.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin:18px 0}.state-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{background:#fafbf9;border:1px solid #e4e7e3;border-radius:9px;padding:10px}.label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}.value{font-weight:650;margin-top:3px;overflow-wrap:anywhere}.good{color:var(--accent)}.bad{color:var(--warn)}button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;padding:9px 12px;font-weight:600;cursor:pointer}button:hover{border-color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}.actions{display:flex;flex-wrap:wrap;gap:8px}.log{max-height:255px;overflow:auto;margin:0;padding-left:22px}.log li{margin:7px 0}.tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:10px}.tab.active{background:var(--ink);color:#fff}.walkthrough{display:none}.walkthrough.active{display:block}.steps{display:grid;gap:9px;margin-top:15px}.step{display:flex;align-items:center;gap:10px;text-align:left}.step span{width:24px;height:24px;border-radius:50%;background:var(--soft);display:inline-grid;place-items:center;color:var(--accent);flex:none}.step.done{opacity:.48}.empty{color:var(--muted);font-style:italic}@media(max-width:760px){.grid,.state-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main class="wrap">
+<h1>Commuter module lifecycle</h1>
+<p>This throwaway prototype asks: <strong>Can Rallyroo enable an optional Caltrain capability, subscribe a family to a commute, handle provider outages, and remove the capability—without treating live transit data as Family Events?</strong></p>
+<div class="notice"><strong>Assumption:</strong> “Install” enables code already shipped with Rallyroo. iOS does not download or execute third-party module code. Rallyroo’s backend holds the 511 key, caches static GTFS configuration, polls shared real-time feeds, and sends only matched results to the app.</div>
+
+<section class="grid">
+<div class="card"><h2>Current state</h2><div id="state" class="state-grid"></div></div>
+<div class="card"><h2>What just happened</h2><div id="outcome" class="value">Prototype reset.</div><h2 style="margin-top:22px">Decision log</h2><ol id="log" class="log"></ol></div>
+</section>
+
+<section class="card"><h2>Free play</h2><div class="actions">
+<button data-action="installPersonal">Install for me</button><button data-action="installFamily">Install for family</button>
+<button data-action="configure">Configure Caltrain commute</button><button data-action="subscribe">Subscribe to route</button>
+<button data-action="addSchedule">Explicitly add commute Event</button><button data-action="delay">Receive 15-minute delay</button>
+<button data-action="pause">Pause subscription</button><button data-action="resume">Resume subscription</button>
+<button data-action="outage">Provider outage</button><button data-action="recover">Provider recovers</button>
+<button data-action="kidConfigure">Kid tries to configure</button><button data-action="uninstall">Uninstall module</button>
+<button data-action="reset">Reset</button>
+</div></section>
+
+<section class="card"><h2>Guided walkthroughs</h2><div class="tabs" id="tabs"></div><div id="walkthroughs"></div></section>
+</main>
+<script>
+// Portable prototype module: pure state + reducer. No DOM dependencies.
+const CommuterPrototype = (() => {
+  const initial = () => ({
+    installation:"not installed", scope:"none", actor:"parent", provider:"Caltrain",
+    configuration:"not configured", catalog:"not downloaded", feed:"not connected", staleData:false,
+    subscription:"none", alertPreference:"delays and cancellations", deliveredAlerts:0,
+    suppressedAlerts:0, nativeEvents:0, lastOutcome:"Prototype reset.", log:[]
+  });
+  const note=(s,message,ok=true)=>({...s,lastOutcome:message,log:[...s.log,{message,ok}]});
+  function reduce(state,action){
+    let s={...state};
+    switch(action){
+      case "reset": return initial();
+      case "installPersonal": return note({...s,installation:"installed",scope:"personal"},"Commuter installed for this parent. No family data is visible to the module.");
+      case "installFamily": return note({...s,installation:"installed",scope:"family"},"Commuter installed for the Family by a parent.");
+      case "configure":
+        if(s.installation!=="installed") return note(s,"Rejected: install Commuter before configuring it.",false);
+        return note({...s,configuration:"Weekdays, 7–9 AM · San Jose Diridon → San Francisco",catalog:"GTFS cached · routes/stops/timetable",feed:"healthy · GTFS-RT",staleData:false},"Static Caltrain identifiers were resolved from cached GTFS; real-time monitoring is connected separately.");
+      case "subscribe":
+        if(s.configuration==="not configured") return note(s,"Rejected: configure stops, direction, and time window first.",false);
+        return note({...s,subscription:"active"},"Subscribed. Alerts are eligible only inside the configured commute window.");
+      case "delay":
+        if(s.subscription==="none") return note(s,"Ignored: there is no route subscription.",false);
+        if(s.subscription==="paused") return note({...s,suppressedAlerts:s.suppressedAlerts+1},"Delay matched, but notification was suppressed because the subscription is paused.");
+        if(s.staleData) return note({...s,suppressedAlerts:s.suppressedAlerts+1},"No delay claim sent: provider data is stale. Rallyroo does not present stale data as current.",false);
+        return note({...s,deliveredAlerts:s.deliveredAlerts+1},"One deduplicated commute alert delivered to the subscription audience.");
+      case "pause":
+        if(s.subscription==="none") return note(s,"Rejected: there is no subscription to pause.",false);
+        return note({...s,subscription:"paused"},"Subscription paused; configuration is retained.");
+      case "resume":
+        if(s.subscription==="none") return note(s,"Rejected: there is no subscription to resume.",false);
+        return note({...s,subscription:"active"},"Subscription resumed.");
+      case "outage":
+        if(s.feed==="not connected") return note(s,"Provider is not connected; nothing changed.",false);
+        return note({...s,feed:"unavailable",staleData:true},"Real-time provider unavailable. Cached routes and schedules remain usable, but no stale prediction is presented as current.",false);
+      case "recover":
+        if(s.configuration==="not configured") return note(s,"Rejected: configure the provider first.",false);
+        return note({...s,feed:"healthy · GTFS-RT",staleData:false},"Real-time provider recovered and fresh data replaced the stale snapshot.");
+      case "addSchedule":
+        if(s.subscription==="none") return note(s,"Rejected: subscribe before explicitly planning this commute.",false);
+        return note({...s,nativeEvents:s.nativeEvents+1},"A parent explicitly created a native Family Event through Event mutation. Commuter no longer owns it.");
+      case "kidConfigure": return note(s,"Rejected: kids cannot install or configure Family modules.",false);
+      case "uninstall":
+        if(s.installation!=="installed") return note(s,"Nothing to uninstall.",false);
+        return note({...s,installation:"not installed",scope:"none",configuration:"not configured",catalog:"not downloaded",feed:"not connected",staleData:false,subscription:"none"},"Commuter removed with its subscriptions and pending module alerts. Shared provider caches and explicit native Events remain.");
+      default:return note(s,"Unknown action rejected.",false);
+    }
+  }
+  return {initial,reduce};
+})();
+
+let state=CommuterPrototype.initial();
+const labels={installation:"Module",scope:"Audience",provider:"Provider",configuration:"Commute",catalog:"Static configuration",feed:"Real-time provider data",subscription:"Route subscription",alertPreference:"Alert choice",deliveredAlerts:"Alerts delivered",suppressedAlerts:"Alerts suppressed",nativeEvents:"Native Events retained"};
+function render(){
+  document.querySelector("#state").innerHTML=Object.entries(labels).map(([k,l])=>`<div class="field"><div class="label">${l}</div><div class="value">${String(state[k])}</div></div>`).join("");
+  const ok=state.log.at(-1)?.ok!==false; const outcome=document.querySelector("#outcome"); outcome.textContent=state.lastOutcome; outcome.className="value "+(ok?"good":"bad");
+  document.querySelector("#log").innerHTML=state.log.length?state.log.map(x=>`<li class="${x.ok?"":"bad"}">${x.message}</li>`).join(""):"<li class='empty'>No decisions yet.</li>";
+}
+function dispatch(action){state=CommuterPrototype.reduce(state,action);render()}
+document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>dispatch(b.dataset.action));
+
+const scenarios=[
+ {name:"Happy path",description:"Install, configure, subscribe, receive one live delay, then explicitly create a Family Event.",steps:[["installFamily","Install for family"],["configure","Configure Caltrain"],["subscribe","Subscribe"],["delay","Receive delay"],["addSchedule","Add commute Event"]]},
+ {name:"Provider outage",description:"See how fresh and stale transit data lead to different notification decisions.",steps:[["installPersonal","Install for me"],["configure","Configure commute"],["subscribe","Subscribe"],["outage","Simulate outage"],["delay","Process delay while stale"],["recover","Provider recovers"],["delay","Process fresh delay"]]},
+ {name:"Pause & remove",description:"Paused alerts are suppressed. Removing the module deletes module state but retains explicitly created Events.",steps:[["installFamily","Install"],["configure","Configure"],["subscribe","Subscribe"],["addSchedule","Create native Event"],["pause","Pause"],["delay","Process delay"],["uninstall","Uninstall"]]},
+ {name:"Illegal actions",description:"Try configuration without installation and a kid attempting a parent-only action.",steps:[["configure","Configure before install"],["kidConfigure","Kid configures"],["subscribe","Subscribe without commute"]]}
+];
+let active=0,progress=[];
+function renderScenarios(){
+ document.querySelector("#tabs").innerHTML=scenarios.map((s,i)=>`<button class="tab ${i===active?"active":""}" data-tab="${i}">${s.name}</button>`).join("");
+ document.querySelector("#walkthroughs").innerHTML=scenarios.map((s,i)=>`<div class="walkthrough ${i===active?"active":""}"><p>${s.description}</p><button class="primary" data-start="${i}">Start walkthrough</button><div class="steps">${s.steps.map((x,j)=>`<button class="step ${progress[i]>j?"done":""}" data-step="${i}:${j}" ${progress[i]!==j?"disabled":""}><span>${j+1}</span>${x[1]}</button>`).join("")}</div></div>`).join("");
+ document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{active=+b.dataset.tab;renderScenarios()});
+ document.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=>{state=CommuterPrototype.initial();progress[+b.dataset.start]=0;render();renderScenarios()});
+ document.querySelectorAll("[data-step]").forEach(b=>b.onclick=()=>{const[i,j]=b.dataset.step.split(":").map(Number);dispatch(scenarios[i].steps[j][0]);progress[i]=j+1;renderScenarios()});
+}
+render();renderScenarios();
+</script></body></html>
