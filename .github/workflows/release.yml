@@ -209,3 +209,61 @@ jobs:
           name: rallyroo-helm-${{ needs.prepare.outputs.version }}
           path: dist/rallyroo-${{ needs.prepare.outputs.version }}.tgz
           if-no-files-found: error
+
+  create-release:
+    needs: [prepare, verify, build-image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Create GitHub Release with changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          VERSION_NUM="v${VERSION}"
+          PREV_TAG=$(git tag --list 'v*' --sort=-version:version \
+                    | grep -v "^${VERSION_NUM}$" | head -1)
+          echo "Previous release: ${PREV_TAG:-first}"
+          RANGE=""
+          if [ -n "${PREV_TAG}" ]; then
+           RANGE="${PREV_TAG}..${GITHUB_SHA}"
+          fi
+
+           { 
+            echo "## Rallyroo v${VERSION}"
+            echo ""
+            echo "### Server / API"
+            echo ""
+            if [ -n "${RANGE}" ];
+            then
+              git log ${RANGE} --reverse --format='- %s' -- server/ deploy/ .github/ docs/
+            else
+             echo "(initial release)"
+            fi
+            echo ""
+            echo "### iOS / UI"
+            echo ""
+            if [ -n "${RANGE}" ];
+            then
+              git log ${RANGE} --reverse --format='- %s' -- clients/ios/
+            else
+             echo "(initial release)"
+            fi
+           } > /tmp/release-body.md
+
+          cat /tmp/release-body.md
+
+          PRE_RELEASE=""
+          if [[ "${VERSION}" == *-* ]]; then
+           PRE_RELEASE="--prerelease"
+          fi
+
+          gh release create ${VERSION_NUM} \
+             --title "Rallyroo v${VERSION}" \
+             --notes-file /tmp/release-body.md \
+             ${PRE_RELEASE} \
+             --latest false
