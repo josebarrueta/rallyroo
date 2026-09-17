@@ -225,7 +225,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           VERSION_NUM="v${VERSION}"
-          PREV_TAG=$(git tag --list 'v*' --sort=-version:version \
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname \
                     | grep -v "^${VERSION_NUM}$" | head -1)
           echo "Previous release: ${PREV_TAG:-first}"
           RANGE=""
@@ -257,13 +257,7 @@ jobs:
 
           cat /tmp/release-body.md
 
-          PRE_RELEASE=""
-          if [[ "${VERSION}" == *-* ]]; then
-           PRE_RELEASE="--prerelease"
-          fi
-
           gh release create ${VERSION_NUM} \
              --title "Rallyroo v${VERSION}" \
              --notes-file /tmp/release-body.md \
-             ${PRE_RELEASE} \
-             --latest false
+             $(if [[ "${VERSION}" == *-* ]]; then echo --prerelease; fi)
