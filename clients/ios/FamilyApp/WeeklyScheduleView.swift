@@ -773,29 +773,25 @@ private struct OverlapTimeline<Content: View>: View {
                     let durationMinutes = item.occurrence.event.endTime
                          .timeIntervalSince(item.occurrence.event.startTime) / 60
                     content(item.occurrence)
-                         .padding(8)
-                         .frame(
-                            width: laneWidth,
-                            height: CGFloat(durationMinutes) * cluster.pointsPerMinute,
-                            alignment: .topLeading
-                         )
-                         .background(
-                            Color.secondary.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 10)
-                         )
-                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                 .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                         )
-                         .offset(
-                            x: CGFloat(item.lane) * (laneWidth + spacing),
-                            y: CGFloat(offsetMinutes) * cluster.pointsPerMinute
-                         )
-                 }
-             }
-         }
-         .frame(height: cluster.height)
-     }
+                      .frame(width: laneWidth, alignment: .topLeading)
+                      .background(
+                       Color.secondary.opacity(0.08),
+                       in: RoundedRectangle(cornerRadius: 10)
+                      )
+                      .overlay(
+                       RoundedRectangle(cornerRadius: 10)
+                             .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                      )
+                      .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .offset(
+                        x: CGFloat(item.lane) * (laneWidth + spacing),
+                        y: CGFloat(offsetMinutes) * cluster.pointsPerMinute
+                        )
+                  }
+              }
+          }
+          .frame(height: cluster.height)
+      }
 }
 
 private struct EventRow: View {
@@ -806,51 +802,63 @@ private struct EventRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: compact ? 7 : 12) {
             RoundedRectangle(cornerRadius: 2)
-                 .fill(Color(familyColorTag: display.primaryColorTag))
-                 .frame(width: 5)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
+              .fill(Color(familyColorTag: display.primaryColorTag))
+              .frame(width: 5)
+            VStack(alignment: .leading, spacing: compact ? 3 : 4) {
+                HStack(spacing: 6) {
                     Text(display.event.title)
-                         .font(.headline)
+                        .font(compact ? .subheadline.bold() : .headline)
+                        .lineLimit(compact ? 1 : nil)
                     if disposition == .skipped {
                         Text("Skipped")
-                             .font(.caption2.bold())
-                             .padding(.horizontal, 6)
-                             .padding(.vertical, 2)
-                             .background(Color.gray.opacity(0.3), in: Capsule())
-                     }
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.gray.opacity(0.3), in: Capsule())
+                    }
+                    Spacer(minLength: 0)
                 }
                 if !display.participantNames.isEmpty {
                     Text(display.participantNames.joined(separator: " • "))
-                         .font(.subheadline)
-                         .foregroundStyle(Color(familyColorTag: display.primaryColorTag))
-                 }
+                        .font(compact ? .caption2 : .subheadline)
+                        .foregroundStyle(Color(familyColorTag: display.primaryColorTag))
+                        .lineLimit(1)
+                }
                 Text(timeRange)
-                     .font(compact ? .caption : .subheadline)
-                     .foregroundStyle(.secondary)
-                if let arrivalTime = display.event.arrivalTime {
+                    .font(compact ? .caption2 : .subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                // Arrival shown only in full mode or when compact and no location
+                if !compact, let arrivalTime = display.event.arrivalTime {
                     Label(arrivalLabel(for: arrivalTime), systemImage: "flag.checkered")
-                         .font(compact ? .caption2 : .caption)
-                         .foregroundStyle(.secondary)
-                 }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let location = display.event.location, !location.isEmpty {
+                    Label(location, systemImage: "mappin.and.ellipse")
+                        .font(compact ? .caption2 : .subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(compact ? 1 : nil)
+                } else if compact, let arrivalTime = display.event.arrivalTime {
+                    Label(arrivalLabel(for: arrivalTime), systemImage: "flag.checkered")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 if !compact && display.event.isReadOnly {
                     Label(
                         display.event.provenance.map(\.sourceName).uniqued().joined(separator: " • "),
                         systemImage: "calendar.badge.clock"
-                     )
-                     .font(.caption)
-                     .foregroundStyle(.secondary)
-                 }
-                if let location = display.event.location, !location.isEmpty {
-                    Label(location, systemImage: "mappin.and.ellipse")
-                         .font(.subheadline)
-                         .foregroundStyle(.secondary)
-                 }
-             }
-         }
-         .accessibilityElement(children: .combine)
-         .accessibilityIdentifier(lifecycleAccessibilityID)
-     }
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+            .padding(8)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier(lifecycleAccessibilityID)
+    }
 
      private var lifecycleAccessibilityID: String {
         switch disposition {
