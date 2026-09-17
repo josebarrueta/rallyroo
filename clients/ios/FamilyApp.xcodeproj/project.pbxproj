@@ -28,6 +28,7 @@
 		C0FF80868CC44AF508E5F26 /* CommuterSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8119B122747C6AE9DC354B /* CommuterSettingsView.swift */; };
 		D30000000000000000000001 /* TravelPlanSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D30000000000000000000011 /* TravelPlanSheet.swift */; };
 		E10000000000000000000001 /* LocalReminderAlertScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000011 /* LocalReminderAlertScheduler.swift */; };
+		F10000000000000000000001 /* CreateEventIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000002 /* CreateEventIntent.swift */; };
 		E3CDC96E3C1F61C0B59EFF49 /* SharedScheduleCaptureQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE3779A4E1C486800B69730C /* SharedScheduleCaptureQueue.swift */; };
 /* End PBXBuildFile section */
 
@@ -69,6 +70,7 @@
 		8F2ED263B5AE8E784F733C55 /* FamilyAppShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FamilyAppShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000010 /* FamilyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyActivityCoordinatorApp.swift; sourceTree = "<group>"; };
+		F10000000000000000000002 /* CreateEventIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateEventIntent.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* WeeklyScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyScheduleView.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* WeeklyScheduleViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyScheduleViewModel.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* AddEventSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddEventSheet.swift; sourceTree = "<group>"; };
@@ -152,6 +154,7 @@
 				B8119B122747C6AE9DC354B /* CommuterSettingsView.swift */,
 				D30000000000000000000011 /* TravelPlanSheet.swift */,
 				A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */,
+				F10000000000000000000002 /* CreateEventIntent.swift */,
 				A10000000000000000000012 /* WeeklyScheduleView.swift */,
 				A10000000000000000000045 /* ScheduleCaptureSheet.swift */,
 				A10000000000000000000013 /* WeeklyScheduleViewModel.swift */,
@@ -337,6 +340,7 @@
 				C0FF80868CC44AF508E5F26 /* CommuterSettingsView.swift in Sources */,
 				D30000000000000000000001 /* TravelPlanSheet.swift in Sources */,
 				A10000000000000000000001 /* FamilyActivityCoordinatorApp.swift in Sources */,
+				F10000000000000000000001 /* CreateEventIntent.swift in Sources */,
 				A10000000000000000000002 /* WeeklyScheduleView.swift in Sources */,
 				A10000000000000000000044 /* ScheduleCaptureSheet.swift in Sources */,
 				A10000000000000000000003 /* WeeklyScheduleViewModel.swift in Sources */,
