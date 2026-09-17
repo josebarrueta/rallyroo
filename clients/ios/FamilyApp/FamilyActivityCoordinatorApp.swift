@@ -225,8 +225,23 @@ struct FamilyActivityCoordinatorApp: App {
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
+                         // Dequeue any image captured by the Share Extension.
+                         // The extension writes into the App Group container and
+                         // shows "Ready to review"; here we pick it up and forward
+                         // it to WeeklyScheduleView, which presents the AI capture sheet.
+                        do {
+                            let queue = try SharedScheduleCaptureQueue.appGroup()
+                            if let imageData = try queue.dequeueOldest() {
+                                 NotificationCenter.default.post(
+                                     name: .sharedScheduleCaptureReceived,
+                                     object: imageData
+                                 )
+                             }
+                         } catch {
+                             // App Group unavailable — no shared capture to process.
+                         }
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-                    }
+                     }
                 }
             }
         }
