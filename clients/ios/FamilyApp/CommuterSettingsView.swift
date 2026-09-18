@@ -26,6 +26,7 @@ struct CommuterSettingsView: View {
                 List {
                     installationSection(state.installation)
                     providerSection(state.providerStatus)
+                    liveTrainsSection()
                     subscriptionsSection(state)
                 }
             } else {
@@ -132,6 +133,49 @@ struct CommuterSettingsView: View {
         }
         .disabled(model.isMutating)
     }
+    private func liveTrainsSection() -> some View {
+        Section("Live trains") {
+            if let response = model.liveTrains {
+                if response.positions.isEmpty {
+                    Text("No trains in service right now.")
+                         .foregroundStyle(.secondary)
+                } else {
+                    ForEach(response.positions) { position in
+                        HStack(spacing: 8) {
+                            Image(systemName: "train.car.fill")
+                                 .foregroundStyle(position.directionID == 1 ? .green : .orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Train \(position.tripID)")
+                                     .font(.body)
+                                     .fontWeight(.medium)
+                                if let stop = position.currentStopID {
+                                    Text(stop)
+                                         .font(.caption)
+                                         .foregroundStyle(.secondary)
+                                 } else {
+                                    Text("En route")
+                                         .font(.caption)
+                                         .foregroundStyle(.secondary)
+                                 }
+                             }
+                            Spacer()
+                            Text(position.status)
+                                 .font(.caption2)
+                                 .foregroundStyle(.secondary)
+                         }
+                     }
+                }
+                Text("Live positions cached for 5 minutes.")
+                     .font(.caption2)
+                     .foregroundStyle(.secondary)
+            } else {
+                Text("Live train positions are unavailable.")
+                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+
 
     private func providerSection(_ status: CommuterProviderStatus) -> some View {
         Section("Provider status") {
