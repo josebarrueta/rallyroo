@@ -599,7 +599,8 @@ struct CalendarSourcesView: View {
         switch source.status {
         case .pending: "Waiting for first sync"
         case .ready: source.lastSyncedAt.map { "Updated \($0.formatted(.relative(presentation: .named)))" } ?? "Ready"
-        case .error: "Sync failed — previous events preserved"
+        case .error:
+          source.lastError.map { "Sync failed — \($0) (previous events preserved)" } ?? "Sync failed — previous events preserved"
         }
     }
 
