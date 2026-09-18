@@ -18,7 +18,9 @@ public struct InboxNotificationDestination: Codable, Equatable, Sendable {
     }
     public let kind: Kind
     public let id: String
-    public init(kind: Kind, id: String) { self.kind = kind; self.id = id }
+    /// For recurring events: the local start time of this specific occurrence.
+    public let occurrenceStart: Date?
+    public init(kind: Kind, id: String, occurrenceStart: Date? = nil) { self.kind = kind; self.id = id; self.occurrenceStart = occurrenceStart }
 }
 
 public struct InboxNotification: Codable, Equatable, Identifiable, Sendable {

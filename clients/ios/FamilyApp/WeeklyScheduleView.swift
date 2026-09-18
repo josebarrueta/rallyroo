@@ -141,6 +141,10 @@ struct WeeklyScheduleView: View {
                             linkedEvent = viewModel.events.first { $0.id.uuidString.lowercased() == destination.id.lowercased() }
                          }
                      }
+                     .onReceive(NotificationCenter.default.publisher(for: .focusOccurrenceStart)) { note in
+                       guard let occ = note.object as? Date else { return }
+                       weekStart = Calendar.autoupdatingCurrent.dateInterval(of: .weekOfYear, for: occ)?.start ?? weekStart
+                     }
             }
             .navigationTitle("Rallyroo")
             .task { await loadConnectionSummaries() }
