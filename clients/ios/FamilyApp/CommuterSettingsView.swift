@@ -136,45 +136,50 @@ struct CommuterSettingsView: View {
     private func liveTrainsSection() -> some View {
         Section("Live trains") {
             if let response = model.liveTrains {
+                Label(
+                    "Live positions\(response.positions.isEmpty ? " · No trains" : " · \(response.positions.count) trains")",
+                    systemImage: "train.car.fill"
+                   )
+               .lineLimit(1)
+               .font(.body)
+               .foregroundStyle(.primary)
+               .padding(.vertical, 4)
                 if response.positions.isEmpty {
-                    Text("No trains in service right now.")
-                         .foregroundStyle(.secondary)
-                } else {
+                    Text("No trains currently in service. Try later during rush hour.")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+                 } else {
                     ForEach(response.positions) { position in
                         HStack(spacing: 8) {
-                            Image(systemName: "train.car.fill")
-                                 .foregroundStyle(position.directionID == 1 ? .green : .orange)
+                            Circle()
+                                  .fill(position.directionID == 1 ? .green : .orange)
+                                  .frame(width: 8, height: 8)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Train \(position.tripID)")
-                                     .font(.body)
-                                     .fontWeight(.medium)
-                                if let stop = position.currentStopID {
-                                    Text(stop)
-                                         .font(.caption)
-                                         .foregroundStyle(.secondary)
-                                 } else {
-                                    Text("En route")
-                                         .font(.caption)
-                                         .foregroundStyle(.secondary)
-                                 }
+                                       .font(.body)
+                                       .fontWeight(.medium)
+                                Text(position.currentStopID ?? "En route")
+                                       .font(.caption)
+                                       .foregroundStyle(.secondary)
                              }
                             Spacer()
                             Text(position.status)
-                                 .font(.caption2)
-                                 .foregroundStyle(.secondary)
-                         }
+                                  .font(.caption2)
+                                  .foregroundStyle(.secondary)
+                          }
                      }
-                }
-                Text("Live positions cached for 5 minutes.")
-                     .font(.caption2)
-                     .foregroundStyle(.secondary)
-            } else {
-                Text("Live train positions are unavailable.")
-                     .foregroundStyle(.secondary)
-            }
-        }
-    }
-
+                 }
+                Text("Cached for 5 minutes. Updates automatically.")
+                       .font(.caption2)
+                       .foregroundStyle(.secondary)
+             } else {
+                Label("Live train positions unavailable", systemImage: "wifi.slash")
+                      .font(.body)
+                      .foregroundStyle(.secondary)
+                      .padding(.vertical, 4)
+             }
+         }
+     }
 
 
     private func providerSection(_ status: CommuterProviderStatus) -> some View {
