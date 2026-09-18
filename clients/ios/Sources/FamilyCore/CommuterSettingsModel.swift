@@ -5,6 +5,7 @@ import Foundation
 public final class CommuterSettingsModel: ObservableObject {
     @Published public private(set) var state: CommuterState?
     @Published public private(set) var catalog: CaltrainCatalog?
+    @Published public private(set) var liveTrains: CaltrainLiveTrainsResponse?
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var isLoading = false
     @Published public private(set) var isMutating = false
@@ -20,10 +21,12 @@ public final class CommuterSettingsModel: ObservableObject {
         defer { isLoading = false }
         do {
             state = try await store.state()
+            liveTrains = try? await store.liveTrains()
             catalog = try? await store.catalog()
             errorMessage = nil
         } catch {
             state = nil
+            liveTrains = nil
             catalog = nil
             errorMessage = "The Commuter module could not be loaded."
         }
@@ -154,6 +157,11 @@ public final class CommuterSettingsModel: ObservableObject {
         errorMessage = nil
         return true
     }
+
+    public func loadLiveTrains() async {
+        liveTrains = try? await store.liveTrains()
+      }
+
 
     private func reloadAfterMutation() async {
         state = try? await store.state()
