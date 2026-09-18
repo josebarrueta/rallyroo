@@ -2,6 +2,8 @@ import type {
   CommuterInstallation,
   CaltrainStop,
   CaltrainStopsSnapshot,
+  CaltrainVehiclePosition,
+  CaltrainVehiclePositionsSnapshot,
   CommuterProviderFeed,
   CommuterProviderFeedObservation,
   CommuterRepository,
@@ -18,6 +20,8 @@ export class InMemoryCommuterRepository implements CommuterRepository {
   private catalogObservedAt: string | null = null;
   private catalogStops: CaltrainStop[] = [];
   private schedule: CaltrainStaticScheduleSnapshot | null = null;
+  private positionsObservedAt: string | null = null;
+  private positions: CaltrainVehiclePosition[] = [];
 
   async installation(familyID: string): Promise<CommuterInstallation | null> {
     return this.installations.get(familyID) ?? null;
@@ -149,6 +153,27 @@ export class InMemoryCommuterRepository implements CommuterRepository {
   async caltrainSchedule(): Promise<CaltrainStaticScheduleSnapshot | null> {
     return this.schedule ? structuredClone(this.schedule) : null;
   }
+
+  async replaceCaltrainVehiclePositions(
+    snapshot: CaltrainVehiclePositionsSnapshot,
+    attemptedAt: string,
+    ): Promise<void> {
+    const priorAttempt = this.providerFeeds.get("positions")?.lastAttemptAt;
+    if (priorAttempt && priorAttempt > attemptedAt) return;
+    this.positionsObservedAt = snapshot.observedAt;
+    this.positions = snapshot.positions.map((position) => ({ ...position }));
+    await this.saveProviderFeedAttempt("CT", "positions", attemptedAt, true);
+    }
+
+  async caltrainVehiclePositions(): Promise<{
+    observedAt: string | null;
+    positions: CaltrainVehiclePosition[];
+     }> {
+    return {
+      observedAt: this.positionsObservedAt,
+      positions: this.positions.map((position) => ({ ...position })),
+       };
+    }
 
   async saveAlertsIfAbsent(alerts: CommuteAlertIntent[]): Promise<CommuteAlertIntent[]> {
     const claimed: CommuteAlertIntent[] = [];

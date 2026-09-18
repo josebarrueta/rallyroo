@@ -2927,4 +2927,17 @@ describe("Travel planning HTTP API", () => {
       await app.close();
     }
   });
+
+  it("returns empty live train positions when no positions are cached", async () => {
+    const commuter = new CommuterModule(new InMemoryCommuterRepository());
+    const app = buildApp({ identityProvider, repository: repository(), commuter });
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/modules/commuter/live-trains",
+      headers: { authorization: "Bearer parent-token" },
+       });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().positions).toEqual([]);
+    await app.close();
+   });
 });

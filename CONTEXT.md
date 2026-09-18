@@ -135,3 +135,8 @@ _Avoid_: Live departure, commute subscription
 **Provider status**:
 The independently reported freshness and availability of Commuter's static catalog and real-time feeds. A recent failed attempt is degraded; an expired last success is stale. Provider failure must not silently disable an installation or erase its last-good static catalog.
 _Avoid_: Installation status, subscription status
+
+## Live Train Positions
+
+Caltrain GTFS-RT Vehicle Positions provide real-time GPS coordinates for active trains. The server refreshes these positions periodically and caches them. The `GET /v1/modules/commuter/live-trains` endpoint returns the latest cached positions to authorized clients.
+
