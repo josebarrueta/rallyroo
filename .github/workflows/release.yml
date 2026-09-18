@@ -257,7 +257,8 @@ jobs:
 
           cat /tmp/release-body.md
 
-          gh release create ${VERSION_NUM} \
-             --title "Rallyroo v${VERSION}" \
-             --notes-file /tmp/release-body.md \
-             $(if [[ "${VERSION}" == *-* ]]; then echo --prerelease; fi)
+          if gh release view ${VERSION_NUM} 2>/dev/null; then
+             echo "Release already exists — skipping creation"
+          else
+            gh release create ${VERSION_NUM}                 --title "Rallyroo v${VERSION}"                 --notes-file /tmp/release-body.md                 $(if [[ "${VERSION}" == *-* ]]; then echo --prerelease; fi)
+          fi
