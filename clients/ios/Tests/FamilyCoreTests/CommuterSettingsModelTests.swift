@@ -139,5 +139,9 @@ private actor CommuterSettingsStoreStub: CommuterStore {
 
     func remove(_ subscription: CommuteSubscription) {}
 
+
+    func liveTrains() async throws -> CaltrainLiveTrainsResponse {
+       CaltrainLiveTrainsResponse(status: .healthy, observedAt: nil, positions: [])
+     }
     func enableCount() -> Int { enabled }
 }

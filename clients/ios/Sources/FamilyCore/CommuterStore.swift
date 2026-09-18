@@ -193,6 +193,52 @@ public struct CaltrainJourneyOption: Codable, Equatable, Identifiable, Sendable 
     }
 }
 
+public struct CaltrainVehiclePosition: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let tripID: String
+    public let routeID: String
+    public let directionID: Int?
+    public let latitude: Double
+    public let longitude: Double
+    public let bearing: Double
+    public let currentStopID: String?
+    public let currentStopSequence: Int?
+    public let status: String
+    public let timestamp: String
+
+    public init(
+        id: String,
+        tripID: String,
+        routeID: String,
+        directionID: Int? = nil,
+        latitude: Double,
+        longitude: Double,
+        bearing: Double = 0,
+        currentStopID: String? = nil,
+        currentStopSequence: Int? = nil,
+        status: String = "INCOMPLETE",
+        timestamp: String
+     ) {
+        self.id = id
+        self.tripID = tripID
+        self.routeID = routeID
+        self.directionID = directionID
+        self.latitude = latitude
+        self.longitude = longitude
+        self.bearing = bearing
+        self.currentStopID = currentStopID
+        self.currentStopSequence = currentStopSequence
+        self.status = status
+        self.timestamp = timestamp
+     }
+}
+
+public struct CaltrainLiveTrainsResponse: Codable, Equatable, Sendable {
+    public let status: CommuterProviderFeedStatus
+    public let observedAt: String?
+    public let positions: [CaltrainVehiclePosition]
+}
+
 public struct CaltrainJourneySearchResult: Codable, Equatable, Sendable {
     public let scheduleVersion: String
     public let observedAt: Date
@@ -224,4 +270,5 @@ public protocol CommuterStore: Sendable {
         for subscription: CommuteSubscription
     ) async throws -> CommuteSubscription
     func remove(_ subscription: CommuteSubscription) async throws
+    func liveTrains() async throws -> CaltrainLiveTrainsResponse
 }
