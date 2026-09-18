@@ -243,5 +243,135 @@ flux install \
   --components source-controller,helm-controller,notification-controller \
   --network-policy=true
 
+
+
+# === Encrypted PostgreSQL backup to GCS (hourly) ===
+install -d -m 0700 /opt/rallyroo/backups
+
+cat >/opt/rallyroo/backups/run-backup.sh <<'RUNBACKUP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source /etc/rallyroo/environment
+
+BUCKET="$RALLYROO_BACKUP_BUCKET"
+TS=$(date -u +"%Y%m%d-%H%M%S")
+OUT="/opt/rallyroo/backups/out"
+mkdir -p "$OUT"
+
+POD=$(kubectl -n rallyroo get pod -l app.kubernetes.io/component=postgres \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+[[ -n "$POD" ]] || { echo "backup: no postgres pod found" >&2; exit 1; }
+
+# Read PostgreSQL password from the runtime Secret
+PGPASS=$(kubectl -n rallyroo get secret rallyroo-runtime \
+  -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d || true)
+
+if [[ -n "$PGPASS" ]]; then
+  kubectl -n rallyroo exec "$POD" -c postgres -- \
+    env PGPASSWORD="$PGPASS" pg_dump --format=custom --compress=6 \
+      "rallyroo" 2>/dev/null || \
+    kubectl -n rallyroo exec "$POD" -c postgres -- \
+      env PGPASSWORD="$PGPASS" pg_dump --format=plain "rallyroo" 2>/dev/null || \
+      { echo "backup: pg_dump failed" >&2; exit 1; } | \
+    gzip -c > "$OUT/rallyroo-${TS}.sql.gz"
+else
+  kubectl -n rallyroo exec "$POD" -c postgres -- \
+    pg_dump --format=custom --compress=6 "rallyroo" 2>/dev/null || \
+    kubectl -n rallyroo exec "$POD" -c postgres -- \
+      pg_dump --format=plain "rallyroo" 2>/dev/null || \
+      { echo "backup: pg_dump failed" >&2; exit 1; } | \
+    gzip -c > "$OUT/rallyroo-${TS}.sql.gz"
+fi
+
+# Upload to GCS (uses server-side AES-256 encryption by default)
+gcloud storage cp "$OUT/rallyroo-${TS}.sql.gz" \
+  "gs://${BUCKET}/dumps/rallyroo-${TS}.sql.gz" 2>&1 || \
+  { echo "backup: GCS upload failed for $TS" >&2; exit 1; }
+rm -f "$OUT/rallyroo-${TS}.sql.gz"
+
+# Keep only the 14 most recent backups on disk
+ls -1t "$OUT"/*.sql.gz 2>/dev/null | tail -n +15 | xargs -r rm -f
+
+echo "backup: success for ${TS}"
+RUNBACKUP
+chmod 0700 /opt/rallyroo/backups/run-backup.sh
+
+# systemd timer: run every hour
+cat >/etc/systemd/system/rallyroo-backup.service <<'SVCEOF'
+[Unit]
+Description=Rallyroo PostgreSQL backup
+After=k3s.service
+Wants=k3s.service
+[Service]
+Type=oneshot
+ExecStart=/opt/rallyroo/backups/run-backup.sh
+StandardOutput=journal
+StandardError=journal
+SVCEOF
+
+cat >/etc/systemd/system/rallyroo-backup.timer <<'TMREOF'
+[Unit]
+Description=Rallyroo hourly PostgreSQL backup
+[Timer]
+OnCalendar=*:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+TMREOF
+
+systemctl daemon-reload
+systemctl enable --now rallyroo-backup.timer
+
+# === Backup restore verification (monthly 1st at 04:00 UTC) ===
+cat >/opt/rallyroo/backups/verify-restore.sh <<'VERIFYEOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+source /etc/rallyroo/environment
+BUCKET="$RALLYROO_BACKUP_BUCKET"
+
+LATEST=$(gcloud storage ls "gs://${BUCKET}/dumps/" --sort-by=timestamp 2>/dev/null \
+  | sort | tail -1 | xargs -r basename)
+[[ -n "$LATEST" ]] || { echo "verify: no backup found" >&2; exit 1; }
+
+TMP=$(mktemp -d /tmp/rallyroo-verify.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT
+gcloud storage cp "gs://${BUCKET}/dumps/${LATEST}" "$TMP/restore.sql.gz" \
+  2>/dev/null || { echo "verify: download failed" >&2; exit 1; }
+
+gunzip -c "$TMP/restore.sql.gz" > "$TMP/restore.sql" \
+  2>/dev/null || { echo "verify: decompress failed" >&2; exit 1; }
+
+[[ -s "$TMP/restore.sql" ]] || { echo "verify: restore file is empty" >&2; exit 1; }
+
+echo "verify: ok — $LATEST ($(stat -c%s "$TMP/restore.sql") bytes)"
+VERIFYEOF
+chmod 0700 /opt/rallyroo/backups/verify-restore.sh
+
+cat >/etc/systemd/system/rallyroo-backup-verify.service <<'SVCEOF'
+[Unit]
+Description=Rallyroo backup restore verification
+After=k3s.service
+[Service]
+Type=oneshot
+ExecStart=/opt/rallyroo/backups/verify-restore.sh
+StandardOutput=journal
+StandardError=journal
+SVCEOF
+
+cat >/etc/systemd/system/rallyroo-backup-verify.timer <<'TMREOF'
+[Unit]
+Description=Rallyroo monthly backup verification
+[Timer]
+OnCalendar=*-01 04:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+TMREOF
+
+systemctl daemon-reload
+systemctl enable --now rallyroo-backup-verify.timer
+
 touch /var/lib/rallyroo-bootstrap-complete
 echo "Rallyroo host bootstrap completed"

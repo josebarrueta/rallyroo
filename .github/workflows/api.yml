@@ -24,6 +24,7 @@ jobs:
       - uses: azure/setup-helm@v5
       - run: ./deploy/helm/rallyroo/test-chart-contract.sh
       - run: ./deploy/flux/rallyroo/test-flux-contract.sh
+      - run: ./deploy/gcp/test-backup-job.sh
 
   quality:
     runs-on: ubuntu-latest
