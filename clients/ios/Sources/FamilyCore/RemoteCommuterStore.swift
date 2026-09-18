@@ -99,6 +99,14 @@ public actor RemoteCommuterStore: CommuterStore {
         try response.requireSuccess()
     }
 
+    public func liveTrains() async throws -> CaltrainLiveTrainsResponse {
+        try await sendAndDecode(HTTPRequest(
+            method: .get,
+            url: commuterURL.appending(path: "live-trains")
+           ))
+        }
+
+
     private func subscriptionURL(_ subscription: CommuteSubscription) -> URL {
         commuterURL.appending(path: "subscriptions").appending(path: subscription.id.uuidString)
     }

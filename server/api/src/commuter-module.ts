@@ -138,7 +138,7 @@ export interface CommuteAlertIntent {
   audience: { kind: "member"; memberID: string } | { kind: "family" };
 }
 
-export type CommuterProviderFeed = "catalog" | "realtime";
+export type CommuterProviderFeed = "catalog" | "realtime" | "positions";
 export type CommuterProviderHealth = "unavailable" | "healthy" | "degraded" | "stale";
 
 export interface CommuterProviderFeedObservation {
@@ -174,6 +174,32 @@ export interface CaltrainStop {
 export interface CaltrainStopsSnapshot {
   observedAt: string;
   stops: CaltrainStop[];
+}
+
+export interface CaltrainVehiclePosition {
+  id: string;
+  tripID: string;
+  routeID: string;
+  directionID: number | null;
+  latitude: number;
+  longitude: number;
+  bearing: number;
+  currentStopID: string | null;
+  currentStopSequence: number | null;
+  status: string;
+  timestamp: string;
+}
+
+export interface CaltrainVehiclePositionsSnapshot {
+  observedAt: string;
+  validUntil: string;
+  positions: CaltrainVehiclePosition[];
+}
+
+export interface CaltrainVehiclePositions {
+  status: CommuterProviderFeedStatus;
+  observedAt: string | null;
+  positions: CaltrainVehiclePosition[];
 }
 
 export interface CaltrainCatalog {
@@ -228,6 +254,14 @@ export interface CommuterRepository {
     attemptedAt: string,
   ): Promise<void>;
   caltrainSchedule(): Promise<CaltrainStaticScheduleSnapshot | null>;
+  replaceCaltrainVehiclePositions?(
+    snapshot: CaltrainVehiclePositionsSnapshot,
+    attemptedAt: string,
+   ): Promise<void>;
+  caltrainVehiclePositions?(): Promise<{
+    observedAt: string | null;
+    positions: CaltrainVehiclePosition[];
+   }>;
 }
 
 export type CommuterModuleErrorReason =
@@ -335,10 +369,34 @@ export class CommuterModule {
     ]);
     return {
       status: feedStatus(observation, now, 48 * 60 * 60 * 1_000),
-      observedAt: stored.observedAt,
+      observedAt: stored?.observedAt ?? null,
       stops: stored.stops,
     };
   }
+
+  async replaceVehiclePositions(
+    snapshot: CaltrainVehiclePositionsSnapshot,
+    attemptedAt: Date,
+    ): Promise<void> {
+    requireValidObservationDate(attemptedAt);
+    const _replaceVP = this.repository.replaceCaltrainVehiclePositions;
+    if (_replaceVP) await _replaceVP(
+       snapshot,
+       attemptedAt.toISOString(),
+       );
+    }
+
+  async liveTrains(now: Date): Promise<CaltrainVehiclePositions> {
+    const [stored, observation] = await Promise.all([
+      this.repository.caltrainVehiclePositions?.(),
+      this.repository.providerFeedObservation("CT", "positions"),
+       ]);
+    return {
+      status: feedStatus(observation, now, 3 * 60 * 1_000),
+      observedAt: stored?.observedAt ?? null,
+      positions: stored?.positions ?? [],
+       };
+    }
 
   async replaceSchedule(
     snapshot: CaltrainStaticScheduleSnapshot,

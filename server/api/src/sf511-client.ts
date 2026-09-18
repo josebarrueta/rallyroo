@@ -38,6 +38,10 @@ export class SF511Client {
     return this.request("/Transit/TripUpdates", { agency: "CT" });
   }
 
+  async vehiclePositions(): Promise<Uint8Array> {
+    return this.request("/Transit/VehiclePositions", { agency: "CT" });
+  }
+
   async serviceAlerts(): Promise<Uint8Array> {
     return this.request("/transit/servicealerts", { agency: "CT" });
   }

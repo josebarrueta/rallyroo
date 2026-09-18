@@ -680,6 +680,11 @@ export function buildApp({
     return commuter.catalog(new Date());
   });
 
+  app.get("/v1/modules/commuter/live-trains", async (_request, reply) => {
+    if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
+    return commuter.liveTrains(new Date());
+   });
+
   app.put("/v1/modules/commuter", async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
