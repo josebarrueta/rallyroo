@@ -191,7 +191,13 @@ struct FamilyActivityCoordinatorApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
                     guard let destination = note.object as? InboxNotificationDestination else { return }
                     switch destination.kind {
-                    case .event: selectedTab = .schedule
+                    case .event:
+                     do {
+                      selectedTab = .schedule
+                      if let occ = destination.occurrenceStart {
+                        NotificationCenter.default.post(name: .focusOccurrenceStart, object: occ)
+                        }
+                       }
                     case .reminder: selectedTab = .reminders
                     case .commuteSubscription, .settings: selectedTab = .settings
                     }
@@ -302,6 +308,7 @@ struct FamilyActivityCoordinatorApp: App {
 extension Notification.Name {
     static let familyDataDidChange = Notification.Name("familyDataDidChange")
     static let scheduleUpdateNotice = Notification.Name("scheduleUpdateNotice")
+    static let focusOccurrenceStart = Notification.Name("focusOccurrenceStart")
 }
 
 enum AppStorage {

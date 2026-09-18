@@ -81,4 +81,41 @@ final class RemoteOccurrenceLifecycleStoreTests: XCTestCase {
             else { XCTFail("Unexpected error: \(error)") }
              }
          }
+
+    func testSkipSendsIso8601ScheduledAtWithFractionalSeconds() async throws {
+        let transport = RecordingTransport()
+        let store = try await makeStore(transport: transport)
+        let ref = OccurrenceReference(
+            kind: .event,
+            seriesID: UUID(uuidString: "00000000-0000-4000-8000-000000000301")!,
+            scheduledAt: Date(timeIntervalSince1970: 1_700_000_000.123)
+          )
+        try await store.skip(ref, scope: .thisOccurrence)
+        let rawBody = await transport.lastRequest.flatMap { $0.body }
+        XCTAssertNotNil(rawBody)
+        let decoded = try JSONDecoder().decode([String: String].self, from: rawBody!)
+        let scheduled = decoded["scheduledAt"]
+        XCTAssertNotNil(scheduled)
+        XCTAssertTrue((scheduled ?? "").contains("."), "Should include fractional seconds")
+          }
+
+    func testDeleteScopeThisWeekdayFuture() async throws {
+        let transport = RecordingTransport()
+        let store = try await makeStore(transport: transport)
+        let ref = OccurrenceReference(
+            kind: .event,
+            seriesID: UUID(uuidString: "00000000-0000-4000-8000-000000000301")!,
+            scheduledAt: Date(timeIntervalSince1970: 1_700_000_000)
+          )
+        try await store.delete(ref, scope: .thisWeekdayFuture)
+        let request = await transport.lastRequest
+        let decoded = try JSONDecoder().decode([String: String].self, from: request!.body!)
+        XCTAssertEqual(decoded["scope"], "this_weekday_future")
+      }
+
+    func testOccurrenceScopeRawValues() {
+        XCTAssertEqual(OccurrenceScope.thisOccurrence.rawValue, "this_occurrence")
+        XCTAssertEqual(OccurrenceScope.thisWeekdayFuture.rawValue, "this_weekday_future")
+        XCTAssertEqual(OccurrenceScope.allFuture.rawValue, "all_future")
+      }
 }
