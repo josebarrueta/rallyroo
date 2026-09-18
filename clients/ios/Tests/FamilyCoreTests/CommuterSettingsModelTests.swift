@@ -141,7 +141,7 @@ private actor CommuterSettingsStoreStub: CommuterStore {
 
 
     func liveTrains() async throws -> CaltrainLiveTrainsResponse {
-       CaltrainLiveTrainsResponse(status: .healthy, observedAt: nil, positions: [])
+       CaltrainLiveTrainsResponse(status: CommuterProviderFeedStatus(state: .healthy, lastSuccessAt: nil, lastAttemptAt: nil), observedAt: nil, positions: [])
      }
     func enableCount() -> Int { enabled }
 }
