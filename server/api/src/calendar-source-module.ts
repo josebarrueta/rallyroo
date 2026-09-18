@@ -71,8 +71,8 @@ export interface CalendarFeedValidators {
 export class CalendarSourceSyncError extends Error {
   readonly statusCode = 502;
 
-  constructor() {
-    super("Calendar source synchronization failed");
+  constructor(detail?: string) {
+    super(detail ?? "Calendar source synchronization failed");
     this.name = "CalendarSourceSyncError";
   }
 }
@@ -187,14 +187,16 @@ export class CalendarSourceModule {
       }));
       await this.dependencies.repository.replaceCalendarEvents(synchronized, events);
       return publicCalendarSource(synchronized);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[CalendarSync] Failed to sync source %s: %s", source.id, message);
       await this.dependencies.repository.saveCalendarSource({
         ...source,
         status: "error",
-        lastError: "sync_failed",
+        lastError: message,
       });
-      throw new CalendarSourceSyncError();
-    }
+      throw new CalendarSourceSyncError(message);
+     }
   }
 
   async events(familyID: string, viewerMemberID: string): Promise<FamilyEvent[]> {

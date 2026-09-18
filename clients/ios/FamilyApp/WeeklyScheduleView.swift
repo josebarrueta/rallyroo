@@ -768,21 +768,21 @@ private struct OverlapTimeline<Content: View>: View {
             let laneWidth = (geometry.size.width - spacing * CGFloat(cluster.laneCount - 1))
                  / CGFloat(cluster.laneCount)
             ZStack(alignment: .topLeading) {
-                ForEach(cluster.items) { item in
-                    let offsetMinutes = item.occurrence.event.startTime.timeIntervalSince(cluster.start) / 60
-                    let durationMinutes = item.occurrence.event.endTime
-                         .timeIntervalSince(item.occurrence.event.startTime) / 60
-                    content(item.occurrence)
-                      .frame(width: laneWidth, alignment: .topLeading)
-                      .background(
+                 ForEach(cluster.items) { item in
+                     let offsetMinutes = item.occurrence.event.startTime
+                           .timeIntervalSince(cluster.start) / 60
+                     content(item.occurrence)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: laneWidth, alignment: .topLeading)
+                        .background(
                        Color.secondary.opacity(0.08),
                        in: RoundedRectangle(cornerRadius: 10)
-                      )
-                      .overlay(
+                       )
+                        .overlay(
                        RoundedRectangle(cornerRadius: 10)
-                             .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
-                      )
-                      .clipShape(RoundedRectangle(cornerRadius: 10))
+                              .stroke(Color.secondary.opacity(0.25), lineWidth: 0.5)
+                       )
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                         .offset(
                         x: CGFloat(item.lane) * (laneWidth + spacing),
                         y: CGFloat(offsetMinutes) * cluster.pointsPerMinute
