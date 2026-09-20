@@ -6,6 +6,7 @@ import { CalendarSourceModule } from "./calendar-source-module.js";
 import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
+import { CaltrainVehiclePositionRefresher } from "./caltrain-vehicle-position-refresher.js";
 import { CommuterAlertDispatcher } from "./commuter-alert-dispatcher.js";
 import { CommuterModule } from "./commuter-module.js";
 import { databasePoolConfiguration } from "./database-configuration.js";
@@ -243,6 +244,7 @@ if (caltrainPolling.enabled && sf511APIKey) {
   const client = new SF511Client(sf511APIKey);
   const catalogRefresher = new CaltrainScheduleRefresher(client, commuter);
   const commutePoller = new CaltrainCommutePoller(client, commuter);
+  const vehiclePositionRefresher = new CaltrainVehiclePositionRefresher(client, cache, commuter);
   let nextCatalogRefreshAtMilliseconds: number | undefined;
   const scheduler = new CaltrainPollingScheduler({
     intervalMilliseconds: caltrainPolling.intervalMilliseconds,
@@ -258,21 +260,60 @@ if (caltrainPolling.enabled && sf511APIKey) {
       if (catalogIsDue) {
         // Advance before attempting so catalog failures do not starve real-time fan-out.
         nextCatalogRefreshAtMilliseconds = attemptedAt.getTime() + 24 * 60 * 60 * 1_000;
-      }
-      const startedAt = performance.now();
-      const operation = catalogIsDue
-        ? { name: "sf511_caltrain_catalog", run: () => catalogRefresher.refresh(attemptedAt) }
-        : { name: "sf511_caltrain_realtime", run: () => commutePoller.poll(attemptedAt) };
-      try {
-        await operation.run();
-        metrics.observeProvider(operation.name, "success", (performance.now() - startedAt) / 1_000);
-      } catch (error) {
-        metrics.observeProvider(operation.name, "failure", (performance.now() - startedAt) / 1_000);
-        if (catalogIsDue && !await commuter.providerSchedule()) {
-          nextCatalogRefreshAtMilliseconds = attemptedAt.getTime() + 60 * 60 * 1_000;
+        const startedAt = performance.now();
+        try {
+          await catalogRefresher.refresh(attemptedAt);
+          metrics.observeProvider(
+            "sf511_caltrain_catalog",
+            "success",
+            (performance.now() - startedAt) / 1_000,
+          );
+        } catch (error) {
+          metrics.observeProvider(
+            "sf511_caltrain_catalog",
+            "failure",
+            (performance.now() - startedAt) / 1_000,
+          );
+          if (!await commuter.providerSchedule()) {
+            nextCatalogRefreshAtMilliseconds = attemptedAt.getTime() + 60 * 60 * 1_000;
+          }
+          throw error;
         }
-        throw error;
       }
+
+      const tracking = await commuter.trackingPlan(attemptedAt);
+      if (tracking.pollRealtime) {
+        const realtimeStartedAt = performance.now();
+        const positionsStartedAt = performance.now();
+        const [realtime, positions] = await Promise.allSettled([
+          commutePoller.poll(attemptedAt),
+          vehiclePositionRefresher.refresh(attemptedAt, tracking.trackedJourneyIDs),
+        ]);
+        metrics.observeProvider(
+          "sf511_caltrain_realtime",
+          realtime.status === "fulfilled" ? "success" : "failure",
+          (performance.now() - realtimeStartedAt) / 1_000,
+        );
+        metrics.observeProvider(
+          "sf511_caltrain_positions",
+          positions.status === "fulfilled" ? "success" : "failure",
+          (performance.now() - positionsStartedAt) / 1_000,
+        );
+        if (realtime.status === "rejected") throw realtime.reason;
+        if (positions.status === "rejected") throw positions.reason;
+      }
+
+      const nextWakeAt = tracking.nextWakeAt === null ? undefined : new Date(tracking.nextWakeAt);
+      const nextDelayMilliseconds = tracking.pollRealtime
+        ? caltrainPolling.intervalMilliseconds
+        : Math.max(
+          1_000,
+          Math.min(
+            nextWakeAt ? nextWakeAt.getTime() - attemptedAt.getTime() : 6 * 60 * 60 * 1_000,
+            nextCatalogRefreshAtMilliseconds - attemptedAt.getTime(),
+          ),
+        );
+      return { nextDelayMilliseconds };
     },
     onFailure: ({ throttled, nextAttemptInSeconds }) => {
       app.log.warn({ throttled, nextAttemptInSeconds }, "Caltrain polling deferred");

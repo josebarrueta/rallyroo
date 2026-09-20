@@ -222,6 +222,12 @@ struct AddEventSheet: View {
 
                 Section("Details") {
                     TextField("Location", text: $location)
+                    if let locationDirectionsURL {
+                        Link(destination: locationDirectionsURL) {
+                            Label("Open directions in Maps", systemImage: "map")
+                        }
+                        .accessibilityIdentifier("open-event-directions")
+                    }
                     ForEach(locationSuggestions.filter { $0.address != location }) { suggestion in
                         Button {
                             location = suggestion.address
@@ -506,6 +512,10 @@ struct AddEventSheet: View {
             recurrence: selectedRecurrence,
             recurrenceSeriesID: recurringSource?.recurrenceSeriesID
         )
+    }
+
+    private var locationDirectionsURL: URL? {
+        MapsDirectionsURL.make(origin: nil, destination: location)
     }
 
     private var savedEventCanPlanTravel: Bool {
