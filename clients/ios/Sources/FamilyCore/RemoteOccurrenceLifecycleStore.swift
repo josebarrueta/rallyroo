@@ -20,6 +20,7 @@ public enum OccurrenceScope: String, Codable, Sendable {
 
 public protocol OccurrenceLifecycleStore: Sendable {
     func skip(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws
+    func restore(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws
     func delete(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws
     func acknowledge(_ reference: OccurrenceReference) async throws
 }
@@ -66,6 +67,17 @@ public actor RemoteOccurrenceLifecycleStore: OccurrenceLifecycleStore {
         )
         try await perform("skip", body: try encoder.encode(request), token: token)
         }
+
+    public func restore(_ reference: OccurrenceReference, scope: OccurrenceScope = .thisOccurrence) async throws {
+        let token = try await authToken()
+        let request = SkipRequest(
+            kind: reference.kind.rawValue,
+            seriesID: reference.seriesID.uuidString,
+            scheduledAt: reference.scheduledAt.iso8601String,
+            scope: scope.rawValue
+        )
+        try await perform("restore", body: try encoder.encode(request), token: token)
+    }
 
     public func delete(_ reference: OccurrenceReference, scope: OccurrenceScope = .thisOccurrence) async throws {
         let token = try await authToken()

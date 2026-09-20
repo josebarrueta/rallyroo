@@ -5,6 +5,78 @@ import FamilyCore
 
 private enum AppTab: Hashable { case schedule, reminders, family, alerts, settings }
 
+#if DEBUG
+private actor OccurrenceLifecycleUITestEventStore: EventStore {
+    private let events: [FamilyEvent]
+
+    init(now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) {
+        let day = calendar.startOfDay(for: now)
+        let skippedStart = calendar.date(byAdding: .hour, value: 9, to: day)!
+        let modifiedStart = calendar.date(byAdding: .hour, value: 11, to: day)!
+        let skippedSeriesID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+        let modifiedSeriesID = UUID(uuidString: "10000000-0000-4000-8000-000000000002")!
+        let overrideID = UUID(uuidString: "10000000-0000-4000-8000-000000000003")!
+        let skippedState = ScheduleOccurrenceState(
+            familyID: "ui-test-family",
+            reference: ScheduleOccurrenceReference(
+                kind: .event, seriesID: skippedSeriesID, scheduledAt: skippedStart
+            ),
+            disposition: .skipped,
+            acknowledgedMemberIDs: [],
+            overrideEntityID: nil,
+            completedAt: nil,
+            completedByMemberID: nil
+        )
+        let modifiedState = ScheduleOccurrenceState(
+            familyID: "ui-test-family",
+            reference: ScheduleOccurrenceReference(
+                kind: .event, seriesID: modifiedSeriesID,
+                scheduledAt: calendar.date(byAdding: .hour, value: 10, to: day)!
+            ),
+            disposition: .scheduled,
+            acknowledgedMemberIDs: [],
+            overrideEntityID: overrideID,
+            completedAt: nil,
+            completedByMemberID: nil
+        )
+        events = [
+            FamilyEvent(
+                id: skippedSeriesID, title: "Skipped practice", kidID: nil,
+                participantIDs: [], startTime: skippedStart,
+                endTime: skippedStart.addingTimeInterval(3_600), source: .manual,
+                status: .confirmed,
+                recurrence: EventRecurrence(frequency: .daily, interval: 1, endDate: skippedStart),
+                recurrenceSeriesID: skippedSeriesID, occurrenceStates: [skippedState]
+            ),
+            FamilyEvent(
+                id: overrideID, title: "Modified practice", kidID: nil,
+                participantIDs: [], startTime: modifiedStart,
+                endTime: modifiedStart.addingTimeInterval(3_600), source: .manual,
+                status: .confirmed, recurrenceSeriesID: modifiedSeriesID,
+                occurrenceStates: [modifiedState]
+            ),
+        ]
+    }
+
+    func loadEvents() async throws -> EventSnapshot { EventSnapshot(events: events, freshness: .fresh) }
+    func save(_ event: FamilyEvent, notifyParticipants: Bool, idempotencyKey: UUID) async throws -> EventMutationResult {
+        throw CocoaError(.featureUnsupported)
+    }
+    func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws { throw CocoaError(.featureUnsupported) }
+    func updateRecurringEvent(
+        _ edit: RecurringEventEdit, notifyParticipants: Bool, idempotencyKey: UUID
+    ) async throws -> EventMutationResult { throw CocoaError(.featureUnsupported) }
+    func clearCache() async throws {}
+}
+
+private actor OccurrenceLifecycleUITestStore: OccurrenceLifecycleStore {
+    func skip(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
+    func restore(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
+    func delete(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
+    func acknowledge(_ reference: OccurrenceReference) async throws {}
+}
+#endif
+
 @main
 struct FamilyActivityCoordinatorApp: App {
     @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushNotificationDelegate
@@ -50,7 +122,16 @@ struct FamilyActivityCoordinatorApp: App {
         case .local:
             AppStorage.resetForUnifiedFamilyMembersIfNeeded()
             authentication = LocalAuthentication()
+            #if DEBUG
+            let testsOccurrenceLifecycle = ProcessInfo.processInfo.environment[
+                "RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"
+            ] == "1"
+            eventStore = testsOccurrenceLifecycle
+                ? OccurrenceLifecycleUITestEventStore()
+                : LocalEventStore(storageURL: AppStorage.eventsURL)
+            #else
             eventStore = LocalEventStore(storageURL: AppStorage.eventsURL)
+            #endif
             reminderStore = LocalReminderStore(storageURL: AppStorage.remindersURL)
             let localAlertScheduler = LocalReminderAlertScheduler()
             reminderAlertScheduler = localAlertScheduler
@@ -58,7 +139,11 @@ struct FamilyActivityCoordinatorApp: App {
             memberStore = LocalFamilyMemberStore(storageURL: AppStorage.membersURL)
             locationSearch = EmptyLocationSearch()
             invitationStore = nil
+            #if DEBUG
+            occurrenceLifecycleStore = testsOccurrenceLifecycle ? OccurrenceLifecycleUITestStore() : nil
+            #else
             occurrenceLifecycleStore = nil
+            #endif
             calendarSourceStore = nil
             changeMonitor = nil
             deviceRegistrationStore = nil

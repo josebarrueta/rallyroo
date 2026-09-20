@@ -555,6 +555,8 @@ struct WeeklyScheduleView: View {
                 event: occurrence.event,
                 members: viewModel.members
              ),
+            disposition: occurrence.disposition,
+            isModified: occurrence.isModified,
             compact: compact
          )
          .contentShape(Rectangle())
@@ -582,17 +584,10 @@ struct WeeklyScheduleView: View {
             // Occurrence lifecycle actions
             if allowsEditing, !viewModel.isShowingCachedEvents, occurrenceLifecycleStore != nil {
                 Divider()
-                Button {
-                    lifecycleAction = .skip(occurrence)
-                 } label: {
-                    Label("Skip occurrence", systemImage: "calendar.badge.minus")
-                 }
-                 .disabled(occurrence.disposition == .skipped)
                 Button(
                     action: {
                         if occurrence.disposition == .skipped {
-                            // Un-skip by scheduling again (no-op on server, just refresh)
-                            Task { await viewModel.loadEvents() }
+                            Task { await viewModel.restoreOccurrence(occurrence) }
                          } else {
                             lifecycleAction = .skip(occurrence)
                          }
@@ -925,6 +920,7 @@ private struct OverlapTimeline<Content: View>: View {
 private struct EventRow: View {
     let display: ScheduleEventDisplay
     var disposition: ScheduleOccurrenceDisposition = .scheduled
+    var isModified = false
     var compact = false
 
     var body: some View {
@@ -938,11 +934,10 @@ private struct EventRow: View {
                         .font(compact ? .subheadline.bold() : .headline)
                         .lineLimit(compact ? 1 : nil)
                     if disposition == .skipped {
-                        Text("Skipped")
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.gray.opacity(0.3), in: Capsule())
+                        statusBadge("Skipped")
+                    }
+                    if isModified {
+                        statusBadge("Modified")
                     }
                     Spacer(minLength: 0)
                 }
@@ -986,6 +981,14 @@ private struct EventRow: View {
             .padding(8)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(lifecycleAccessibilityID)
+    }
+
+    private func statusBadge(_ title: String) -> some View {
+        Text(title)
+            .font(.caption2.bold())
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.gray.opacity(0.3), in: Capsule())
     }
 
      private var lifecycleAccessibilityID: String {

@@ -12,6 +12,7 @@ export type OccurrenceScope = "this_occurrence" | "this_weekday_future" | "all_f
 export interface OccurrenceLifecycleRepository {
   eventsForFamily(familyID: string): Promise<FamilyEvent[]>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
+  occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]>;
   acknowledgeOccurrence(
     familyID: string,
     reference: ScheduleOccurrenceReference,
@@ -26,8 +27,12 @@ export interface OccurrenceLifecycleRepository {
 
 export class OccurrenceLifecycleError extends Error {
   constructor(
-    readonly code: "invalid_occurrence_reference" | "occurrence_not_found" | "parent_required",
-    readonly statusCode: 400 | 403 | 404,
+    readonly code:
+      | "invalid_occurrence_reference"
+      | "occurrence_not_found"
+      | "occurrence_not_skipped"
+      | "parent_required",
+    readonly statusCode: 400 | 403 | 404 | 409,
    ) {
     super(code);
    }
@@ -50,6 +55,29 @@ export class OccurrenceLifecycleModule {
       targets.map((ref) => this.repository.setOccurrenceDisposition(account.familyID, ref, "skipped")),
      );
    }
+
+  async restore(
+    account: Account,
+    untrustedReference: ScheduleOccurrenceReference,
+    scope: OccurrenceScope = "this_occurrence",
+   ): Promise<ScheduleOccurrenceState[]> {
+    if (account.role !== "parent") {
+      throw new OccurrenceLifecycleError("parent_required", 403);
+    }
+    const reference = await this.requireOccurrence(account, untrustedReference);
+    const states = await this.repository.occurrenceStatesForFamily(account.familyID);
+    const skipped = new Set(states
+      .filter((state) => state.disposition === "skipped")
+      .map((state) => occurrenceKey(state.reference)));
+    if (!skipped.has(occurrenceKey(reference))) {
+      throw new OccurrenceLifecycleError("occurrence_not_skipped", 409);
+    }
+    const targets = (await this.resolveScope(account, reference, scope))
+      .filter((target) => skipped.has(occurrenceKey(target)));
+    return Promise.all(
+      targets.map((ref) => this.repository.setOccurrenceDisposition(account.familyID, ref, "scheduled")),
+    );
+  }
 
   async delete(
     account: Account,
@@ -133,6 +161,10 @@ export class OccurrenceLifecycleModule {
          }
     throw new OccurrenceLifecycleError("occurrence_not_found", 404);
    }
+}
+
+function occurrenceKey(reference: ScheduleOccurrenceReference): string {
+  return `${reference.kind}:${reference.seriesID.toLowerCase()}:${new Date(reference.scheduledAt).toISOString()}`;
 }
 
 function weekdayIndex(date: Date): number {

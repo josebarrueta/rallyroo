@@ -271,6 +271,26 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertFalse(secondLaunch.staticTexts["Must not survive relaunch"].exists)
     }
 
+    func testOccurrenceRowsShowStateAndOfferLifecycleActions() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let skipped = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Skipped practice")
+        ).firstMatch
+        let modified = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Modified")
+        ).firstMatch
+        XCTAssertTrue(skipped.waitForExistence(timeout: 5))
+        XCTAssertTrue(modified.waitForExistence(timeout: 5))
+
+        skipped.press(forDuration: 1)
+        XCTAssertTrue(app.buttons["Undo skip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Delete skipped"].exists)
+    }
+
     private func addFamilyMember(named name: String, in app: XCUIApplication) {
         app.tabBars.buttons["Family"].tap()
         XCTAssertTrue(app.navigationBars["Family"].waitForExistence(timeout: 5))

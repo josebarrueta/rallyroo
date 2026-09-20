@@ -185,6 +185,73 @@ describe("EventMutationModule", () => {
       .toHaveLength(1);
   });
 
+  it("records a durable override identity for a modified occurrence", async () => {
+    const persistence = repository();
+    const module = new EventMutationModule({ persistence, importedEvents });
+    const source: FamilyEvent = {
+      ...event,
+      startTime: "2026-09-08T16:00:00.000Z",
+      endTime: "2026-09-08T17:00:00.000Z",
+      recurrenceSeriesID: event.id,
+      recurrence: {
+        frequency: "weekly", interval: 1, weekdays: [2], endDate: "2026-12-31T16:00:00.000Z",
+      },
+    };
+    await module.save({
+      account, event: source, idempotencyKey: "override-source", notifyParticipants: false,
+    });
+    const overrideID = "20000000-0000-4000-8000-000000000020";
+    const continuationID = "20000000-0000-4000-8000-000000000021";
+    const occurrenceStart = new Date("2026-09-15T16:00:00.000Z");
+    const modified = {
+      ...source,
+      id: overrideID,
+      title: "Modified practice",
+      startTime: "2026-09-15T17:00:00.000Z",
+      endTime: "2026-09-15T18:00:00.000Z",
+      recurrence: null,
+    };
+
+    await module.recurringEdit({
+      account,
+      sourceEventID: source.id,
+      edited: modified,
+      scope: "thisOccurrence",
+      occurrenceStart,
+      upserts: [
+        {
+          ...source,
+          recurrence: { ...source.recurrence!, endDate: "2026-09-15T15:59:59.999Z" },
+        },
+        modified,
+        {
+          ...source,
+          id: continuationID,
+          startTime: "2026-09-22T16:00:00.000Z",
+          endTime: "2026-09-22T17:00:00.000Z",
+        },
+      ],
+      deleteIDs: [],
+      affectedEventIDs: [overrideID],
+      affectedSourceEventIDs: [source.id],
+      baseSeriesEvents: [source],
+      idempotencyKey: "override-edit",
+      notifyParticipants: false,
+    });
+
+    expect(await persistence.occurrenceStatesForFamily(account.familyID)).toEqual([
+      expect.objectContaining({
+        reference: {
+          kind: "event",
+          seriesID: source.id,
+          scheduledAt: occurrenceStart.toISOString(),
+        },
+        disposition: "scheduled",
+        overrideEntityID: overrideID,
+      }),
+    ]);
+  });
+
   it("atomically applies a recurring scope and notifies the newly assigned driver once", async () => {
     const persistence = repository();
     await persistence.saveMember({

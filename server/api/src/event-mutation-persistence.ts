@@ -1,4 +1,9 @@
-import type { EventConflict, FamilyEvent, FamilyMember } from "./domain.js";
+import type {
+  EventConflict,
+  FamilyEvent,
+  FamilyMember,
+  ScheduleOccurrenceReference,
+} from "./domain.js";
 
 export type ScheduleUpdateNotificationOutcome =
   | "sent"
@@ -40,6 +45,10 @@ export interface EventMutationPlan {
     | { kind: "delete"; eventID: string }
     | { kind: "replaceRecurringSeries"; events: FamilyEvent[]; deleteIDs: string[] };
   result: StoredEventMutationResult;
+  occurrenceOverride?: {
+    reference: ScheduleOccurrenceReference;
+    overrideEntityID: string;
+  };
   notification?: ScheduleUpdateNotificationIntent;
 }
 
