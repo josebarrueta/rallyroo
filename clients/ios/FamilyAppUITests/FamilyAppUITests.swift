@@ -236,8 +236,9 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Month"].tap()
 
         XCTAssertTrue(app.otherElements["schedule-month-grid"].waitForExistence(timeout: 5))
-        app.swipeUp()
-        XCTAssertTrue(app.staticTexts["Selected day"].waitForExistence(timeout: 5))
+        let selectedDay = app.staticTexts["Selected day"]
+        for _ in 0..<3 where !selectedDay.exists { app.swipeUp() }
+        XCTAssertTrue(selectedDay.waitForExistence(timeout: 5))
     }
 
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
