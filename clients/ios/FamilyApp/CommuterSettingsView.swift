@@ -1,4 +1,5 @@
 import FamilyCore
+import MapKit
 import SwiftUI
 
 struct CommuterSettingsView: View {
@@ -146,29 +147,63 @@ struct CommuterSettingsView: View {
                .padding(.vertical, 4)
                 if response.positions.isEmpty {
                     Text("No trains currently in service. Try later during rush hour.")
-                          .font(.caption)
-                          .foregroundStyle(.secondary)
-                 } else {
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Map(
+                        coordinateRegion: .constant(liveTrainRegion(for: response.positions)),
+                        annotationItems: response.positions
+                    ) { position in
+                        MapAnnotation(
+                            coordinate: CLLocationCoordinate2D(
+                                latitude: position.latitude,
+                                longitude: position.longitude
+                            )
+                        ) {
+                            VStack(spacing: 2) {
+                                Image(systemName: "train.side.front.car")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(7)
+                                    .background(
+                                        position.directionID == 1 ? Color.green : Color.orange,
+                                        in: Circle()
+                                    )
+                                Text(position.tripID)
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(.regularMaterial, in: Capsule())
+                            }
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Train \(position.tripID)")
+                            .accessibilityValue(position.currentStopID ?? "En route")
+                        }
+                    }
+                    .frame(height: 240)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityIdentifier("live-train-map")
+
                     ForEach(response.positions) { position in
                         HStack(spacing: 8) {
                             Circle()
-                                  .fill(position.directionID == 1 ? .green : .orange)
-                                  .frame(width: 8, height: 8)
+                                .fill(position.directionID == 1 ? .green : .orange)
+                                .frame(width: 8, height: 8)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Train \(position.tripID)")
-                                       .font(.body)
-                                       .fontWeight(.medium)
+                                    .font(.body)
+                                    .fontWeight(.medium)
                                 Text(position.currentStopID ?? "En route")
-                                       .font(.caption)
-                                       .foregroundStyle(.secondary)
-                             }
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Text(position.status)
-                                  .font(.caption2)
-                                  .foregroundStyle(.secondary)
-                          }
-                     }
-                 }
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Text("Cached for 5 minutes. Updates automatically.")
                        .font(.caption2)
                        .foregroundStyle(.secondary)
@@ -181,6 +216,25 @@ struct CommuterSettingsView: View {
          }
      }
 
+    private func liveTrainRegion(for positions: [CaltrainVehiclePosition]) -> MKCoordinateRegion {
+        let latitudes = positions.map(\.latitude)
+        let longitudes = positions.map(\.longitude)
+        let minimumLatitude = latitudes.min() ?? 37.5
+        let maximumLatitude = latitudes.max() ?? 37.8
+        let minimumLongitude = longitudes.min() ?? -122.4
+        let maximumLongitude = longitudes.max() ?? -121.9
+
+        return MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: (minimumLatitude + maximumLatitude) / 2,
+                longitude: (minimumLongitude + maximumLongitude) / 2
+            ),
+            span: MKCoordinateSpan(
+                latitudeDelta: max((maximumLatitude - minimumLatitude) * 1.35, 0.08),
+                longitudeDelta: max((maximumLongitude - minimumLongitude) * 1.35, 0.08)
+            )
+        )
+    }
 
     private func providerSection(_ status: CommuterProviderStatus) -> some View {
         Section("Provider status") {

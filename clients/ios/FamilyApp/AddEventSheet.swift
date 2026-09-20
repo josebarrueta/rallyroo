@@ -249,9 +249,7 @@ struct AddEventSheet: View {
                     }
                 }
 
-                if existingEvent?.arrivalTime != nil,
-                   existingEvent?.location?.isEmpty == false,
-                   onPlanTravel != nil {
+                if existingEvent != nil, onPlanTravel != nil {
                     Section("Travel") {
                         Button {
                             dismiss()
@@ -261,6 +259,14 @@ struct AddEventSheet: View {
                             }
                         } label: {
                             Label("Plan travel", systemImage: "car")
+                        }
+                        .disabled(!savedEventCanPlanTravel)
+                        .accessibilityIdentifier("plan-event-travel")
+
+                        if !savedEventCanPlanTravel {
+                            Text("Save an Arrive by time and location before planning travel.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -500,6 +506,11 @@ struct AddEventSheet: View {
             recurrence: selectedRecurrence,
             recurrenceSeriesID: recurringSource?.recurrenceSeriesID
         )
+    }
+
+    private var savedEventCanPlanTravel: Bool {
+        existingEvent?.arrivalTime != nil
+            && existingEvent?.location?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private var selectedRecurrence: EventRecurrence? {
