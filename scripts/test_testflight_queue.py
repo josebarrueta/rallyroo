@@ -25,6 +25,27 @@ class QueueTests(unittest.TestCase):
             done.add(sha)
         self.assertEqual(visited, commits)
 
+    def test_cancelled_oldest_commit_is_superseded_by_newer_successful_ci(self):
+        self.assertEqual(
+            queue.next_ci_eligible_commit(
+                ['old', 'new'], set(), {'old': 'terminal', 'new': 'success'}
+            ),
+            'new',
+        )
+
+    def test_pending_oldest_commit_still_preserves_fifo_order(self):
+        self.assertIsNone(
+            queue.next_ci_eligible_commit(
+                ['old', 'new'], set(), {'old': 'pending', 'new': 'success'}
+            )
+        )
+
+    def test_successful_newer_upload_covers_its_first_parent_ancestors(self):
+        self.assertEqual(
+            queue.completed_through(['old', 'middle', 'new'], {'new'}),
+            {'old', 'middle', 'new'},
+        )
+
     def test_completed_commit_is_not_reuploaded(self):
         self.assertIsNone(queue.next_commit(['a'], {'a'}))
 
