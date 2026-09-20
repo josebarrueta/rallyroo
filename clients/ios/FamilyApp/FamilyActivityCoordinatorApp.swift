@@ -11,6 +11,7 @@ struct FamilyActivityCoordinatorApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .schedule
     @State private var unreadAlertCount = 0
+    @StateObject private var sharedCaptureInbox = SharedScheduleCaptureInbox()
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
@@ -153,7 +154,8 @@ struct FamilyActivityCoordinatorApp: App {
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
-                        occurrenceLifecycleStore: occurrenceLifecycleStore
+                        occurrenceLifecycleStore: occurrenceLifecycleStore,
+                        incomingSharedCaptureImageData: $sharedCaptureInbox.pendingImageData
                     )
                     .tabItem { Label("Schedule", systemImage: "calendar") }
                     .tag(AppTab.schedule)
@@ -213,7 +215,10 @@ struct FamilyActivityCoordinatorApp: App {
                 }
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
-                .task { await monitorFamilyChanges() }
+                .task {
+                    sharedCaptureInbox.receiveNext()
+                    await monitorFamilyChanges()
+                }
                 .task {
                     unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
                         .filter { $0.readAt == nil }.count
@@ -240,23 +245,9 @@ struct FamilyActivityCoordinatorApp: App {
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
-                         // Dequeue any image captured by the Share Extension.
-                         // The extension writes into the App Group container and
-                         // shows "Ready to review"; here we pick it up and forward
-                         // it to WeeklyScheduleView, which presents the AI capture sheet.
-                        do {
-                            let queue = try SharedScheduleCaptureQueue.appGroup()
-                            if let imageData = try queue.dequeueOldest() {
-                                 NotificationCenter.default.post(
-                                     name: .sharedScheduleCaptureReceived,
-                                     object: imageData
-                                 )
-                             }
-                         } catch {
-                             // App Group unavailable — no shared capture to process.
-                         }
+                        sharedCaptureInbox.receiveNext()
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-                     }
+                    }
                 }
             }
         }

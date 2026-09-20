@@ -1,8 +1,27 @@
+import Combine
 import Foundation
 import ImageIO
 
 public extension Notification.Name {
     static let sharedScheduleCaptureReceived = Notification.Name("sharedScheduleCaptureReceived")
+}
+
+@MainActor
+public final class SharedScheduleCaptureInbox: ObservableObject {
+    @Published public var pendingImageData: Data?
+
+    private let dequeue: () throws -> Data?
+
+    public init(dequeue: @escaping () throws -> Data? = {
+        try SharedScheduleCaptureQueue.appGroup().dequeueOldest()
+    }) {
+        self.dequeue = dequeue
+    }
+
+    public func receiveNext() {
+        guard pendingImageData == nil else { return }
+        pendingImageData = try? dequeue()
+    }
 }
 
 public enum SharedScheduleCaptureQueueError: Error, Equatable, Sendable {
