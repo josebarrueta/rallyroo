@@ -196,9 +196,10 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        let todayButton = app.navigationBars["Rallyroo"].buttons["Today"]
-        XCTAssertTrue(todayButton.exists)
-        todayButton.tap()
+        let viewMenu = app.buttons["schedule-view-menu"]
+        XCTAssertTrue(viewMenu.exists)
+        viewMenu.tap()
+        app.buttons["Today"].tap()
 
         let calendar = Calendar.autoupdatingCurrent
         let todayLabel = Date.now.formatted(.dateTime.weekday(.wide).month().day())
@@ -210,6 +211,32 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertLessThan(todayHeader.frame.minY, app.frame.height * 0.55)
         XCTAssertFalse(app.staticTexts[yesterdayLabel].isHittable)
      }
+
+    func testTodayReturnsToTheTopAfterPagingForward() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-next-page"].tap()
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Today"].tap()
+
+        let todayLabel = Date.now.formatted(.dateTime.weekday(.wide).month().day())
+        let todayHeader = app.staticTexts[todayLabel]
+        XCTAssertTrue(todayHeader.waitForExistence(timeout: 5))
+        XCTAssertLessThan(todayHeader.frame.minY, app.frame.height * 0.55)
+    }
+
+    func testMonthViewShowsCalendarGrid() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Month"].tap()
+
+        XCTAssertTrue(app.otherElements["schedule-month-grid"].waitForExistence(timeout: 5))
+    }
 
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
         let app = localApp()

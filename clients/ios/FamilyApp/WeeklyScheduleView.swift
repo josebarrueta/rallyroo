@@ -13,7 +13,7 @@ struct WeeklyScheduleView: View {
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
-    @State private var weekStart = Calendar.autoupdatingCurrent.startOfDay(for: .now)
+    @State private var viewport = ScheduleViewport()
     @State private var isAddingEvent = false
     @State private var editingOccurrence: EventOccurrence?
     @State private var linkedEvent: FamilyEvent?
@@ -146,7 +146,11 @@ struct WeeklyScheduleView: View {
                      }
                      .onReceive(NotificationCenter.default.publisher(for: .focusOccurrenceStart)) { note in
                        guard let occ = note.object as? Date else { return }
-                       weekStart = Calendar.autoupdatingCurrent.dateInterval(of: .weekOfYear, for: occ)?.start ?? weekStart
+                       viewport = ScheduleViewport(
+                           mode: viewport.mode,
+                           anchorDate: occ,
+                           calendar: .autoupdatingCurrent
+                       )
                      }
             }
             .navigationTitle("Rallyroo")
@@ -417,31 +421,132 @@ struct WeeklyScheduleView: View {
         if let errorMessage = viewModel.errorMessage {
             List {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
-                     .foregroundStyle(.secondary)
-             }
-         } else {
-            List {
-                ForEach(daysInWeek, id: \.self) { day in
-                    Section(day.formatted(.dateTime.weekday(.wide).month().day())) {
-                        let dayEvents = events(on: day)
-                        if dayEvents.isEmpty {
-                            Text("No activities").foregroundStyle(.secondary)
-                         } else {
-                            ForEach(ScheduleOverlapCluster.make(from: dayEvents)) { cluster in
-                                if cluster.items.count == 1, let occurrence = cluster.items.first?.occurrence {
-                                    eventRow(for: occurrence)
-                                 } else {
-                                    OverlapTimeline(cluster: cluster) { occurrence in
-                                        eventRow(for: occurrence, compact: true)
-                                     }
-                                 }
-                             }
-                         }
-                     }
+                    .foregroundStyle(.secondary)
+            }
+        } else if viewport.mode == .month {
+            monthSections
+        } else {
+            weekSections
+        }
+    }
+
+    private var weekSections: some View {
+        List {
+            ForEach(viewport.visibleDates, id: \.self) { day in
+                daySection(for: day)
+            }
+        }
+        .id(viewport.visibleInterval.start)
+    }
+
+    private var monthSections: some View {
+        List {
+            Section {
+                VStack(spacing: 10) {
+                    Text(viewport.anchorDate.formatted(.dateTime.month(.wide).year()))
+                        .font(.title3.bold())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7),
+                        spacing: 8
+                    ) {
+                        ForEach(weekdaySymbols, id: \.self) { symbol in
+                            Text(symbol)
+                                .font(.caption2.bold())
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(viewport.visibleDates, id: \.self) { day in
+                            monthDayButton(day)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("schedule-month-grid")
+            }
+            Section("Selected day") {
+                let dayEvents = events(on: viewport.selectedDate)
+                if dayEvents.isEmpty {
+                    Text("No activities").foregroundStyle(.secondary)
+                } else {
+                    ForEach(ScheduleOverlapCluster.make(from: dayEvents)) { cluster in
+                        if cluster.items.count == 1, let occurrence = cluster.items.first?.occurrence {
+                            eventRow(for: occurrence)
+                        } else {
+                            OverlapTimeline(cluster: cluster) { occurrence in
+                                eventRow(for: occurrence, compact: true)
+                            }
+                        }
+                    }
                 }
             }
-         }
-     }
+        }
+        .id(viewport.visibleInterval.start)
+    }
+
+    @ViewBuilder
+    private func daySection(for day: Date) -> some View {
+        Section(day.formatted(.dateTime.weekday(.wide).month().day())) {
+            let dayEvents = events(on: day)
+            if dayEvents.isEmpty {
+                Text("No activities").foregroundStyle(.secondary)
+            } else {
+                ForEach(ScheduleOverlapCluster.make(from: dayEvents)) { cluster in
+                    if cluster.items.count == 1, let occurrence = cluster.items.first?.occurrence {
+                        eventRow(for: occurrence)
+                    } else {
+                        OverlapTimeline(cluster: cluster) { occurrence in
+                            eventRow(for: occurrence, compact: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func monthDayButton(_ day: Date) -> some View {
+        let calendar = Calendar.autoupdatingCurrent
+        let isSelected = calendar.isDate(day, inSameDayAs: viewport.selectedDate)
+        let isCurrentMonth = viewport.monthInterval?.contains(day) == true
+        let dayEvents = events(on: day)
+        return Button {
+            viewport.select(day)
+        } label: {
+            VStack(spacing: 4) {
+                Text(day.formatted(.dateTime.day()))
+                    .font(.subheadline.weight(isSelected ? .bold : .regular))
+                    .foregroundStyle(isCurrentMonth ? Color.primary : Color.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(isSelected ? AppTheme.purple : Color.clear, in: Circle())
+                    .foregroundStyle(isSelected ? Color.white : (isCurrentMonth ? Color.primary : Color.secondary))
+                HStack(spacing: 2) {
+                    ForEach(Array(dayEvents.prefix(3).enumerated()), id: \.offset) { _, occurrence in
+                        Circle()
+                            .fill(monthIndicatorColor(for: occurrence))
+                            .frame(width: 5, height: 5)
+                    }
+                }
+                .frame(height: 5)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+        .accessibilityValue(dayEvents.isEmpty ? "No activities" : "\(dayEvents.count) activities")
+    }
+
+    private func monthIndicatorColor(for occurrence: EventOccurrence) -> Color {
+        let firstParticipant = occurrence.event.participantIDs.first
+        let colorTag = viewModel.members.first(where: { $0.id == firstParticipant })?.colorTag
+        return Color(familyColorTag: colorTag)
+    }
+
+    private var weekdaySymbols: [String] {
+        let calendar = Calendar.autoupdatingCurrent
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols
+        let split = calendar.firstWeekday - 1
+        return Array(symbols[split...]) + Array(symbols[..<split])
+    }
 
     @ViewBuilder
     private func eventRow(for occurrence: EventOccurrence, compact: Bool = false) -> some View {
@@ -516,14 +621,31 @@ struct WeeklyScheduleView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarLeading) {
-            Button("Today") {
-                weekStart = startOfToday
-             }
-         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { moveWeek(by: -1) } label: { Image(systemName: "chevron.left") }
-            Button { moveWeek(by: 1) } label: { Image(systemName: "chevron.right") }
+            Menu {
+                Button("Today") { viewport.goToToday() }
+                Divider()
+                Button {
+                    viewport.setMode(.week)
+                } label: {
+                    Label("Week", systemImage: viewport.mode == .week ? "checkmark" : "calendar")
+                }
+                Button {
+                    viewport.setMode(.month)
+                } label: {
+                    Label("Month", systemImage: viewport.mode == .month ? "checkmark" : "calendar")
+                }
+            } label: {
+                Image(systemName: "calendar")
+            }
+            .accessibilityLabel("Today, Week, Month")
+            .accessibilityIdentifier("schedule-view-menu")
+            Button { viewport.move(by: -1) } label: { Image(systemName: "chevron.left") }
+                .accessibilityLabel("Previous \(viewport.mode.rawValue.lowercased())")
+                .accessibilityIdentifier("schedule-previous-page")
+            Button { viewport.move(by: 1) } label: { Image(systemName: "chevron.right") }
+                .accessibilityLabel("Next \(viewport.mode.rawValue.lowercased())")
+                .accessibilityIdentifier("schedule-next-page")
             Menu {
                 Button("All family members") { selectedParticipantID = nil }
                 ForEach(viewModel.members) { member in
@@ -545,36 +667,21 @@ struct WeeklyScheduleView: View {
 
      // MARK: - Computed helpers
 
-    private var startOfToday: Date {
-        Calendar.autoupdatingCurrent.startOfDay(for: .now)
-     }
-
-    private var daysInWeek: [Date] {
-        let calendar = Calendar.autoupdatingCurrent
-        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
-     }
-
-    private var weekOccurrences: [EventOccurrence] {
+    private var visibleOccurrences: [EventOccurrence] {
         EventOccurrenceExpander.occurrences(
             of: viewModel.events,
-            in: DateInterval(
-                start: weekStart,
-                end: Calendar.autoupdatingCurrent.date(byAdding: .day, value: 7, to: weekStart)!
-             )
+            in: viewport.visibleInterval
          )
      }
 
     private func events(on day: Date) -> [EventOccurrence] {
         let calendar = Calendar.autoupdatingCurrent
-        return weekOccurrences.filter {
+        return visibleOccurrences.filter {
             calendar.isDate($0.event.startTime, inSameDayAs: day)
                  && (selectedParticipantID == nil || $0.event.participantIDs.contains(selectedParticipantID!))
          }
      }
 
-    private func moveWeek(by offset: Int) {
-        weekStart = Calendar.autoupdatingCurrent.date(byAdding: .weekOfYear, value: offset, to: weekStart)!
-     }
  }
 
  // MARK: - Lifecycle scope sheet
