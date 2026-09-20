@@ -18,7 +18,7 @@ on:
 
 jobs:
   chart:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v5
@@ -27,7 +27,7 @@ jobs:
       - run: ./deploy/gcp/test-backup-job.sh
 
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: server/api
@@ -44,7 +44,7 @@ jobs:
       - run: npm run build
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:17-alpine
