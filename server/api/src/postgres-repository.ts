@@ -1547,6 +1547,22 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           [familyID, plan.action.eventID],
         );
       }
+      if (plan.occurrenceOverride) {
+        await client.query(
+          `INSERT INTO schedule_occurrence_states (
+             family_id, kind, series_id, scheduled_at, disposition, override_entity_id
+           ) VALUES ($1, $2, $3, $4, 'scheduled', $5)
+           ON CONFLICT (family_id, kind, series_id, scheduled_at) DO UPDATE
+           SET override_entity_id = EXCLUDED.override_entity_id, updated_at = now()`,
+          [
+            familyID,
+            plan.occurrenceOverride.reference.kind,
+            plan.occurrenceOverride.reference.seriesID,
+            plan.occurrenceOverride.reference.scheduledAt,
+            plan.occurrenceOverride.overrideEntityID,
+          ],
+        );
+      }
       await client.query(
         `INSERT INTO family_change_versions (family_id, version) VALUES ($1, 1)
          ON CONFLICT (family_id) DO UPDATE

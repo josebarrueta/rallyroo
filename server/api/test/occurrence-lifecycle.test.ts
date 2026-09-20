@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Account, FamilyEvent, ScheduleOccurrenceState } from "../src/domain.js";
 import {
+  OccurrenceLifecycleError,
   OccurrenceLifecycleModule,
   type OccurrenceLifecycleRepository,
 } from "../src/occurrence-lifecycle.js";
@@ -40,6 +41,7 @@ class MemoryOccurrenceRepository implements OccurrenceLifecycleRepository {
 
   async eventsForFamily(): Promise<FamilyEvent[]> { return [series]; }
   async remindersForFamily() { return []; }
+  async occurrenceStatesForFamily(): Promise<ScheduleOccurrenceState[]> { return this.states; }
 
   async setOccurrenceDisposition(
     familyID: string,
@@ -97,6 +99,37 @@ describe("OccurrenceLifecycleModule", () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.disposition).toBe("skipped");
     expect(results[0]!.reference.scheduledAt).toBe("2026-09-17T00:30:00.000Z");
+  });
+
+  it("does not restore a deleted occurrence", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const reference = {
+      kind: "event" as const,
+      seriesID: series.id,
+      scheduledAt: "2026-09-17T00:30:00.000Z",
+    };
+    await lifecycle.delete(account, reference, "this_occurrence");
+
+    await expect(lifecycle.restore(account, reference, "this_occurrence")).rejects.toEqual(
+      new OccurrenceLifecycleError("occurrence_not_skipped", 409),
+    );
+  });
+
+  it("lets a parent restore a skipped occurrence to scheduled", async () => {
+    const repo = new MemoryOccurrenceRepository();
+    const lifecycle = new OccurrenceLifecycleModule(repo);
+    const reference = {
+      kind: "event" as const,
+      seriesID: series.id,
+      scheduledAt: "2026-09-17T00:30:00.000Z",
+    };
+    await lifecycle.skip(account, reference, "this_occurrence");
+
+    const results = await lifecycle.restore(account, reference, "this_occurrence");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.disposition).toBe("scheduled");
   });
 
   it("lets a parent delete an occurrence as a durable tombstone", async () => {
@@ -194,6 +227,7 @@ describe("OccurrenceLifecycleModule - Reminders", () => {
   class MemoryReminderRepository implements OccurrenceLifecycleRepository {
     async eventsForFamily() { return []; }
     async remindersForFamily() { return [reminder]; }
+    async occurrenceStatesForFamily(): Promise<ScheduleOccurrenceState[]> { return []; }
 
     async setOccurrenceDisposition(
       familyID: string,

@@ -44,18 +44,24 @@ public struct EventOccurrence: Identifiable, Equatable, Sendable {
     public let id: String
     public let event: FamilyEvent
     public let sourceEvent: FamilyEvent
+    public let scheduledAt: Date
     public let disposition: ScheduleOccurrenceDisposition
+    public let isModified: Bool
 
     public init(
         id: String,
         event: FamilyEvent,
         sourceEvent: FamilyEvent,
-        disposition: ScheduleOccurrenceDisposition = .scheduled
+        scheduledAt: Date? = nil,
+        disposition: ScheduleOccurrenceDisposition = .scheduled,
+        isModified: Bool = false
       ) {
         self.id = id
         self.event = event
         self.sourceEvent = sourceEvent
+        self.scheduledAt = scheduledAt ?? event.startTime
         self.disposition = disposition
+        self.isModified = isModified
       }
     /// The recurrence series identity for lifecycle references.
     public var sourceSeriesID: UUID {
@@ -117,20 +123,19 @@ public enum EventOccurrenceExpander {
         let startDelta = startTime.timeIntervalSince(source.startTime)
         event.arrivalTime = source.arrivalTime.map { $0.addingTimeInterval(startDelta) }
 
-        let disposition: ScheduleOccurrenceDisposition
-        if let state = statesByTime[startTime.timeIntervalSince1970] {
-            disposition = state.disposition
-            // Acknowledgement per-Member is handled by the view layer
-            // (see EventOccurrenceExpander.acknowledgedBy).
-           } else {
-            disposition = .scheduled
-          }
+        let state = statesByTime[startTime.timeIntervalSince1970]
+            ?? statesByTime.values.first { $0.overrideEntityID == source.id }
+        let disposition = state?.disposition ?? .scheduled
+        let scheduledAt = state?.reference.scheduledAt ?? startTime
+        let seriesID = source.recurrenceSeriesID ?? source.id
 
         return EventOccurrence(
-            id: "\(source.id.uuidString)-\(Int(startTime.timeIntervalSince1970))",
+            id: "\(seriesID.uuidString)-\(Int(scheduledAt.timeIntervalSince1970))",
             event: event,
             sourceEvent: source,
-            disposition: disposition
+            scheduledAt: scheduledAt,
+            disposition: disposition,
+            isModified: state?.overrideEntityID != nil
            )
       }
 

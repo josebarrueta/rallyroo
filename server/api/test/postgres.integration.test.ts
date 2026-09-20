@@ -782,6 +782,14 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
         deleteIDs: [obsoleteID],
       },
       result: { conflicts: [], notificationOutcome: "notRequested" },
+      occurrenceOverride: {
+        reference: {
+          kind: "event",
+          seriesID,
+          scheduledAt: "2026-09-17T15:00:00.000Z",
+        },
+        overrideEntityID: newID,
+      },
     }));
     const replay = await data.performEventMutation(account.familyID, idempotencyKey, () => {
       throw new Error("idempotent replay must not rebuild the plan");
@@ -791,6 +799,16 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     const rows = await data.eventsForFamily(account.familyID);
     expect(rows.map((event) => event.id).sort()).toEqual([newID, seriesID].sort());
     expect(rows.every((event) => event.recurrenceSeriesID === seriesID)).toBe(true);
+    expect(await data.occurrenceStatesForFamily(account.familyID)).toEqual([
+      expect.objectContaining({
+        reference: {
+          kind: "event",
+          seriesID,
+          scheduledAt: "2026-09-17T15:00:00.000Z",
+        },
+        overrideEntityID: newID,
+      }),
+    ]);
   });
 
   it("atomically records concurrent Member acknowledgements for one occurrence", async () => {

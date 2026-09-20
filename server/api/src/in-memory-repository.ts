@@ -307,6 +307,20 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     } else {
       removeWhere(this.events, (event) => event.familyID === familyID && event.id === action.eventID);
     }
+    if (plan.occurrenceOverride) {
+      const { reference, overrideEntityID } = plan.occurrenceOverride;
+      const key = occurrenceStateKey(familyID, reference);
+      const existing = this.occurrenceStates.get(key);
+      this.occurrenceStates.set(key, {
+        familyID,
+        reference,
+        disposition: existing?.disposition ?? "scheduled",
+        acknowledgedMemberIDs: existing?.acknowledgedMemberIDs ?? [],
+        overrideEntityID,
+        completedAt: existing?.completedAt ?? null,
+        completedByMemberID: existing?.completedByMemberID ?? null,
+      });
+    }
     this.changeVersions.set(familyID, (this.changeVersions.get(familyID) ?? 0) + 1);
     if (plan.notification) {
       this.scheduleUpdateNotifications.set(plan.notification.id, {

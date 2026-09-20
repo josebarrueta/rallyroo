@@ -293,6 +293,16 @@ export class EventMutationModule {
               ...(shouldNotify ? { notificationID } : {}),
               ...(driverChanges.length > 0 ? { driverChanges } : {}),
             },
+            ...(input.scope === "thisOccurrence" ? {
+              occurrenceOverride: {
+                reference: {
+                  kind: "event" as const,
+                  seriesID: seriesID.toLowerCase(),
+                  scheduledAt: input.occurrenceStart.toISOString(),
+                },
+                overrideEntityID: primary.id,
+              },
+            } : {}),
             ...(shouldNotify ? {
               notification: {
                 id: notificationID,

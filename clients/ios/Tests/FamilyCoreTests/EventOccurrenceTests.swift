@@ -101,6 +101,51 @@ final class EventOccurrenceTests: XCTestCase {
         XCTAssertEqual(first?.disposition, .skipped)
        }
 
+    func testOverrideEntityMarksModifiedOccurrenceAndPreservesScheduledIdentity() {
+        let overrideID = UUID(uuidString: "00000000-0000-4000-8000-000000000099")!
+        let seriesID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+        let scheduledAt = Date(timeIntervalSince1970: 500)
+        let editedStart = Date(timeIntervalSince1970: 1_000)
+        let state = ScheduleOccurrenceState(
+            familyID: "family-1",
+            reference: ScheduleOccurrenceReference(
+                kind: .event,
+                seriesID: seriesID,
+                scheduledAt: scheduledAt
+            ),
+            disposition: .scheduled,
+            acknowledgedMemberIDs: [],
+            overrideEntityID: overrideID,
+            completedAt: nil,
+            completedByMemberID: nil
+        )
+        let event = FamilyEvent(
+            id: overrideID,
+            title: "Soccer",
+            kidID: nil,
+            participantIDs: [],
+            startTime: editedStart,
+            endTime: editedStart.addingTimeInterval(3_600),
+            source: .manual,
+            status: .confirmed,
+            recurrenceSeriesID: seriesID,
+            occurrenceStates: [state]
+        )
+
+        let occurrences = EventOccurrenceExpander.occurrences(
+            of: [event],
+            in: DateInterval(start: editedStart.addingTimeInterval(-1), duration: 3_602)
+        )
+
+        XCTAssertEqual(occurrences.count, 1)
+        XCTAssertTrue(occurrences[0].isModified)
+        XCTAssertEqual(occurrences[0].scheduledAt, scheduledAt)
+        XCTAssertEqual(
+            occurrences[0].id,
+            "\(seriesID.uuidString)-\(Int(scheduledAt.timeIntervalSince1970))"
+        )
+    }
+
     func testDefaultDispositionIsScheduled() {
         let calendar = makeCalendar()
         var event = makeEvent()

@@ -124,13 +124,31 @@ final class WeeklyScheduleViewModel: ObservableObject {
         let reference = OccurrenceReference(
             kind: .event,
             seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.event.startTime
+            scheduledAt: occurrence.scheduledAt
         )
         do {
             _ = try await store.skip(reference, scope: scope)
             await reload()
         } catch {
             errorMessage = "Could not skip occurrence."
+        }
+     }
+
+     func restoreOccurrence(
+         _ occurrence: EventOccurrence,
+         scope: OccurrenceScope = .thisOccurrence
+     ) async {
+        guard let store = occurrenceLifecycleStore else { return }
+        let reference = OccurrenceReference(
+            kind: .event,
+            seriesID: occurrence.sourceSeriesID,
+            scheduledAt: occurrence.scheduledAt
+        )
+        do {
+            _ = try await store.restore(reference, scope: scope)
+            await reload()
+        } catch {
+            errorMessage = "Could not restore occurrence."
         }
      }
 
@@ -143,7 +161,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
         let reference = OccurrenceReference(
             kind: .event,
             seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.event.startTime
+            scheduledAt: occurrence.scheduledAt
         )
         do {
             _ = try await store.delete(reference, scope: scope)
@@ -158,7 +176,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
         let reference = OccurrenceReference(
             kind: .event,
             seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.event.startTime
+            scheduledAt: occurrence.scheduledAt
         )
         do {
             _ = try await store.acknowledge(reference)

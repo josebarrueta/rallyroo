@@ -462,6 +462,12 @@ public struct ScheduleOccurrenceReference: Codable, Equatable, Sendable {
     public let kind: ScheduleOccurrenceKind
     public let seriesID: UUID
     public let scheduledAt: Date
+
+    public init(kind: ScheduleOccurrenceKind, seriesID: UUID, scheduledAt: Date) {
+        self.kind = kind
+        self.seriesID = seriesID
+        self.scheduledAt = scheduledAt
+    }
 }
 
 public struct ScheduleOccurrenceState: Codable, Equatable, Sendable {
@@ -472,4 +478,22 @@ public struct ScheduleOccurrenceState: Codable, Equatable, Sendable {
     public let overrideEntityID: UUID?
     public let completedAt: Date?
     public let completedByMemberID: String?
+
+    public init(
+        familyID: String,
+        reference: ScheduleOccurrenceReference,
+        disposition: ScheduleOccurrenceDisposition,
+        acknowledgedMemberIDs: [String],
+        overrideEntityID: UUID?,
+        completedAt: Date?,
+        completedByMemberID: String?
+    ) {
+        self.familyID = familyID
+        self.reference = reference
+        self.disposition = disposition
+        self.acknowledgedMemberIDs = acknowledgedMemberIDs
+        self.overrideEntityID = overrideEntityID
+        self.completedAt = completedAt
+        self.completedByMemberID = completedByMemberID
+    }
 }

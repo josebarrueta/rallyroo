@@ -1103,6 +1103,27 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("lets a parent restore a skipped Event occurrence", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const reference = {
+      kind: "event", seriesID: "00000000-0000-4000-8000-000000000001",
+      scheduledAt: "2026-08-23T16:00:00.000Z",
+    };
+    await app.inject({
+      method: "POST", url: "/v1/occurrences/skip",
+      headers: { authorization: "Bearer parent-token" }, payload: reference,
+    });
+
+    const response = await app.inject({
+      method: "POST", url: "/v1/occurrences/restore",
+      headers: { authorization: "Bearer parent-token" }, payload: reference,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()[0]).toMatchObject({ disposition: "scheduled" });
+    await app.close();
+  });
+
   it("requires a parent to delete an Event occurrence as a durable tombstone", async () => {
     const app = buildApp({ identityProvider, repository: repository() });
     const reference = {

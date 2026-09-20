@@ -34,6 +34,23 @@ final class RemoteOccurrenceLifecycleStoreTests: XCTestCase {
         XCTAssertEqual(decoded["kind"], "event")
          }
 
+    func testRestoreSendsCorrectEndpoint() async throws {
+        let transport = RecordingTransport()
+        let store = await makeStore(transport: transport)
+        let ref = OccurrenceReference(
+            kind: .event,
+            seriesID: UUID(uuidString: "00000000-0000-4000-8000-000000000301")!,
+            scheduledAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        try await store.restore(ref, scope: .thisOccurrence)
+
+        let request = await transport.lastRequest
+        XCTAssertTrue(request?.url.absoluteString.contains("/v1/occurrences/restore") ?? false)
+        let decoded = try JSONDecoder().decode([String: String].self, from: request!.body!)
+        XCTAssertEqual(decoded["scope"], "this_occurrence")
+    }
+
     func testDeleteSendsCorrectEndpoint() async throws {
         let transport = RecordingTransport()
         let store = await makeStore(transport: transport)
