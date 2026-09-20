@@ -196,9 +196,10 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        let todayButton = app.navigationBars["Rallyroo"].buttons["Today"]
-        XCTAssertTrue(todayButton.exists)
-        todayButton.tap()
+        let viewMenu = app.buttons["schedule-view-menu"]
+        XCTAssertTrue(viewMenu.exists)
+        viewMenu.tap()
+        app.buttons["Today"].tap()
 
         let calendar = Calendar.autoupdatingCurrent
         let todayLabel = Date.now.formatted(.dateTime.weekday(.wide).month().day())
@@ -235,7 +236,8 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Month"].tap()
 
         XCTAssertTrue(app.otherElements["schedule-month-grid"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Selected day"].exists)
+        app.swipeUp()
+        XCTAssertTrue(app.staticTexts["Selected day"].waitForExistence(timeout: 5))
     }
 
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
