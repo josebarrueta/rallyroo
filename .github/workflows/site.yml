@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: site
@@ -47,7 +47,7 @@ jobs:
   deploy:
     if: vars.CLOUDFLARE_SITE_DEPLOY_ENABLED == 'true' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production-site
     steps:
       - uses: actions/checkout@v5
