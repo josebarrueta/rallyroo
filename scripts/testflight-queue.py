@@ -27,6 +27,25 @@ def next_commit(commits, completed):
     return next((sha for sha in commits if sha not in completed), None)
 
 
+def completed_through(commits, successful):
+    indexes = [commits.index(sha) for sha in successful if sha in commits]
+    return set(commits[:max(indexes) + 1]) if indexes else set()
+
+
+def next_ci_eligible_commit(commits, completed, ci_states):
+    for sha in commits:
+        if sha in completed:
+            continue
+        state = ci_states.get(sha, 'pending')
+        if state == 'success':
+            return sha
+        if state == 'pending':
+            return None
+        if state != 'terminal':
+            raise RuntimeError(f'Unexpected CI state for queued commit: {state}')
+    return None
+
+
 def next_build(deployments):
     build = max([100] + [int(d['payload']['build']) for d in deployments]) + 1
     if build > 9999:
@@ -74,20 +93,33 @@ def candidate():
         if any(f.startswith('clients/ios/') for f in files):
             relevant.append(sha)
     deployments = pages('deployments?environment=' + ENVIRONMENT)
-    completed = set()
+    successful_deployments = set()
     for deployment in deployments:
         if deployment.get('payload', {}).get('queue') != 1:
             raise RuntimeError('Unexpected deployment in TestFlight ledger')
         statuses = api(f"deployments/{deployment['id']}/statuses?per_page=1")
         if statuses and statuses[0]['state'] == 'success':
-            completed.add(deployment['sha'])
-    sha = next_commit(relevant, completed)
-    if sha:
+            successful_deployments.add(deployment['sha'])
+    completed = completed_through(relevant, successful_deployments)
+    ci_states = {}
+    for sha in relevant:
+        if sha in completed:
+            continue
         runs = pages(f'actions/workflows/ios.yml/runs?head_sha={sha}&event=push', 'workflow_runs')
-        if not any(r['head_sha'] == sha and r['head_branch'] == 'main' and
-                   r['conclusion'] == 'success' and r['status'] == 'completed' for r in runs):
-            print(f'Queue waiting for successful main iOS CI: {sha}', flush=True)
-            return None, deployments
+        matching = [run for run in runs
+                    if run['head_sha'] == sha and run['head_branch'] == 'main']
+        if any(run['status'] == 'completed' and run['conclusion'] == 'success'
+               for run in matching):
+            ci_states[sha] = 'success'
+            break
+        if not matching or any(run['status'] != 'completed' for run in matching):
+            ci_states[sha] = 'pending'
+            break
+        ci_states[sha] = 'terminal'
+        print(f'Queue superseding commit with terminal iOS CI: {sha}', flush=True)
+    sha = next_ci_eligible_commit(relevant, completed, ci_states)
+    if not sha and next_commit(relevant, completed):
+        print(f'Queue waiting for successful main iOS CI: {next_commit(relevant, completed)}', flush=True)
     return sha, deployments
 
 
