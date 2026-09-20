@@ -138,7 +138,7 @@ struct CommuterSettingsView: View {
         Section("Live trains") {
             if let response = model.liveTrains {
                 Label(
-                    "Live positions\(response.positions.isEmpty ? " · No trains" : " · \(response.positions.count) trains")",
+                    "Tracked positions\(response.positions.isEmpty ? " · Waiting" : " · \(response.positions.count) trains")",
                     systemImage: "train.car.fill"
                    )
                .lineLimit(1)
@@ -146,7 +146,7 @@ struct CommuterSettingsView: View {
                .foregroundStyle(.primary)
                .padding(.vertical, 4)
                 if response.positions.isEmpty {
-                    Text("No trains currently in service. Try later during rush hour.")
+                    Text("No position is available yet for a subscribed train with an active alert.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -204,14 +204,17 @@ struct CommuterSettingsView: View {
                         }
                     }
                 }
-                Text("Cached for 5 minutes. Updates automatically.")
+                Text("Subscribed train positions update every 4 minutes while their routes are active.")
                        .font(.caption2)
                        .foregroundStyle(.secondary)
              } else {
-                Label("Live train positions unavailable", systemImage: "wifi.slash")
-                      .font(.body)
-                      .foregroundStyle(.secondary)
-                      .padding(.vertical, 4)
+                Label("Train tracking is standing by", systemImage: "clock")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+                Text("Tracking starts automatically when one of your subscribed trains begins its route.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
              }
          }
      }

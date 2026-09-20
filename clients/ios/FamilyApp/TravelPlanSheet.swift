@@ -85,6 +85,12 @@ struct TravelPlanSheet: View {
             }
             if let location = model.event.location {
                 LabeledContent("Destination", value: location)
+                if let directionsURL = model.directionsURL {
+                    Link(destination: directionsURL) {
+                        Label("Open directions in Maps", systemImage: "map")
+                    }
+                    .accessibilityIdentifier("open-travel-directions")
+                }
             }
         }
     }
@@ -194,6 +200,19 @@ final class TravelPlanViewModel: ObservableObject {
     @Published var isWorking = false
     @Published var isPreviewing = false
     @Published var didFinish = false
+
+    var directionsURL: URL? {
+        guard let destination = event.location else { return nil }
+        let origin: String?
+        if originChoice == Self.oneTimeChoice {
+            origin = originAddress
+        } else if let id = UUID(uuidString: originChoice) {
+            origin = savedPlaces.first(where: { $0.id == id })?.waypoint.address
+        } else {
+            origin = nil
+        }
+        return MapsDirectionsURL.make(origin: origin, destination: destination)
+    }
 
     private let store: any TravelPlanningStore
     private let locationSearch: any LocationSearch

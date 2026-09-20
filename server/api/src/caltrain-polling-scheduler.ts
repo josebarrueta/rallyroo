@@ -8,8 +8,12 @@ export interface CaltrainPollingFailure {
 
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 
+export interface CaltrainPollingResult {
+  nextDelayMilliseconds?: number;
+}
+
 interface CaltrainPollingSchedulerOptions {
-  poll(attemptedAt: Date): Promise<unknown>;
+  poll(attemptedAt: Date): Promise<CaltrainPollingResult | unknown>;
   intervalMilliseconds: number;
   maximumBackoffMilliseconds: number;
   now?: () => Date;
@@ -53,9 +57,9 @@ export class CaltrainPollingScheduler {
       if (signal.aborted) return;
 
       try {
-        await this.poll(this.now());
+        const result = await this.poll(this.now());
         consecutiveFailures = 0;
-        nextDelay = this.intervalMilliseconds;
+        nextDelay = pollingDelay(result) ?? this.intervalMilliseconds;
       } catch (error) {
         consecutiveFailures += 1;
         const throttle = throttleInformation(error);
@@ -76,6 +80,16 @@ export class CaltrainPollingScheduler {
       }
     }
   }
+}
+
+function pollingDelay(result: unknown): number | undefined {
+  if (typeof result !== "object" || result === null || !("nextDelayMilliseconds" in result)) {
+    return undefined;
+  }
+  const delay = result.nextDelayMilliseconds;
+  return typeof delay === "number" && Number.isFinite(delay) && delay >= 1_000
+    ? Math.floor(delay)
+    : undefined;
 }
 
 async function defaultSleep(milliseconds: number, signal: AbortSignal): Promise<void> {

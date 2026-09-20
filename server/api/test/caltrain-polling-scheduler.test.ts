@@ -27,6 +27,29 @@ describe("CaltrainPollingScheduler", () => {
     expect(delays).toEqual([120_000, 120_000, 120_000]);
   });
 
+  it("sleeps until the next subscription tracking window after an idle poll", async () => {
+    const abort = new AbortController();
+    const delays: number[] = [];
+    const poll = vi.fn()
+      .mockResolvedValueOnce({ nextDelayMilliseconds: 3_600_000 })
+      .mockResolvedValueOnce({ nextDelayMilliseconds: 120_000 });
+    const scheduler = new CaltrainPollingScheduler({
+      poll,
+      intervalMilliseconds: 120_000,
+      maximumBackoffMilliseconds: 3_600_000,
+      now,
+      random: () => 0,
+      sleep: async (milliseconds) => {
+        delays.push(milliseconds);
+        if (delays.length === 3) abort.abort();
+      },
+    });
+
+    await scheduler.run(abort.signal);
+
+    expect(delays).toEqual([120_000, 3_600_000, 120_000]);
+  });
+
   it("honors provider throttling and resets cadence after a successful retry", async () => {
     const abort = new AbortController();
     const delays: number[] = [];

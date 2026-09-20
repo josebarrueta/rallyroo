@@ -24,7 +24,7 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set runtimeConfig.apns.bundleID=dev.rallyroo.app \
   --set runtimeConfig.apns.environment=production \
   --set runtimeConfig.caltrainPolling.enabled=false \
-  --set runtimeConfig.caltrainPolling.intervalSeconds=120 \
+  --set runtimeConfig.caltrainPolling.intervalSeconds=240 \
   --set runtimeConfig.caltrainPolling.maximumBackoffSeconds=3600 \
   --set postgres.credentialsSecret=rallyroo-postgres \
   --set providerSecrets.stytch=rallyroo-stytch \
@@ -68,7 +68,7 @@ grep -q 'APNS_TEAM_ID: "5LS29Z8553"' "$rendered"
 grep -q 'APNS_BUNDLE_ID: "dev.rallyroo.app"' "$rendered"
 grep -q 'APNS_ENV: "production"' "$rendered"
 grep -q 'CALTRAIN_POLLING_ENABLED: "false"' "$rendered"
-grep -q 'CALTRAIN_POLL_INTERVAL_SECONDS: "120"' "$rendered"
+grep -q 'CALTRAIN_POLL_INTERVAL_SECONDS: "240"' "$rendered"
 grep -q 'CALTRAIN_POLL_MAX_BACKOFF_SECONDS: "3600"' "$rendered"
 grep -q 'checksum/runtime-config:' "$rendered"
 grep -A2 'configMapRef:' "$rendered" | grep -q 'name: rallyroo-runtime-config'

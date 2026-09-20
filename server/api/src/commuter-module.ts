@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Account } from "./domain.js";
 import type { CaltrainStaticScheduleSnapshot } from "./caltrain-static-schedule.js";
+import { caltrainTrackingPlan, type CaltrainTrackingPlan } from "./caltrain-tracking-plan.js";
 import {
   searchCaltrainJourneys,
   type CaltrainJourneyOption,
@@ -574,6 +575,14 @@ export class CommuterModule {
       throw new CommuterModuleError("subscription_not_found");
     }
     await this.repository.removeSubscription(account.familyID, subscriptionID);
+  }
+
+  async trackingPlan(now: Date): Promise<CaltrainTrackingPlan> {
+    const [subscriptions, schedule] = await Promise.all([
+      this.repository.activeSubscriptionsForAgency("CT"),
+      this.repository.caltrainSchedule(),
+    ]);
+    return caltrainTrackingPlan(subscriptions, schedule, now);
   }
 
   async processTransitConditions(
