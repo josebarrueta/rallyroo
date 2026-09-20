@@ -14,6 +14,36 @@ final class SharedScheduleCaptureQueueTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    @MainActor
+    func testInboxReceivesAQueuedImageDuringColdLaunch() throws {
+        let image = Data("queued image".utf8)
+        var queued: Data? = image
+        let inbox = SharedScheduleCaptureInbox {
+            defer { queued = nil }
+            return queued
+        }
+
+        inbox.receiveNext()
+
+        XCTAssertEqual(inbox.pendingImageData, image)
+    }
+
+    @MainActor
+    func testInboxDoesNotOverwriteAnImageAwaitingReview() throws {
+        let first = Data("first".utf8)
+        var dequeueCount = 0
+        let inbox = SharedScheduleCaptureInbox {
+            dequeueCount += 1
+            return Data("capture \(dequeueCount)".utf8)
+        }
+        inbox.pendingImageData = first
+
+        inbox.receiveNext()
+
+        XCTAssertEqual(inbox.pendingImageData, first)
+        XCTAssertEqual(dequeueCount, 0)
+    }
+
     func testEnqueuedImageIsConsumedExactlyOnce() throws {
         let queue = try SharedScheduleCaptureQueue(directory: directory)
         let image = try XCTUnwrap(Data(base64Encoded:

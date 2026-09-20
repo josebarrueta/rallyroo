@@ -50,10 +50,7 @@ final class ShareViewController: UIViewController {
             let data = try await sharedImageData()
             let queue = try SharedScheduleCaptureQueue.appGroup()
             try queue.enqueue(data)
-            activityIndicator.stopAnimating()
-            statusLabel.text = "Ready to review"
-            detailLabel.text = "Open Rallyroo to review the schedule drafts before adding anything."
-            doneButton.setTitle("Done", for: .normal)
+            extensionContext?.completeRequest(returningItems: nil)
         } catch {
             activityIndicator.stopAnimating()
             statusLabel.text = "Image not shared"

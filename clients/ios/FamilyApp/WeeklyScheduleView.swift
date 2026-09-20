@@ -20,7 +20,8 @@ struct WeeklyScheduleView: View {
     @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
-    @State private var sharedCaptureImageData: Data?
+    @State private var captureImageData: Data?
+    @Binding private var incomingSharedCaptureImageData: Data?
     @State private var scheduleUpdateNotice: String?
     @State private var connectedCalendarCount: Int?
     @State private var commuterState: CommuterState?
@@ -71,7 +72,8 @@ struct WeeklyScheduleView: View {
         calendarSourceStore: (any CalendarSourceStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
-        occurrenceLifecycleStore: (any OccurrenceLifecycleStore)? = nil
+        occurrenceLifecycleStore: (any OccurrenceLifecycleStore)? = nil,
+        incomingSharedCaptureImageData: Binding<Data?> = .constant(nil)
       ) {
         self.allowsEditing = allowsEditing
         self.locationSearch = locationSearch
@@ -83,6 +85,7 @@ struct WeeklyScheduleView: View {
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
         self.occurrenceLifecycleStore = occurrenceLifecycleStore
+        _incomingSharedCaptureImageData = incomingSharedCaptureImageData
          _viewModel = StateObject(
             wrappedValue: WeeklyScheduleViewModel(
                 eventStore: eventStore,
@@ -204,14 +207,17 @@ struct WeeklyScheduleView: View {
                 get: { isCapturingSchedule },
                 set: { presented in
                     isCapturingSchedule = presented
-                    if !presented { sharedCaptureImageData = nil }
+                    if !presented {
+                        captureImageData = nil
+                        incomingSharedCaptureImageData = nil
+                    }
                  }
              )) {
                 if allowsEditing, let scheduleDraftExtractor, let reminderStore {
                     ScheduleCaptureSheet(
                         extractor: scheduleDraftExtractor,
                         members: viewModel.members,
-                        initialImageData: sharedCaptureImageData,
+                        initialImageData: captureImageData,
                         onSaveEvent: { event, notifyParticipants, idempotencyKey in
                             try await viewModel.addEvent(
                                 event,
@@ -224,12 +230,17 @@ struct WeeklyScheduleView: View {
                  }
              }
              .onReceive(NotificationCenter.default.publisher(for: .sharedScheduleCaptureReceived)) { note in
-                guard allowsEditing,
-                      scheduleDraftExtractor != nil,
-                      reminderStore != nil,
-                      let imageData = note.object as? Data else { return }
-                sharedCaptureImageData = imageData
-                isCapturingSchedule = true
+                guard let imageData = note.object as? Data else { return }
+                presentSharedCapture(imageData)
+             }
+             .onChange(of: incomingSharedCaptureImageData) { imageData in
+                guard let imageData else { return }
+                presentSharedCapture(imageData)
+             }
+             .task {
+                if let imageData = incomingSharedCaptureImageData {
+                    presentSharedCapture(imageData)
+                }
              }
              .sheet(item: $editingOccurrence) { occurrence in
                 AddEventSheet(
@@ -373,6 +384,12 @@ struct WeeklyScheduleView: View {
         if active == 0 { return "Add an alert" }
         return active == 1 ? "1 active alert" : "\(active) active alerts"
      }
+
+    private func presentSharedCapture(_ imageData: Data) {
+        guard allowsEditing, scheduleDraftExtractor != nil, reminderStore != nil else { return }
+        captureImageData = imageData
+        isCapturingSchedule = true
+    }
 
     private func loadConnectionSummaries() async {
         if let calendarSourceStore {
