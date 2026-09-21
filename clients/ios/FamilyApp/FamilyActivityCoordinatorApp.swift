@@ -45,7 +45,7 @@ private actor OccurrenceLifecycleUITestEventStore: EventStore {
                 participantIDs: [], startTime: skippedStart,
                 endTime: skippedStart.addingTimeInterval(3_600), source: .manual,
                 status: .confirmed,
-                recurrence: EventRecurrence(frequency: .daily, interval: 1, endDate: skippedStart),
+                recurrence: EventRecurrence(frequency: .weekly, interval: 1, endDate: skippedStart),
                 recurrenceSeriesID: skippedSeriesID, occurrenceStates: [skippedState]
             ),
             FamilyEvent(
