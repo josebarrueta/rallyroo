@@ -271,6 +271,34 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertFalse(secondLaunch.staticTexts["Must not survive relaunch"].exists)
     }
 
+    func testDeletingRecurringEventFromEditorRequiresOccurrenceScope() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let recurringEvent = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Skipped practice")
+        ).firstMatch
+        XCTAssertTrue(recurringEvent.waitForExistence(timeout: 5))
+        recurringEvent.tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+
+        let delete = app.buttons["Delete"].firstMatch
+        for _ in 0..<4 where !delete.exists { app.swipeUp() }
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+
+        XCTAssertTrue(app.staticTexts["Delete occurrence"].waitForExistence(timeout: 5))
+        let onlyThisOccurrence = app.buttons["Only this occurrence"]
+        XCTAssertTrue(onlyThisOccurrence.exists)
+        XCTAssertTrue(app.buttons["This weekday and future occurrences"].exists)
+        XCTAssertTrue(app.buttons["All future occurrences"].exists)
+        onlyThisOccurrence.tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Edit Event"].exists)
+    }
+
     func testOccurrenceRowsShowStateAndOfferLifecycleActions() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"] = "1"

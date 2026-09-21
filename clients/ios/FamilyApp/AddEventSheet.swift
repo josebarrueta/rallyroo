@@ -5,6 +5,7 @@ struct AddEventSheet: View {
     let onSave: (FamilyEvent, Bool, UUID) async throws -> EventMutationResult
     let onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)?
     let onDelete: ((FamilyEvent, UUID) async throws -> Void)?
+    let onDeleteOccurrence: ((OccurrenceScope) async -> Bool)?
     let onPlanTravel: (() -> Void)?
     let members: [FamilyMember]
 
@@ -35,6 +36,7 @@ struct AddEventSheet: View {
     @State private var dismissAfterAlert = false
     @State private var isShowingAlert = false
     @State private var isShowingDeleteConfirmation = false
+    @State private var isShowingDeleteScopePrompt = false
     @State private var isShowingNotifyPrompt = false
     @State private var isShowingEditScopePrompt = false
     @State private var selectedEditScope: EventEditScope?
@@ -54,6 +56,7 @@ struct AddEventSheet: View {
         onSave: @escaping (FamilyEvent, Bool, UUID) async throws -> EventMutationResult,
         onSaveRecurring: ((RecurringEventEdit, Bool, UUID) async throws -> EventMutationResult)? = nil,
         onDelete: ((FamilyEvent, UUID) async throws -> Void)? = nil,
+        onDeleteOccurrence: ((OccurrenceScope) async -> Bool)? = nil,
         onPlanTravel: (() -> Void)? = nil
     ) {
         existingEvent = event
@@ -64,6 +67,7 @@ struct AddEventSheet: View {
         self.onSave = onSave
         self.onSaveRecurring = onSaveRecurring
         self.onDelete = onDelete
+        self.onDeleteOccurrence = onDeleteOccurrence
         self.onPlanTravel = onPlanTravel
         self.members = members
         self.locationSearch = locationSearch
@@ -336,7 +340,11 @@ struct AddEventSheet: View {
                 if existingEvent != nil, onDelete != nil {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Delete", role: .destructive) {
-                            isShowingDeleteConfirmation = true
+                            if recurringSource != nil, onDeleteOccurrence != nil {
+                                isShowingDeleteScopePrompt = true
+                            } else {
+                                isShowingDeleteConfirmation = true
+                            }
                         }
                     }
                 }
@@ -378,6 +386,11 @@ struct AddEventSheet: View {
             } message: {
                 Text("Past occurrences will remain unchanged.")
             }
+            .modifier(RecurringDeleteScopeDialog(
+                isPresented: $isShowingDeleteScopePrompt,
+                supportsWeekdayScope: supportsWeekdayScope,
+                onDelete: { deleteOccurrence(scope: $0) }
+            ))
             .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
                 Button("Yes, notify") {
                     save(notifyParticipants: true)
@@ -469,6 +482,21 @@ struct AddEventSheet: View {
                 isShowingAlert = true
             } catch {
                 alertMessage = "The event could not be saved."
+                dismissAfterAlert = false
+                isShowingAlert = true
+            }
+        }
+    }
+
+    private func deleteOccurrence(scope: OccurrenceScope) {
+        guard let onDeleteOccurrence else { return }
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            if await onDeleteOccurrence(scope) {
+                dismiss()
+            } else {
+                alertMessage = "The occurrence could not be deleted."
                 dismissAfterAlert = false
                 isShowingAlert = true
             }
@@ -578,6 +606,35 @@ struct AddEventSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+}
+
+private struct RecurringDeleteScopeDialog: ViewModifier {
+    @Binding var isPresented: Bool
+    let supportsWeekdayScope: Bool
+    let onDelete: (OccurrenceScope) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Delete occurrence",
+            isPresented: $isPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Only this occurrence", role: .destructive) {
+                onDelete(.thisOccurrence)
+            }
+            if supportsWeekdayScope {
+                Button("This weekday and future occurrences", role: .destructive) {
+                    onDelete(.thisWeekdayFuture)
+                }
+            }
+            Button("All future occurrences", role: .destructive) {
+                onDelete(.allFuture)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Past occurrences will remain unchanged.")
+        }
     }
 }
 

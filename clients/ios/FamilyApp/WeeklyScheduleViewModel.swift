@@ -156,8 +156,8 @@ final class WeeklyScheduleViewModel: ObservableObject {
      func deleteOccurrence(
          _ occurrence: EventOccurrence,
          scope: OccurrenceScope = .thisOccurrence
-     ) async {
-        guard let store = occurrenceLifecycleStore else { return }
+     ) async -> Bool {
+        guard let store = occurrenceLifecycleStore else { return false }
         let reference = OccurrenceReference(
             kind: .event,
             seriesID: occurrence.sourceSeriesID,
@@ -166,8 +166,10 @@ final class WeeklyScheduleViewModel: ObservableObject {
         do {
             _ = try await store.delete(reference, scope: scope)
             await reload()
+            return true
         } catch {
             errorMessage = "Could not delete occurrence."
+            return false
         }
      }
 

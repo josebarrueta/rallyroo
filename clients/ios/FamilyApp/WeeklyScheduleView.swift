@@ -275,6 +275,9 @@ struct WeeklyScheduleView: View {
                             idempotencyKey: idempotencyKey
                          )
                      },
+                    onDeleteOccurrence: occurrenceLifecycleStore == nil ? nil : { scope in
+                        await viewModel.deleteOccurrence(occurrence, scope: scope)
+                     },
                     onPlanTravel: travelPlanningStore == nil ? nil : {
                         travelEvent = occurrence.sourceEvent
                      }
