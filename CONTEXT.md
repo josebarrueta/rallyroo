@@ -136,6 +136,38 @@ _Avoid_: Live departure, commute subscription
 The independently reported freshness and availability of Commuter's static catalog and real-time feeds. A recent failed attempt is degraded; an expired last success is stale. Provider failure must not silently disable an installation or erase its last-good static catalog.
 _Avoid_: Installation status, subscription status
 
+**Day brief**:
+A private, Member-specific start-of-day summary of schedule facts visible to that Member, including relevant Events, driving responsibilities, travel guidance, conflicts, and assigned Reminders. AI may explain or prioritize verified facts but cannot create facts or broaden calendar visibility.
+_Avoid_: Family-wide digest, schedule source, AI-authored schedule
+
+**Shopping routine**:
+A Family shopping cadence associated with one store, such as a Costco trip every two weeks. It organizes trip planning without becoming an Event unless a parent separately schedules one.
+_Avoid_: Recurrence series, Event, shopping trip
+
+**Pantry item**:
+A Family-owned grocery or household good whose replenishment need may be tracked across shopping routines.
+_Avoid_: Shopping list entry, exact inventory count
+
+**Stock observation**:
+Timestamped evidence that a Pantry item is enough, low, out, or at an optionally known quantity. It becomes less reliable as it ages and is not silently treated as current inventory.
+_Avoid_: Purchase record, prediction
+
+**Replenishment policy**:
+The Family's expectation for when and where a Pantry item should be reconsidered, based on criticality, normal duration, and optional minimum or target quantity.
+_Avoid_: Purchase history, automatic order
+
+**Shopping trip plan**:
+A proposal for one occurrence of a Shopping routine that separates items to buy, check at home, or skip, with the evidence behind each recommendation. A parent finalizes it before shopping.
+_Avoid_: Shopping routine, authoritative inventory
+
+**Shopping list entry**:
+An explicit Family request or parent-approved decision about an item for a Shopping trip plan, including its buy, check, skipped, or purchased state.
+_Avoid_: Pantry item, AI recommendation
+
+**Purchase record**:
+Timestamped evidence that a Pantry item was purchased at a store, with optional quantity and price. It informs replenishment without proving how much remains.
+_Avoid_: Stock observation, receipt image
+
 ## Live Train Positions
 
 Caltrain GTFS-RT Vehicle Positions provide real-time GPS coordinates for active trains. The server refreshes these positions periodically and caches them. The `GET /v1/modules/commuter/live-trains` endpoint returns the latest cached positions to authorized clients.
