@@ -8,6 +8,7 @@ import Fastify, {
 import { z } from "zod";
 import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
 import type { CalendarSourceModule } from "./calendar-source-module.js";
+import type { DayBriefPersistence } from "./day-brief.js";
 import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
 import { EventMutationError, EventMutationModule } from "./event-mutation.js";
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
@@ -235,6 +236,27 @@ const commuterSubscriptionStatusSchema = z.object({
 });
 const commuterSubscriptionIDSchema = z.string().uuid();
 
+const dayBriefTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const dayBriefPreferencesSchema = z.object({
+  enabled: z.boolean(),
+  timeZone: z.string().min(1).max(100).refine((timeZone) => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone }).format();
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+  weekdayTime: dayBriefTimeSchema,
+  weekendHolidayTime: dayBriefTimeSchema,
+  earlyEventLeadMinutes: z.number().int().min(0).max(240),
+  holidayRegion: z.string().trim().min(2).max(10).transform((value) => value.toUpperCase()),
+});
+const dayBriefDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().startsWith(value);
+});
+
 const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
   url: z.string()
@@ -263,6 +285,7 @@ interface Dependencies {
   metrics?: RallyrooMetrics;
   notificationCenter?: NotificationCenterModule;
   travelPlanning?: TravelPlanningModule;
+  dayBriefs?: DayBriefPersistence;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -281,6 +304,7 @@ export function buildApp({
   metrics = new RallyrooMetrics(),
   notificationCenter,
   travelPlanning,
+  dayBriefs,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -468,6 +492,41 @@ export function buildApp({
     await identityProvider.deleteIdentity(account.identitySubject);
     await repository.deleteAccount(account.identitySubject);
     return reply.code(204).send();
+  });
+
+  app.get("/v1/day-brief/preferences", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!dayBriefs) return reply.code(503).send({ error: "day_brief_unavailable" });
+    const preferences = await dayBriefs.preferences(account.familyID, account.memberID);
+    return preferences ?? reply.code(404).send({ error: "day_brief_preferences_not_found" });
+  });
+
+  app.put("/v1/day-brief/preferences", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!dayBriefs) return reply.code(503).send({ error: "day_brief_unavailable" });
+    const parsed = dayBriefPreferencesSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_day_brief_preferences" });
+    const preferences = {
+      familyID: account.familyID,
+      memberID: account.memberID,
+      ...parsed.data,
+    };
+    await dayBriefs.savePreferences(preferences);
+    return preferences;
+  });
+
+  app.get("/v1/day-briefs/:localDate", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!dayBriefs) return reply.code(503).send({ error: "day_brief_unavailable" });
+    const parsed = dayBriefDateSchema.safeParse(
+      (request.params as { localDate: string }).localDate,
+    );
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_day_brief_date" });
+    const brief = await dayBriefs.dayBrief(account.familyID, account.memberID, parsed.data);
+    return brief ?? reply.code(404).send({ error: "day_brief_not_found" });
   });
 
   app.post("/v1/invitations", {

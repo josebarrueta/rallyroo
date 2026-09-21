@@ -34,6 +34,20 @@ final class NotificationInboxStoreTests: XCTestCase {
         XCTAssertEqual(requests[2].url.path, "/v1/notifications/\(id.uuidString)")
     }
 
+    func testDayBriefNotificationDecodesWithoutInvalidatingInbox() throws {
+        let data = Data("""
+        [{"id":"ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC127","kind":"day_brief","title":"Your Monday","body":"Two drives today.","destination":{"kind":"day_brief","id":"2026-10-05"},"occurredAt":"2026-10-05T14:00:00Z","readAt":null}]
+        """.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let records = try decoder.decode([InboxNotification].self, from: data)
+
+        XCTAssertEqual(records.first?.kind, .dayBrief)
+        XCTAssertEqual(records.first?.destination.kind, .dayBrief)
+        XCTAssertEqual(records.first?.destination.id, "2026-10-05")
+    }
+
     func testLocalInboxPersistsReadAndDeleteState() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let url = directory.appendingPathComponent("inbox.json")

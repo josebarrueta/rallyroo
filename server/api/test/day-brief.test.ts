@@ -56,6 +56,7 @@ function repository(overrides: {
   occurrenceStates?: ScheduleOccurrenceState[];
   preferences?: DayBriefPreferences[];
   saveDayBriefIfAbsent?: (record: DayBriefRecord) => Promise<boolean>;
+  dayBrief?: (familyID: string, memberID: string, localDate: string) => Promise<DayBriefRecord | null>;
 } = {}): DayBriefRepository {
   const familyEvents = overrides.familyEvents ?? [
     event({
@@ -102,6 +103,9 @@ function repository(overrides: {
     async enabledPreferences() { return overrides.preferences ?? []; },
     async saveDayBriefIfAbsent(record) {
       return overrides.saveDayBriefIfAbsent?.(record) ?? true;
+    },
+    async dayBrief(familyID, memberID, localDate) {
+      return overrides.dayBrief?.(familyID, memberID, localDate) ?? null;
     },
   };
 }
@@ -258,7 +262,7 @@ describe("DayBriefModule.dispatchDue", () => {
     }]);
 
     expect(await module.dispatchDue(new Date("2026-10-05T07:01:00.000Z")))
-      .toEqual({ evaluated: 1, recorded: 0, failed: 0 });
+      .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(await notifications.list(account)).toHaveLength(1);
   });
 
@@ -272,6 +276,13 @@ describe("DayBriefModule.dispatchDue", () => {
       endTime: "2026-10-05T07:30:00.000Z",
       driverMemberID: "parent",
     });
+    let narrationCount = 0;
+    const narrator: DayBriefNarrator = {
+      async narrate(input) {
+        narrationCount += 1;
+        return { title: input.deterministicTitle, body: input.deterministicBody };
+      },
+    };
     const module = new DayBriefModule(repository({
       familyEvents: [earlyEvent],
       importedEvents: [],
@@ -286,12 +297,14 @@ describe("DayBriefModule.dispatchDue", () => {
         earlyEventLeadMinutes: 60,
         holidayRegion: "US",
       }],
-    }), notifications);
+    }), notifications, narrator);
 
     expect(await module.dispatchDue(new Date("2026-10-05T05:29:00.000Z")))
       .toEqual({ evaluated: 0, recorded: 0, failed: 0 });
+    expect(narrationCount).toBe(0);
     expect(await module.dispatchDue(new Date("2026-10-05T05:30:00.000Z")))
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
+    expect(narrationCount).toBe(1);
     expect(await notifications.list(account)).toMatchObject([{
       body: "6:30 AM Early practice (you drive).",
     }]);

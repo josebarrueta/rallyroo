@@ -66,7 +66,11 @@ final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcu
               let rawKind = data["notificationKind"] as? String,
               let kind = InboxNotificationKind(rawValue: rawKind) else { return }
         let destination: InboxNotificationDestination?
-        if let eventID = data["eventID"] as? String {
+        if let rawKind = data["destinationKind"] as? String,
+           let kind = InboxNotificationDestination.Kind(rawValue: rawKind),
+           let id = data["destinationID"] as? String {
+            destination = .init(kind: kind, id: id)
+        } else if let eventID = data["eventID"] as? String {
             let occStart: Date? = { if let s = data["occurrenceStart"] as? String { return ISO8601DateFormatter().date(from: s) }; return nil }()
             destination = .init(kind: .event, id: eventID, occurrenceStart: occStart)
         } else if let reminderID = data["reminderID"] as? String {

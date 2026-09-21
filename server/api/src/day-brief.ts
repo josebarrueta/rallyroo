@@ -24,6 +24,14 @@ export interface DayBriefRecord extends DayBrief {
   generatedAt: string;
 }
 
+export interface DayBriefPersistence {
+  preferences(familyID: string, memberID: string): Promise<DayBriefPreferences | null>;
+  savePreferences(preferences: DayBriefPreferences): Promise<void>;
+  enabledPreferences(limit: number): Promise<DayBriefPreferences[]>;
+  saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean>;
+  dayBrief(familyID: string, memberID: string, localDate: string): Promise<DayBriefRecord | null>;
+}
+
 export interface DayBriefRepository {
   eventsForFamily(familyID: string): Promise<FamilyEvent[]>;
   importedEventsForMember(familyID: string, memberID: string): Promise<FamilyEvent[]>;
@@ -31,6 +39,7 @@ export interface DayBriefRepository {
   occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]>;
   enabledPreferences(limit: number): Promise<DayBriefPreferences[]>;
   saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean>;
+  dayBrief(familyID: string, memberID: string, localDate: string): Promise<DayBriefRecord | null>;
 }
 
 export type DayBriefEventRole = "driver" | "participant" | "personal_calendar";
@@ -88,6 +97,15 @@ export class DayBriefModule {
   ) {}
 
   async generate(account: Account, localDate: string, timeZone: string): Promise<DayBrief> {
+    return this.buildBrief(account, localDate, timeZone, true);
+  }
+
+  private async buildBrief(
+    account: Account,
+    localDate: string,
+    timeZone: string,
+    allowNarration: boolean,
+  ): Promise<DayBrief> {
     const [familyEvents, importedEvents, familyReminders, occurrenceStates] = await Promise.all([
       this.repository.eventsForFamily(account.familyID),
       this.repository.importedEventsForMember(account.familyID, account.memberID),
@@ -140,25 +158,8 @@ export class DayBriefModule {
       .filter(Boolean)
       .join(" ");
 
-    const facts = { events, reminders };
-    if (this.narrator) {
-      try {
-        const narrative = await this.narrator.narrate({
-          localDate,
-          timeZone,
-          facts,
-          deterministicTitle: title,
-          deterministicBody: body,
-        });
-        if (narrative.title.trim().length > 0 && narrative.title.length <= 300
-          && narrative.body.trim().length > 0 && narrative.body.length <= 1_000) {
-          return { localDate, timeZone, facts, title: narrative.title, body: narrative.body };
-        }
-      } catch {
-        // The verified deterministic brief remains useful when AI is unavailable or invalid.
-      }
-    }
-    return { localDate, timeZone, facts, title, body };
+    const brief = { localDate, timeZone, facts: { events, reminders }, title, body };
+    return allowNarration ? this.narrate(brief) : brief;
   }
 
   async dispatchDue(now = new Date(), limit = 100): Promise<DayBriefDispatchResult> {
@@ -183,10 +184,12 @@ export class DayBriefModule {
         role: "parent",
       };
       try {
-        const brief = await this.generate(account, localDate, preference.timeZone);
+        const preliminaryBrief = await this.buildBrief(
+          account, localDate, preference.timeZone, false,
+        );
         const baselineMinute = minuteOfDay(baseline);
-        const firstEventMinute = brief.facts.events.length > 0
-          ? minuteForInstant(brief.facts.events[0]!.startTime, preference.timeZone)
+        const firstEventMinute = preliminaryBrief.facts.events.length > 0
+          ? minuteForInstant(preliminaryBrief.facts.events[0]!.startTime, preference.timeZone)
           : Number.POSITIVE_INFINITY;
         const triggerMinute = Math.min(
           baselineMinute,
@@ -194,13 +197,25 @@ export class DayBriefModule {
         );
         if (local.hour * 60 + local.minute < triggerMinute) continue;
         result.evaluated += 1;
-        const inserted = await this.repository.saveDayBriefIfAbsent({
-          ...brief,
-          familyID: preference.familyID,
-          memberID: preference.memberID,
-          generatedAt: now.toISOString(),
-        });
-        if (!inserted) continue;
+        const existing = await this.repository.dayBrief(
+          preference.familyID, preference.memberID, localDate,
+        );
+        let brief: DayBrief = existing ?? (this.narrator
+          ? await this.narrate(preliminaryBrief)
+          : preliminaryBrief);
+        if (!existing) {
+          const inserted = await this.repository.saveDayBriefIfAbsent({
+            ...brief,
+            familyID: preference.familyID,
+            memberID: preference.memberID,
+            generatedAt: now.toISOString(),
+          });
+          if (!inserted) {
+            brief = await this.repository.dayBrief(
+              preference.familyID, preference.memberID, localDate,
+            ) ?? brief;
+          }
+        }
         const records = await this.notificationCenter.record({
           familyID: preference.familyID,
           recipientMemberIDs: [preference.memberID],
@@ -217,6 +232,26 @@ export class DayBriefModule {
       }
     }
     return result;
+  }
+
+  private async narrate(brief: DayBrief): Promise<DayBrief> {
+    if (!this.narrator) return brief;
+    try {
+      const narrative = await this.narrator.narrate({
+        localDate: brief.localDate,
+        timeZone: brief.timeZone,
+        facts: brief.facts,
+        deterministicTitle: brief.title,
+        deterministicBody: brief.body,
+      });
+      if (narrative.title.trim().length > 0 && narrative.title.length <= 300
+        && narrative.body.trim().length > 0 && narrative.body.length <= 1_000) {
+        return { ...brief, title: narrative.title, body: narrative.body };
+      }
+    } catch {
+      // The verified deterministic brief remains useful when AI is unavailable or invalid.
+    }
+    return brief;
   }
 }
 
@@ -303,14 +338,51 @@ function twoDigits(value: number): string {
 
 function isPublicHoliday(localDate: string, region: string): boolean {
   if (region.toUpperCase() !== "US") return false;
-  const [year, month, day] = localDate.split("-").map(Number);
-  if (!year || !month || !day) return false;
-  if (month === 11) {
-    const firstWeekday = new Date(Date.UTC(year, 10, 1)).getUTCDay();
-    const firstThursday = 1 + ((4 - firstWeekday + 7) % 7);
-    return day === firstThursday + 21;
-  }
-  return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const target = Date.UTC(year, month - 1, day);
+  const parsed = new Date(target);
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1
+    || parsed.getUTCDate() !== day) return false;
+  const weekday = (instant: number) => new Date(instant).getUTCDay();
+  const observed = (instant: number) => {
+    const dayOfWeek = weekday(instant);
+    if (dayOfWeek === 6) return instant - 24 * 60 * 60 * 1_000;
+    if (dayOfWeek === 0) return instant + 24 * 60 * 60 * 1_000;
+    return instant;
+  };
+  const nthWeekday = (candidateYear: number, candidateMonth: number, dayOfWeek: number, nth: number) => {
+    const first = weekday(Date.UTC(candidateYear, candidateMonth - 1, 1));
+    return Date.UTC(
+      candidateYear,
+      candidateMonth - 1,
+      1 + ((dayOfWeek - first + 7) % 7) + (nth - 1) * 7,
+    );
+  };
+  const lastWeekday = (candidateYear: number, candidateMonth: number, dayOfWeek: number) => {
+    const lastDay = new Date(Date.UTC(candidateYear, candidateMonth, 0)).getUTCDate();
+    const lastDayWeekday = weekday(Date.UTC(candidateYear, candidateMonth - 1, lastDay));
+    return Date.UTC(
+      candidateYear,
+      candidateMonth - 1,
+      lastDay - ((lastDayWeekday - dayOfWeek + 7) % 7),
+    );
+  };
+  const fixed = [
+    Date.UTC(year, 0, 1), Date.UTC(year, 5, 19), Date.UTC(year, 6, 4),
+    Date.UTC(year, 10, 11), Date.UTC(year, 11, 25),
+    Date.UTC(year + 1, 0, 1),
+  ];
+  const moving = [
+    nthWeekday(year, 1, 1, 3), nthWeekday(year, 2, 1, 3),
+    lastWeekday(year, 5, 1), nthWeekday(year, 9, 1, 1),
+    nthWeekday(year, 10, 1, 2), nthWeekday(year, 11, 4, 4),
+  ];
+  return fixed.some((holiday) => observed(holiday) === target)
+    || moving.includes(target);
 }
 
 function minuteOfDay(time: string): number {

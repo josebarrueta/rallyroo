@@ -3,6 +3,8 @@ import { APNSPushNotificationProvider } from "./apns-push-notification-provider.
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
+import { DayBriefModule } from "./day-brief.js";
+import { RallyrooDayBriefRepository } from "./day-brief-repository.js";
 import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
@@ -24,6 +26,7 @@ import {
 } from "./location-search-provider.js";
 import { RallyrooMetrics } from "./metrics.js";
 import { OllamaScheduleDraftExtractor } from "./ollama-schedule-draft-extractor.js";
+import { OllamaDayBriefNarrator } from "./ollama-day-brief-narrator.js";
 import { GoogleRoutingProvider } from "./google-routing-provider.js";
 import { PostgresRallyrooRepository } from "./postgres-repository.js";
 import { NoopPushNotificationProvider } from "./push-notification-provider.js";
@@ -111,15 +114,28 @@ const ollamaAccessClientSecret = configuredSecret("OLLAMA_CF_ACCESS_CLIENT_SECRE
 if (Boolean(ollamaAccessClientID) !== Boolean(ollamaAccessClientSecret)) {
   throw new Error("OLLAMA_CF_ACCESS_CLIENT_ID and OLLAMA_CF_ACCESS_CLIENT_SECRET must be configured together");
 }
-const scheduleDraftExtractor = process.env.OLLAMA_BASE_URL
-  ? new OllamaScheduleDraftExtractor({
+const ollamaConfiguration = process.env.OLLAMA_BASE_URL
+  ? {
     baseURL: new URL(process.env.OLLAMA_BASE_URL),
     model: process.env.OLLAMA_MODEL ?? "qwen3.8:27b-mlx",
     ...(ollamaAccessClientID && ollamaAccessClientSecret
       ? { access: { clientId: ollamaAccessClientID, clientSecret: ollamaAccessClientSecret } }
       : {}),
-  })
+  }
   : undefined;
+const scheduleDraftExtractor = ollamaConfiguration
+  ? new OllamaScheduleDraftExtractor(ollamaConfiguration)
+  : undefined;
+const dayBriefRepository = new RallyrooDayBriefRepository(
+  repository,
+  repository,
+  calendarSources,
+);
+const dayBriefs = new DayBriefModule(
+  dayBriefRepository,
+  notificationCenter,
+  ollamaConfiguration ? new OllamaDayBriefNarrator(ollamaConfiguration) : undefined,
+);
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM
   ? new ResendInvitationEmailSender({
     apiKey: resendAPIKey,
@@ -164,6 +180,7 @@ const app = buildApp({
   metrics,
   notificationCenter,
   travelPlanning,
+  dayBriefs: dayBriefRepository,
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),
@@ -212,6 +229,9 @@ const notificationDispatchInterval = setInterval(async () => {
       { name: "Reminder notification", operation: reminderNotificationDispatcher.dispatchDue() },
       { name: "Event notification", operation: eventNotificationDispatcher.dispatchDue() },
       { name: "Schedule update notification", operation: scheduleUpdateNotificationDispatcher.dispatchDue() },
+      { name: "Day brief", operation: dayBriefs.dispatchDue().then((result) => {
+        if (result.failed > 0) app.log.warn({ failed: result.failed }, "Day brief generation failed");
+      }) },
       ...(leaveAlertDispatcher
         ? [{
           name: "Leave alert",
@@ -347,6 +367,9 @@ void eventNotificationDispatcher.dispatchDue().catch((error) => {
 });
 void scheduleUpdateNotificationDispatcher.dispatchDue().catch((error) => {
   app.log.error({ error }, "Initial schedule update notification dispatch failed");
+});
+void dayBriefs.dispatchDue().catch((error) => {
+  app.log.error({ error }, "Initial Day brief dispatch failed");
 });
 if (commuterAlertDispatcher) {
   void commuterAlertDispatcher.dispatchDue().catch((error) => {
