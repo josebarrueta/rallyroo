@@ -386,26 +386,11 @@ struct AddEventSheet: View {
             } message: {
                 Text("Past occurrences will remain unchanged.")
             }
-            .confirmationDialog(
-                "Delete occurrence",
+            .modifier(RecurringDeleteScopeDialog(
                 isPresented: $isShowingDeleteScopePrompt,
-                titleVisibility: .visible
-            ) {
-                Button("Only this occurrence", role: .destructive) {
-                    deleteOccurrence(scope: .thisOccurrence)
-                }
-                if supportsWeekdayScope {
-                    Button("This weekday and future occurrences", role: .destructive) {
-                        deleteOccurrence(scope: .thisWeekdayFuture)
-                    }
-                }
-                Button("All future occurrences", role: .destructive) {
-                    deleteOccurrence(scope: .allFuture)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Past occurrences will remain unchanged.")
-            }
+                supportsWeekdayScope: supportsWeekdayScope,
+                onDelete: { deleteOccurrence(scope: $0) }
+            ))
             .alert("Notify family?", isPresented: $isShowingNotifyPrompt) {
                 Button("Yes, notify") {
                     save(notifyParticipants: true)
@@ -621,6 +606,35 @@ struct AddEventSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+}
+
+private struct RecurringDeleteScopeDialog: ViewModifier {
+    @Binding var isPresented: Bool
+    let supportsWeekdayScope: Bool
+    let onDelete: (OccurrenceScope) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            "Delete occurrence",
+            isPresented: $isPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Only this occurrence", role: .destructive) {
+                onDelete(.thisOccurrence)
+            }
+            if supportsWeekdayScope {
+                Button("This weekday and future occurrences", role: .destructive) {
+                    onDelete(.thisWeekdayFuture)
+                }
+            }
+            Button("All future occurrences", role: .destructive) {
+                onDelete(.allFuture)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Past occurrences will remain unchanged.")
+        }
     }
 }
 
