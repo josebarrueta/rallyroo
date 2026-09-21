@@ -9,10 +9,11 @@ export type NotificationKind =
   | "commute_disruption"
   | "driver_assignment"
   | "saved_conflict"
-  | "leave_time";
+  | "leave_time"
+  | "day_brief";
 
 export type NotificationDestination = {
-  kind: "event" | "reminder" | "commute_subscription" | "settings";
+  kind: "event" | "reminder" | "commute_subscription" | "settings" | "day_brief";
   id: string;
 };
 
