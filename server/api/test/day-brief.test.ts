@@ -183,6 +183,37 @@ describe("DayBriefModule.generate", () => {
     );
   });
 
+  it("uses stable occurrence identity when a modified occurrence is later skipped", async () => {
+    const override = event({
+      id: "override-event",
+      title: "Moved practice",
+      startTime: "2026-10-12T17:00:00.000Z",
+      endTime: "2026-10-12T18:00:00.000Z",
+      driverMemberID: "parent",
+      recurrenceSeriesID: "weekly-drive",
+    });
+    const brief = await new DayBriefModule(repository({
+      familyEvents: [override],
+      importedEvents: [],
+      reminders: [],
+      occurrenceStates: [{
+        familyID: "family",
+        reference: {
+          kind: "event",
+          seriesID: "weekly-drive",
+          scheduledAt: "2026-10-12T15:00:00.000Z",
+        },
+        disposition: "skipped",
+        acknowledgedMemberIDs: [],
+        overrideEntityID: "override-event",
+        completedAt: null,
+        completedByMemberID: null,
+      }],
+    })).generate(account, "2026-10-12", "America/Los_Angeles");
+
+    expect(brief.facts.events).toEqual([]);
+  });
+
   it("does not recreate a skipped recurring Event occurrence in the brief", async () => {
     const recurring = event({
       id: "weekly-drive",

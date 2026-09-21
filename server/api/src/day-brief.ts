@@ -120,6 +120,7 @@ export class DayBriefModule {
         if (event.participantIDs.includes(account.memberID)) roles.push("participant");
         if (roles.length === 0) return [];
         return eventFactsForDay(event, roles, localDate, timeZone)
+          .map((fact) => stableOccurrenceFact(event, fact, occurrenceStates))
           .filter((fact) => occurrenceIsScheduled(event, fact.scheduledAt, occurrenceStates));
       }),
       ...importedEvents
@@ -253,6 +254,18 @@ export class DayBriefModule {
     }
     return brief;
   }
+}
+
+function stableOccurrenceFact(
+  event: FamilyEvent,
+  fact: DayBriefEventFact,
+  states: ScheduleOccurrenceState[],
+): DayBriefEventFact {
+  const seriesID = (event.recurrenceSeriesID ?? event.id).toLowerCase();
+  const override = states.find((state) => state.reference.kind === "event"
+    && state.reference.seriesID.toLowerCase() === seriesID
+    && state.overrideEntityID?.toLowerCase() === event.id.toLowerCase());
+  return override ? { ...fact, scheduledAt: override.reference.scheduledAt } : fact;
 }
 
 function occurrenceIsScheduled(
