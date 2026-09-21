@@ -107,6 +107,57 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     await adminPool.end();
   });
 
+  it("persists private Day brief preferences and encrypted idempotent briefs", async () => {
+    const repository = repositoryForTest();
+    const account = await repository.provisionParentAccount("day-brief-parent", "Day Brief Parent");
+    await repository.savePreferences({
+      familyID: account.familyID,
+      memberID: account.memberID,
+      enabled: true,
+      timeZone: "America/Los_Angeles",
+      weekdayTime: "07:00",
+      weekendHolidayTime: "08:30",
+      earlyEventLeadMinutes: 60,
+      holidayRegion: "US",
+    });
+    expect(await repository.preferences(account.familyID, account.memberID)).toMatchObject({
+      weekdayTime: "07:00",
+      weekendHolidayTime: "08:30",
+      holidayRegion: "US",
+    });
+
+    const record = {
+      familyID: account.familyID,
+      memberID: account.memberID,
+      localDate: "2026-10-05",
+      timeZone: "America/Los_Angeles",
+      facts: { events: [], reminders: [] },
+      title: "Private Day title",
+      body: "Private Day details",
+      generatedAt: "2026-10-05T14:00:00.000Z",
+    };
+    const insertions = await Promise.all([
+      repository.saveDayBriefIfAbsent(record),
+      repository.saveDayBriefIfAbsent(record),
+    ]);
+    expect(insertions.sort()).toEqual([false, true]);
+    expect(await repository.dayBrief(account.familyID, account.memberID, record.localDate))
+      .toEqual(record);
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const stored = await inspection.query<{ details_ciphertext: string }>(
+        `SELECT details_ciphertext FROM day_briefs
+         WHERE family_id = $1 AND member_id = $2`,
+        [account.familyID, account.memberID],
+      );
+      expect(stored.rows[0]!.details_ciphertext).toMatch(/^rr1\./);
+      expect(stored.rows[0]!.details_ciphertext).not.toContain("Private Day");
+    } finally {
+      await inspection.end();
+    }
+  });
+
   it("atomically persists the last-good static Caltrain schedule", async () => {
     const repository = repositoryForTest();
     const snapshot: CaltrainStaticScheduleSnapshot = {

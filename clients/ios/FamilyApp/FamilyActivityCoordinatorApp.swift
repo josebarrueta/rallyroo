@@ -296,6 +296,7 @@ struct FamilyActivityCoordinatorApp: App {
                        }
                     case .reminder: selectedTab = .reminders
                     case .commuteSubscription, .settings: selectedTab = .settings
+                    case .dayBrief: selectedTab = .alerts
                     }
                 }
             // No global .tint: destructive buttons stay native-red, each

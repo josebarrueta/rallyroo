@@ -14,6 +14,11 @@ import { InMemoryNotificationCenterRepository } from "../src/in-memory-notificat
 import { NotificationCenterModule } from "../src/notification-center.js";
 import { InMemoryTravelPlanningRepository } from "../src/in-memory-travel-planning-repository.js";
 import { TravelPlanningModule } from "../src/travel-planning.js";
+import type {
+  DayBriefPersistence,
+  DayBriefPreferences,
+  DayBriefRecord,
+} from "../src/day-brief.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -127,6 +132,65 @@ function repository() {
 }
 
 describe("Rallyroo API", () => {
+  it("lets a parent configure and retrieve only their private Day brief", async () => {
+    let preferences: DayBriefPreferences | null = null;
+    const brief: DayBriefRecord = {
+      familyID: "family-1",
+      memberID: "parent-1",
+      localDate: "2026-10-05",
+      timeZone: "America/Los_Angeles",
+      facts: { events: [], reminders: [] },
+      title: "Your Monday",
+      body: "No events scheduled.",
+      generatedAt: "2026-10-05T14:00:00.000Z",
+    };
+    const dayBriefs: DayBriefPersistence = {
+      async preferences() { return preferences; },
+      async savePreferences(value) { preferences = value; },
+      async enabledPreferences() { return preferences?.enabled ? [preferences] : []; },
+      async saveDayBriefIfAbsent() { return true; },
+      async dayBrief(familyID, memberID, localDate) {
+        return familyID === brief.familyID && memberID === brief.memberID
+          && localDate === brief.localDate ? brief : null;
+      },
+    };
+    const app = buildApp({ identityProvider, repository: repository(), dayBriefs });
+
+    const update = await app.inject({
+      method: "PUT",
+      url: "/v1/day-brief/preferences",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        enabled: true,
+        timeZone: "America/Los_Angeles",
+        weekdayTime: "07:00",
+        weekendHolidayTime: "08:30",
+        earlyEventLeadMinutes: 60,
+        holidayRegion: "US",
+      },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({ familyID: "family-1", memberID: "parent-1" });
+    expect((await app.inject({
+      method: "GET", url: "/v1/day-brief/preferences",
+      headers: { authorization: "Bearer parent-token" },
+    })).json()).toEqual(update.json());
+    expect((await app.inject({
+      method: "GET", url: "/v1/day-briefs/2026-10-05",
+      headers: { authorization: "Bearer parent-token" },
+    })).json()).toEqual(brief);
+    expect((await app.inject({
+      method: "GET", url: "/v1/day-briefs/2026-10-05",
+      headers: { authorization: "Bearer family-parent-token" },
+    })).statusCode).toBe(404);
+    expect((await app.inject({
+      method: "PUT", url: "/v1/day-brief/preferences",
+      headers: { authorization: "Bearer kid-token" },
+      payload: update.json(),
+    })).statusCode).toBe(403);
+    await app.close();
+  });
+
   it("lists and marks only the authenticated member's inbox records", async () => {
     const notificationCenter = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
     const [record] = await notificationCenter.record({

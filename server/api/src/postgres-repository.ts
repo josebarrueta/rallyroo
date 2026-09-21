@@ -23,6 +23,12 @@ import type {
   EventMutationSnapshot,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
+import type {
+  DayBrief,
+  DayBriefPersistence,
+  DayBriefPreferences,
+  DayBriefRecord,
+} from "./day-brief.js";
 import {
   FamilyDataProtector,
   type FamilyDataKeyStore,
@@ -63,7 +69,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository, DayBriefPersistence {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -2706,6 +2712,108 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     };
   }
 
+  async preferences(familyID: string, memberID: string): Promise<DayBriefPreferences | null> {
+    const result = await this.pool.query<DayBriefPreferencesRow>(
+      `SELECT family_id, member_id, enabled, time_zone,
+              weekday_time::text, weekend_holiday_time::text,
+              early_event_lead_minutes, holiday_region
+       FROM day_brief_preferences
+       WHERE family_id = $1 AND member_id = $2`,
+      [familyID, memberID],
+    );
+    return result.rows[0] ? dayBriefPreferencesFromRow(result.rows[0]) : null;
+  }
+
+  async savePreferences(preferences: DayBriefPreferences): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO day_brief_preferences (
+         family_id, member_id, enabled, time_zone, weekday_time,
+         weekend_holiday_time, early_event_lead_minutes, holiday_region, updated_at
+       ) VALUES ($1, $2, $3, $4, $5::time, $6::time, $7, $8, now())
+       ON CONFLICT (family_id, member_id) DO UPDATE SET
+         enabled = EXCLUDED.enabled,
+         time_zone = EXCLUDED.time_zone,
+         weekday_time = EXCLUDED.weekday_time,
+         weekend_holiday_time = EXCLUDED.weekend_holiday_time,
+         early_event_lead_minutes = EXCLUDED.early_event_lead_minutes,
+         holiday_region = EXCLUDED.holiday_region,
+         updated_at = now()`,
+      [
+        preferences.familyID,
+        preferences.memberID,
+        preferences.enabled,
+        preferences.timeZone,
+        preferences.weekdayTime,
+        preferences.weekendHolidayTime,
+        preferences.earlyEventLeadMinutes,
+        preferences.holidayRegion,
+      ],
+    );
+  }
+
+  async enabledPreferences(limit: number): Promise<DayBriefPreferences[]> {
+    const result = await this.pool.query<DayBriefPreferencesRow>(
+      `SELECT family_id, member_id, enabled, time_zone,
+              weekday_time::text, weekend_holiday_time::text,
+              early_event_lead_minutes, holiday_region
+       FROM day_brief_preferences
+       WHERE enabled
+       ORDER BY family_id, member_id
+       LIMIT $1`,
+      [limit],
+    );
+    return result.rows.map(dayBriefPreferencesFromRow);
+  }
+
+  async saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean> {
+    const details = await this.familyDataProtector.protect(
+      record.familyID,
+      `day-brief:${record.memberID}:${record.localDate}:details`,
+      JSON.stringify({
+        localDate: record.localDate,
+        timeZone: record.timeZone,
+        facts: record.facts,
+        title: record.title,
+        body: record.body,
+      } satisfies DayBrief),
+    );
+    const result = await this.pool.query(
+      `INSERT INTO day_briefs (
+         family_id, member_id, local_date, generated_at, details_ciphertext
+       ) VALUES ($1, $2, $3::date, $4, $5)
+       ON CONFLICT (family_id, member_id, local_date) DO NOTHING`,
+      [record.familyID, record.memberID, record.localDate, record.generatedAt, details],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async dayBrief(
+    familyID: string,
+    memberID: string,
+    localDate: string,
+  ): Promise<DayBriefRecord | null> {
+    const result = await this.pool.query<DayBriefRow>(
+      `SELECT family_id, member_id, local_date::text, generated_at, details_ciphertext
+       FROM day_briefs
+       WHERE family_id = $1 AND member_id = $2 AND local_date = $3::date`,
+      [familyID, memberID, localDate],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const plaintext = await this.familyDataProtector.reveal(
+      row.family_id,
+      `day-brief:${row.member_id}:${row.local_date}:details`,
+      row.details_ciphertext,
+    );
+    const brief = parseDayBrief(plaintext);
+    return {
+      ...brief,
+      familyID: row.family_id,
+      memberID: row.member_id,
+      generatedAt: asISOString(row.generated_at),
+    };
+  }
+
   private async savedPlaceFromRow(row: SavedPlaceRow): Promise<SavedPlace> {
     const details = parseSavedPlaceDetails(await this.familyDataProtector.reveal(
       row.family_id,
@@ -2749,6 +2857,54 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       ? this.familyDataProtector.reveal(familyID, purpose, value)
       : value;
   }
+}
+
+interface DayBriefPreferencesRow {
+  family_id: string;
+  member_id: string;
+  enabled: boolean;
+  time_zone: string;
+  weekday_time: string;
+  weekend_holiday_time: string;
+  early_event_lead_minutes: number;
+  holiday_region: string;
+}
+
+interface DayBriefRow {
+  family_id: string;
+  member_id: string;
+  local_date: string;
+  generated_at: Date | string;
+  details_ciphertext: string;
+}
+
+function dayBriefPreferencesFromRow(row: DayBriefPreferencesRow): DayBriefPreferences {
+  return {
+    familyID: row.family_id,
+    memberID: row.member_id,
+    enabled: row.enabled,
+    timeZone: row.time_zone,
+    weekdayTime: row.weekday_time.slice(0, 5),
+    weekendHolidayTime: row.weekend_holiday_time.slice(0, 5),
+    earlyEventLeadMinutes: row.early_event_lead_minutes,
+    holidayRegion: row.holiday_region,
+  };
+}
+
+function parseDayBrief(value: string): DayBrief {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Day brief");
+  const brief = parsed as Partial<DayBrief>;
+  if (typeof brief.localDate !== "string"
+    || typeof brief.timeZone !== "string"
+    || typeof brief.title !== "string"
+    || typeof brief.body !== "string"
+    || !brief.facts
+    || !Array.isArray(brief.facts.events)
+    || !Array.isArray(brief.facts.reminders)) {
+    throw new Error("Invalid protected Day brief");
+  }
+  return brief as DayBrief;
 }
 
 interface SavedPlaceRow {

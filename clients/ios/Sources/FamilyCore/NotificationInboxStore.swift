@@ -8,6 +8,7 @@ public enum InboxNotificationKind: String, Codable, Sendable {
     case driverAssignment = "driver_assignment"
     case savedConflict = "saved_conflict"
     case leaveTime = "leave_time"
+    case dayBrief = "day_brief"
 }
 
 public struct InboxNotificationDestination: Codable, Equatable, Sendable {
@@ -15,6 +16,7 @@ public struct InboxNotificationDestination: Codable, Equatable, Sendable {
         case event, reminder
         case commuteSubscription = "commute_subscription"
         case settings
+        case dayBrief = "day_brief"
     }
     public let kind: Kind
     public let id: String
