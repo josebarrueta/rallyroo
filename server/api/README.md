@@ -42,6 +42,13 @@ INTEGRATION_DATABASE_URL=postgres://rallyroo:rallyroo@localhost:5432/postgres \
 npm run test:migrations
 ```
 
+When `server/api/.env` contains the non-production 511 test key, verify the current
+provider payloads and decoders without printing the credential or schedule content:
+
+```bash
+npm run test:sf511-live
+```
+
 Migration filenames use one global numeric sequence. Put mandatory,
 backward-compatible rollout changes in `migrations/pre/`. Put optional compatible
 backfills or deferred work in `migrations/post/`; post migrations run only when the
@@ -86,9 +93,11 @@ Caltrain ingestion is one shared backend poll for all Families; it is never sche
 per installation or subscription. Polling is disabled by default. Set
 `CALTRAIN_POLLING_ENABLED=true` only after 511 approves backend fan-out, provide the
 backend-only `SF511_API_KEY`, and configure `CALTRAIN_POLL_INTERVAL_SECONDS`
-(default `120`, minimum `60`) plus `CALTRAIN_POLL_MAX_BACKOFF_SECONDS` (default
-`3600`). A catalog refresh replaces one real-time cycle at most once per day.
-HTTP 429 responses honor bounded `Retry-After`; other failures use bounded
+(default and minimum `60`) plus `CALTRAIN_POLL_MAX_BACKOFF_SECONDS` (default
+`3600`). Vehicle positions refresh every cycle so the public live map remains useful;
+Trip Updates and Service Alerts are additionally fetched while subscribed journeys
+are active. The static catalog refreshes at most once per day. HTTP 429 responses
+honor bounded `Retry-After`; other failures use bounded
 exponential backoff with positive jitter, and a successful cycle restores the
 configured cadence. Provider URLs and credentials are never logged.
 

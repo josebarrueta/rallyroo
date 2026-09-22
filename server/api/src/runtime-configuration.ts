@@ -14,7 +14,7 @@ export function caltrainPollingConfiguration(
   const enabledValue = environment.CALTRAIN_POLLING_ENABLED ?? "false";
   if (enabledValue !== "true" && enabledValue !== "false") invalidCaltrainPollingConfiguration();
   const intervalSeconds = boundedInteger(
-    environment.CALTRAIN_POLL_INTERVAL_SECONDS ?? "120",
+    environment.CALTRAIN_POLL_INTERVAL_SECONDS ?? "60",
     60,
     3_600,
   );

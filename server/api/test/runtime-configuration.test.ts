@@ -33,10 +33,10 @@ describe("configuredSecret", () => {
 });
 
 describe("caltrainPollingConfiguration", () => {
-  it("defaults to disabled polling at a two-minute interval", () => {
+  it("defaults to disabled polling at a one-minute interval", () => {
     expect(caltrainPollingConfiguration({})).toEqual({
       enabled: false,
-      intervalMilliseconds: 120_000,
+      intervalMilliseconds: 60_000,
       maximumBackoffMilliseconds: 3_600_000,
     });
   });

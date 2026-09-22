@@ -5,6 +5,7 @@ import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-sourc
 import { CalendarSourceModule } from "./calendar-source-module.js";
 import { DayBriefModule } from "./day-brief.js";
 import { RallyrooDayBriefRepository } from "./day-brief-repository.js";
+import { runCaltrainFeedCycle } from "./caltrain-feed-cycle.js";
 import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
@@ -302,38 +303,46 @@ if (caltrainPolling.enabled && sf511APIKey) {
       }
 
       const tracking = await commuter.trackingPlan(attemptedAt);
-      if (tracking.pollRealtime) {
-        const realtimeStartedAt = performance.now();
-        const positionsStartedAt = performance.now();
-        const [realtime, positions] = await Promise.allSettled([
-          commutePoller.poll(attemptedAt),
-          vehiclePositionRefresher.refresh(attemptedAt, tracking.trackedJourneyIDs),
-        ]);
-        metrics.observeProvider(
-          "sf511_caltrain_realtime",
-          realtime.status === "fulfilled" ? "success" : "failure",
-          (performance.now() - realtimeStartedAt) / 1_000,
-        );
-        metrics.observeProvider(
-          "sf511_caltrain_positions",
-          positions.status === "fulfilled" ? "success" : "failure",
-          (performance.now() - positionsStartedAt) / 1_000,
-        );
-        if (realtime.status === "rejected") throw realtime.reason;
-        if (positions.status === "rejected") throw positions.reason;
-      }
+      await runCaltrainFeedCycle({
+        refreshPositions: async (at) => {
+          const startedAt = performance.now();
+          try {
+            await vehiclePositionRefresher.refresh(at);
+            metrics.observeProvider(
+              "sf511_caltrain_positions",
+              "success",
+              (performance.now() - startedAt) / 1_000,
+            );
+          } catch (error) {
+            metrics.observeProvider(
+              "sf511_caltrain_positions",
+              "failure",
+              (performance.now() - startedAt) / 1_000,
+            );
+            throw error;
+          }
+        },
+        refreshSubscriptionConditions: async (at) => {
+          const startedAt = performance.now();
+          try {
+            await commutePoller.poll(at);
+            metrics.observeProvider(
+              "sf511_caltrain_realtime",
+              "success",
+              (performance.now() - startedAt) / 1_000,
+            );
+          } catch (error) {
+            metrics.observeProvider(
+              "sf511_caltrain_realtime",
+              "failure",
+              (performance.now() - startedAt) / 1_000,
+            );
+            throw error;
+          }
+        },
+      }, tracking, attemptedAt);
 
-      const nextWakeAt = tracking.nextWakeAt === null ? undefined : new Date(tracking.nextWakeAt);
-      const nextDelayMilliseconds = tracking.pollRealtime
-        ? caltrainPolling.intervalMilliseconds
-        : Math.max(
-          1_000,
-          Math.min(
-            nextWakeAt ? nextWakeAt.getTime() - attemptedAt.getTime() : 6 * 60 * 60 * 1_000,
-            nextCatalogRefreshAtMilliseconds - attemptedAt.getTime(),
-          ),
-        );
-      return { nextDelayMilliseconds };
+      return { nextDelayMilliseconds: caltrainPolling.intervalMilliseconds };
     },
     onFailure: ({ throttled, nextAttemptInSeconds }) => {
       app.log.warn({ throttled, nextAttemptInSeconds }, "Caltrain polling deferred");
