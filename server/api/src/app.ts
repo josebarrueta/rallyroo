@@ -10,6 +10,7 @@ import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domai
 import type { CalendarSourceModule } from "./calendar-source-module.js";
 import type { DayBriefPersistence } from "./day-brief.js";
 import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
+import type { CaltrainLiveRefreshOperations } from "./caltrain-live-refresh.js";
 import { EventMutationError, EventMutationModule } from "./event-mutation.js";
 import { ScheduleUpdateNotificationDispatcher } from "./schedule-update-notification-dispatcher.js";
 import type { IdentityProvider } from "./identity-provider.js";
@@ -279,6 +280,7 @@ interface Dependencies {
   invitationEmailSender?: InvitationEmailSender;
   calendarSources?: CalendarSourceModule;
   commuter?: CommuterModule;
+  commuterLiveRefresh?: CaltrainLiveRefreshOperations;
   scheduleDraftExtractor?: ScheduleDraftExtractor;
   readinessCheck?: () => Promise<void>;
   rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts" | "travelPreviews", RouteRateLimit>>;
@@ -298,6 +300,7 @@ export function buildApp({
   invitationEmailSender = new NoopInvitationEmailSender(),
   calendarSources,
   commuter,
+  commuterLiveRefresh,
   scheduleDraftExtractor = new UnavailableScheduleDraftExtractor(),
   readinessCheck = async () => {},
   rateLimits = {},
@@ -741,8 +744,27 @@ export function buildApp({
 
   app.get("/v1/modules/commuter/live-trains", async (_request, reply) => {
     if (!commuter) return reply.code(503).send({ error: "commuter_unavailable" });
-    return commuter.liveTrains(new Date());
+    const now = new Date();
+    try {
+      await commuterLiveRefresh?.request(now);
+    } catch {
+      // Return the retained last-known snapshot when an on-demand provider call fails.
+    }
+    return commuter.liveTrains(now);
    });
+
+  app.post("/v1/modules/commuter/live-trains/refresh", async (_request, reply) => {
+    if (!commuter || !commuterLiveRefresh) {
+      return reply.code(503).send({ error: "commuter_live_refresh_unavailable" });
+    }
+    const now = new Date();
+    try {
+      await commuterLiveRefresh.force(now);
+    } catch {
+      // The response still includes a retained last-known snapshot and provider status.
+    }
+    return commuter.liveTrains(now);
+  });
 
   app.put("/v1/modules/commuter", async (request, reply) => {
     const account = await requireParent(request, reply);

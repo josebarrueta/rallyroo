@@ -170,6 +170,31 @@ final class RemoteCommuterStoreTests: XCTestCase {
         XCTAssertEqual(json["status"], "disabled")
     }
 
+    func testForcesALiveTrainRefreshWithoutARequestBody() async throws {
+        let response = Data("""
+        {
+          "status":{"state":"healthy","lastSuccessAt":null,"lastAttemptAt":null},
+          "observedAt":null,
+          "positions":[]
+        }
+        """.utf8)
+        let transport = CommuterRecordingTransport(responses: [
+            HTTPResponse(statusCode: 200, body: response)
+        ])
+        let store: any CommuterStore = RemoteCommuterStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+
+        _ = try await store.refreshLiveTrains()
+
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.method, .post)
+        XCTAssertEqual(request.url.path, "/v1/modules/commuter/live-trains/refresh")
+        XCTAssertNil(request.body)
+    }
+
     func testEnablesAndCreatesACommuterSubscription() async throws {
         let installation = Data(#"{"enabledByMemberID":"parent-1","status":"enabled"}"#.utf8)
         let subscriptionResponse = Data("""

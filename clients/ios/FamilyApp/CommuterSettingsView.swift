@@ -145,6 +145,19 @@ struct CommuterSettingsView: View {
                .font(.body)
                .foregroundStyle(.primary)
                .padding(.vertical, 4)
+                HStack {
+                    Label(
+                        healthLabel(response.status.state),
+                        systemImage: healthIcon(response.status.state)
+                    )
+                    .font(.caption)
+                    .foregroundStyle(healthColor(response.status.state))
+                    Spacer()
+                    Button("Refresh positions", systemImage: "arrow.clockwise") {
+                        Task { await model.refreshLiveTrains() }
+                    }
+                    .disabled(model.isMutating)
+                }
                 if response.positions.isEmpty {
                     Text("511 is not reporting any live Caltrain positions right now. Pull to refresh shortly.")
                         .font(.caption)
@@ -204,7 +217,7 @@ struct CommuterSettingsView: View {
                         }
                     }
                 }
-                Text("Network positions refresh about every minute. Provider rate limits may temporarily delay an update.")
+                Text("Positions refresh every 30 minutes in the background and about every 5 minutes while viewed. Last-known trains remain visible as stale when updates pause.")
                        .font(.caption2)
                        .foregroundStyle(.secondary)
              } else {

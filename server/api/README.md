@@ -94,9 +94,13 @@ per installation or subscription. Polling is disabled by default. Set
 `CALTRAIN_POLLING_ENABLED=true` only after 511 approves backend fan-out, provide the
 backend-only `SF511_API_KEY`, and configure `CALTRAIN_POLL_INTERVAL_SECONDS`
 (default and minimum `60`) plus `CALTRAIN_POLL_MAX_BACKOFF_SECONDS` (default
-`3600`). Vehicle positions refresh every cycle so the public live map remains useful;
-Trip Updates and Service Alerts are additionally fetched while subscribed journeys
-are active. The static catalog refreshes at most once per day. HTTP 429 responses
+`3600`). During Caltrain service hours, Vehicle Positions refresh every 30 minutes
+without viewer demand and every five minutes for 15 minutes after Live Trains is
+opened. Opening a stale map also requests a refresh, and on-demand refreshes have a
+two-minute cooldown. Empty provider snapshots retain the last useful positions for up
+to two hours and expose them as stale. Overnight polling skips Vehicle Positions.
+Trip Updates and Service Alerts are fetched while subscribed journeys are active.
+The static catalog refreshes at most once per day. HTTP 429 responses
 honor bounded `Retry-After`; other failures use bounded
 exponential backoff with positive jitter, and a successful cycle restores the
 configured cadence. Provider URLs and credentials are never logged.

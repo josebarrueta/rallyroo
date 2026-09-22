@@ -3013,9 +3013,18 @@ describe("Travel planning HTTP API", () => {
     }
   });
 
-  it("returns empty live train positions when no positions are cached", async () => {
+  it("records viewer demand before returning live train positions", async () => {
     const commuter = new CommuterModule(new InMemoryCommuterRepository());
-    const app = buildApp({ identityProvider, repository: repository(), commuter });
+    let requests = 0;
+    const app = buildApp({
+      identityProvider,
+      repository: repository(),
+      commuter,
+      commuterLiveRefresh: {
+        async request() { requests += 1; },
+        async force() {},
+      },
+    });
     const response = await app.inject({
       method: "GET",
       url: "/v1/modules/commuter/live-trains",
@@ -3023,6 +3032,30 @@ describe("Travel planning HTTP API", () => {
        });
     expect(response.statusCode).toBe(200);
     expect(response.json().positions).toEqual([]);
+    expect(requests).toBe(1);
     await app.close();
    });
+
+  it("allows an authenticated viewer to force a cooldown-protected position refresh", async () => {
+    const commuter = new CommuterModule(new InMemoryCommuterRepository());
+    let refreshes = 0;
+    const app = buildApp({
+      identityProvider,
+      repository: repository(),
+      commuter,
+      commuterLiveRefresh: {
+        async request() {},
+        async force() { refreshes += 1; },
+      },
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/modules/commuter/live-trains/refresh",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().positions).toEqual([]);
+    expect(refreshes).toBe(1);
+    await app.close();
+  });
 });

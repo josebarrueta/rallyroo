@@ -24,6 +24,19 @@ const snapshot = {
 };
 
 describe("CachedCaltrainVehiclePositionStore", () => {
+  it("retains the last useful positions when a provider snapshot is temporarily empty", async () => {
+    const store = new CachedCaltrainVehiclePositionStore(new InMemoryCache());
+
+    await store.replace(snapshot);
+    await store.replace({
+      observedAt: "2026-09-21T14:01:55.000Z",
+      validUntil: "2026-09-21T14:04:55.000Z",
+      positions: [],
+    });
+
+    await expect(store.current()).resolves.toEqual(snapshot);
+  });
+
   it("provides the production cache write-to-read path without PostgreSQL storage", async () => {
     const repository = new InMemoryCommuterRepository();
     Object.assign(repository, {
@@ -40,5 +53,14 @@ describe("CachedCaltrainVehiclePositionStore", () => {
     expect(live.status.state).toBe("healthy");
     expect(live.observedAt).toBe(snapshot.observedAt);
     expect(live.positions).toEqual(snapshot.positions);
+
+    await writer.replaceVehiclePositions({
+      observedAt: "2026-09-21T14:07:55.000Z",
+      validUntil: "2026-09-21T14:10:55.000Z",
+      positions: [],
+    }, new Date("2026-09-21T14:08:00Z"));
+    const stale = await reader.liveTrains(new Date("2026-09-21T14:08:30Z"));
+    expect(stale.status.state).toBe("stale");
+    expect(stale.positions).toEqual(snapshot.positions);
   });
 });

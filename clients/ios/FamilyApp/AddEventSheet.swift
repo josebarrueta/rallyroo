@@ -262,15 +262,10 @@ struct AddEventSheet: View {
                 if existingEvent != nil, onPlanTravel != nil {
                     Section("Travel") {
                         Button {
-                            dismiss()
-                            Task { @MainActor in
-                                try? await Task.sleep(for: .milliseconds(250))
-                                onPlanTravel?()
-                            }
+                            planTravel()
                         } label: {
                             Label("Plan travel", systemImage: "car")
                         }
-                        .disabled(!savedEventCanPlanTravel)
                         .accessibilityIdentifier("plan-event-travel")
 
                         if !savedEventCanPlanTravel {
@@ -544,6 +539,28 @@ struct AddEventSheet: View {
 
     private var locationDirectionsURL: URL? {
         MapsDirectionsURL.make(origin: nil, destination: location)
+    }
+
+    private func planTravel() {
+        guard savedEventCanPlanTravel else {
+            dismissAfterAlert = false
+            if location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                alertMessage = "Add a location and save the event before planning travel."
+            } else if !arrivalTargetEnabled {
+                arrivalTargetEnabled = true
+                arrivalTarget = startTime
+                alertMessage = "Arrive by is now enabled. Choose the arrival time, save the event, then open Plan travel again."
+            } else {
+                alertMessage = "Save this Arrive by time before planning travel."
+            }
+            isShowingAlert = true
+            return
+        }
+        dismiss()
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            onPlanTravel?()
+        }
     }
 
     private var savedEventCanPlanTravel: Bool {

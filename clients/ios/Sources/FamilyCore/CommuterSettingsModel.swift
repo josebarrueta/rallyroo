@@ -32,6 +32,17 @@ public final class CommuterSettingsModel: ObservableObject {
         }
     }
 
+    public func refreshLiveTrains() async {
+        guard beginMutation() else { return }
+        defer { isMutating = false }
+        do {
+            liveTrains = try await store.refreshLiveTrains()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Live train positions could not be refreshed."
+        }
+    }
+
     @discardableResult
     public func enable() async -> Bool {
         guard beginMutation() else { return false }
