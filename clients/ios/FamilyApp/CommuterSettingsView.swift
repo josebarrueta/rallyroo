@@ -138,7 +138,7 @@ struct CommuterSettingsView: View {
         Section("Live trains") {
             if let response = model.liveTrains {
                 Label(
-                    "Tracked positions\(response.positions.isEmpty ? " · Waiting" : " · \(response.positions.count) trains")",
+                    "Network positions\(response.positions.isEmpty ? " · Unavailable" : " · \(response.positions.count) trains")",
                     systemImage: "train.car.fill"
                    )
                .lineLimit(1)
@@ -146,7 +146,7 @@ struct CommuterSettingsView: View {
                .foregroundStyle(.primary)
                .padding(.vertical, 4)
                 if response.positions.isEmpty {
-                    Text("No position is available yet for a subscribed train with an active alert.")
+                    Text("511 is not reporting any live Caltrain positions right now. Pull to refresh shortly.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -204,15 +204,15 @@ struct CommuterSettingsView: View {
                         }
                     }
                 }
-                Text("Subscribed train positions update every 4 minutes while their routes are active.")
+                Text("Network positions refresh about every minute. Provider rate limits may temporarily delay an update.")
                        .font(.caption2)
                        .foregroundStyle(.secondary)
              } else {
-                Label("Train tracking is standing by", systemImage: "clock")
+                Label("Live train locations unavailable", systemImage: "clock")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
-                Text("Tracking starts automatically when one of your subscribed trains begins its route.")
+                Text("Pull to refresh live positions from 511.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
              }
@@ -242,7 +242,7 @@ struct CommuterSettingsView: View {
     private func providerSection(_ status: CommuterProviderStatus) -> some View {
         Section("Provider status") {
             providerRow("Station catalog", status: status.catalog)
-            providerRow("Realtime", status: status.realtime)
+            providerRow("Realtime alerts", status: status.realtime)
             Text("Provider health is separate from whether Commuter is installed or enabled. Transit data provided by 511.org.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

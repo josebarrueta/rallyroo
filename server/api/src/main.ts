@@ -10,6 +10,7 @@ import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
 import { CaltrainVehiclePositionRefresher } from "./caltrain-vehicle-position-refresher.js";
+import { CachedCaltrainVehiclePositionStore } from "./caltrain-vehicle-position-store.js";
 import { CommuterAlertDispatcher } from "./commuter-alert-dispatcher.js";
 import { CommuterModule } from "./commuter-module.js";
 import { databasePoolConfiguration } from "./database-configuration.js";
@@ -157,7 +158,10 @@ const leaveAlertDispatcher = googleRoutesAPIKey
     notificationCenter,
   )
   : undefined;
-const commuter = new CommuterModule(repository);
+const commuter = new CommuterModule(
+  repository,
+  new CachedCaltrainVehiclePositionStore(cache),
+);
 const caltrainPolling = caltrainPollingConfiguration();
 const sf511APIKey = caltrainPolling.enabled ? configuredSecret("SF511_API_KEY") : undefined;
 if (caltrainPolling.enabled && !sf511APIKey) {
@@ -265,7 +269,7 @@ if (caltrainPolling.enabled && sf511APIKey) {
   const client = new SF511Client(sf511APIKey);
   const catalogRefresher = new CaltrainScheduleRefresher(client, commuter);
   const commutePoller = new CaltrainCommutePoller(client, commuter);
-  const vehiclePositionRefresher = new CaltrainVehiclePositionRefresher(client, cache, commuter);
+  const vehiclePositionRefresher = new CaltrainVehiclePositionRefresher(client, commuter);
   let nextCatalogRefreshAtMilliseconds: number | undefined;
   const scheduler = new CaltrainPollingScheduler({
     intervalMilliseconds: caltrainPolling.intervalMilliseconds,

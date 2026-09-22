@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Account } from "./domain.js";
 import type { CaltrainStaticScheduleSnapshot } from "./caltrain-static-schedule.js";
 import { caltrainTrackingPlan, type CaltrainTrackingPlan } from "./caltrain-tracking-plan.js";
+import type { CaltrainVehiclePositionStore } from "./caltrain-vehicle-position-store.js";
 import {
   searchCaltrainJourneys,
   type CaltrainJourneyOption,
@@ -282,7 +283,10 @@ export class CommuterModuleError extends Error {
 }
 
 export class CommuterModule {
-  constructor(private readonly repository: CommuterRepository) {}
+  constructor(
+    private readonly repository: CommuterRepository,
+    private readonly vehiclePositions?: CaltrainVehiclePositionStore,
+  ) {}
 
   async enable(account: Account): Promise<CommuterInstallation> {
     requireParent(account);
@@ -380,16 +384,25 @@ export class CommuterModule {
     attemptedAt: Date,
     ): Promise<void> {
     requireValidObservationDate(attemptedAt);
-    const _replaceVP = this.repository.replaceCaltrainVehiclePositions;
-    if (_replaceVP) await _replaceVP(
-       snapshot,
-       attemptedAt.toISOString(),
-       );
+    if (this.vehiclePositions) {
+      await this.vehiclePositions.replace(snapshot);
+      await this.repository.saveProviderFeedAttempt(
+        "CT",
+        "positions",
+        attemptedAt.toISOString(),
+        true,
+      );
+    } else if (this.repository.replaceCaltrainVehiclePositions) {
+      await this.repository.replaceCaltrainVehiclePositions(
+        snapshot,
+        attemptedAt.toISOString(),
+      );
+    }
     }
 
   async liveTrains(now: Date): Promise<CaltrainVehiclePositions> {
     const [stored, observation] = await Promise.all([
-      this.repository.caltrainVehiclePositions?.(),
+      this.vehiclePositions?.current() ?? this.repository.caltrainVehiclePositions?.(),
       this.repository.providerFeedObservation("CT", "positions"),
        ]);
     return {
