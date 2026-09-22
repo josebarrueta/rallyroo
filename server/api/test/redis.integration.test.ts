@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { CachedLocationSearchProvider } from "../src/cached-location-search-provider.js";
+import { CachedCaltrainVehiclePositionStore } from "../src/caltrain-vehicle-position-store.js";
 import type { LocationSearchProvider } from "../src/location-search-provider.js";
 import { RedisCache } from "../src/redis-cache.js";
 
@@ -25,6 +26,35 @@ describe.skipIf(!redisURL)("Redis cache integration", () => {
     } finally {
       await cache.delete(deletedKey);
       await cache.delete(expiringKey);
+      await cache.close();
+    }
+  });
+
+  it("serves live Caltrain positions through the production Redis read path", async () => {
+    const cache = await RedisCache.connect(redisURL!);
+    const store = new CachedCaltrainVehiclePositionStore(cache);
+    const snapshot = {
+      observedAt: "2026-09-21T13:59:55.000Z",
+      validUntil: "2026-09-21T14:02:55.000Z",
+      positions: [{
+        id: "vehicle-1",
+        tripID: "train-7",
+        routeID: "CT",
+        directionID: 1,
+        latitude: 37.5,
+        longitude: -122.2,
+        bearing: 350,
+        currentStopID: "stop-1",
+        currentStopSequence: 3,
+        status: "IN_TRANSIT_TO",
+        timestamp: "2026-09-21T13:59:55.000Z",
+      }],
+    };
+    try {
+      await store.replace(snapshot);
+      await expect(store.current()).resolves.toEqual(snapshot);
+    } finally {
+      await cache.delete("caltrain:vehicle-positions");
       await cache.close();
     }
   });

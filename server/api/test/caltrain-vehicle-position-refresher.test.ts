@@ -1,6 +1,5 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { describe, expect, it, vi } from "vitest";
-import { InMemoryCache } from "../src/cache.js";
 import { CaltrainVehiclePositionRefresher } from "../src/caltrain-vehicle-position-refresher.js";
 
 const { transit_realtime: gtfs } = GtfsRealtimeBindings;
@@ -18,11 +17,9 @@ describe("CaltrainVehiclePositionRefresher", () => {
         vehicle("other", "train-9", 37.7, -122.4),
       ],
     });
-    const cache = new InMemoryCache();
     const replaceVehiclePositions = vi.fn(async () => undefined);
     const refresher = new CaltrainVehiclePositionRefresher(
       { vehiclePositions: async () => body },
-      cache,
       { replaceVehiclePositions } as never,
     );
 
