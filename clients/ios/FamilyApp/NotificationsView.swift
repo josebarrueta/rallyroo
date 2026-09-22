@@ -4,11 +4,14 @@ import FamilyCore
 struct NotificationsView: View {
     let inboxStore: any NotificationInboxStore
     let conflictStore: any ConflictNotificationStore
+    let dayBriefStore: (any DayBriefStore)?
     let onUnreadCountChanged: (Int) -> Void
     @State private var inbox: [InboxNotification] = []
     @State private var conflicts: [ConflictNotification] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var presentedDayBrief: DayBrief?
+    @State private var isPresentingDayBrief = false
 
     var body: some View {
         NavigationStack {
@@ -56,6 +59,16 @@ struct NotificationsView: View {
             .navigationTitle("Alerts")
             .refreshable { await load() }
             .task { await load() }
+            .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
+                guard let destination = note.object as? InboxNotificationDestination,
+                      destination.kind == .dayBrief else { return }
+                Task { await openDayBrief(localDate: destination.id) }
+            }
+            .sheet(isPresented: $isPresentingDayBrief) {
+                if let presentedDayBrief {
+                    NavigationStack { DayBriefDetailView(brief: presentedDayBrief) }
+                }
+            }
             .toolbar {
                 if !conflicts.isEmpty {
                     Button("Clear saved conflicts") {
@@ -125,10 +138,14 @@ struct NotificationsView: View {
     }
 
     @MainActor private func markRead(_ notification: InboxNotification) async {
-        NotificationCenter.default.post(
-            name: .openNotificationDestination,
-            object: notification.destination
-        )
+        if notification.destination.kind == .dayBrief {
+            await openDayBrief(localDate: notification.destination.id)
+        } else {
+            NotificationCenter.default.post(
+                name: .openNotificationDestination,
+                object: notification.destination
+            )
+        }
         guard notification.readAt == nil else { return }
         do {
             try await inboxStore.markRead(id: notification.id)
@@ -136,5 +153,76 @@ struct NotificationsView: View {
         } catch {
             errorMessage = "Couldn't mark this alert as read."
         }
+    }
+
+    @MainActor private func openDayBrief(localDate: String) async {
+        guard let dayBriefStore else { return }
+        do {
+            guard let brief = try await dayBriefStore.brief(localDate: localDate) else {
+                errorMessage = "This Day Brief is no longer available."
+                return
+            }
+            presentedDayBrief = brief
+            isPresentingDayBrief = true
+        } catch {
+            errorMessage = "Couldn't load this Day Brief."
+        }
+    }
+}
+
+private struct DayBriefDetailView: View {
+    let brief: DayBrief
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            Section {
+                Text(brief.body)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !brief.facts.events.isEmpty {
+                Section("Timeline") {
+                    ForEach(Array(brief.facts.events.enumerated()), id: \.offset) { _, event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.title).font(.headline)
+                            Text(formattedTime(event.startTime))
+                            if event.roles.contains(.driver) {
+                                Label("You drive", systemImage: "car.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let location = event.location, !location.isEmpty {
+                                Text(location).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            if !brief.facts.reminders.isEmpty {
+                Section("Reminders") {
+                    ForEach(brief.facts.reminders, id: \.id) { reminder in
+                        LabeledContent(
+                            reminder.title,
+                            value: formattedTime(reminder.dueAt)
+                        )
+                    }
+                }
+            }
+        }
+        .navigationTitle(brief.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+    }
+
+    private func formattedTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        formatter.timeZone = TimeZone(identifier: brief.timeZone) ?? .current
+        return formatter.string(from: date)
     }
 }

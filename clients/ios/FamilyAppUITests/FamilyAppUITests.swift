@@ -41,6 +41,48 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 5))
     }
 
+    func testParentCanEnableTheMorningDayBrief() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let dayBrief = app.buttons["Day Brief"]
+        XCTAssertTrue(dayBrief.waitForExistence(timeout: 5))
+        dayBrief.tap()
+
+        let enabled = app.switches["Morning Day Brief"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5))
+        let save = app.buttons["Save Day Brief"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: save)
+        waitForExpectations(timeout: 5)
+        enabled.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        expectation(for: NSPredicate(format: "value == '1'"), evaluatedWith: enabled)
+        waitForExpectations(timeout: 5)
+        save.tap()
+        XCTAssertTrue(app.staticTexts["Your Day Brief is scheduled."].waitForExistence(timeout: 5))
+    }
+
+    func testDayBriefAlertOpensThePrivateTimeline() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        let alert = app.staticTexts["Your Day Brief"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        alert.tap()
+
+        XCTAssertTrue(app.navigationBars["Sunday at a glance"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["You drive to school drop-off this morning."].exists)
+        XCTAssertTrue(app.staticTexts["School drop-off"].exists)
+        XCTAssertTrue(app.staticTexts["You drive"].exists)
+        XCTAssertTrue(app.staticTexts["Lincoln Elementary"].exists)
+    }
+
     func testEventAlertAppearsOnlyAfterSelectingAParticipant() {
         let app = localApp()
         app.launch()

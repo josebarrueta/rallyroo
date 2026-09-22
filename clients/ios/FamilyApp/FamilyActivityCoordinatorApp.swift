@@ -101,6 +101,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
+    private let dayBriefStore: (any DayBriefStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -150,7 +151,16 @@ struct FamilyActivityCoordinatorApp: App {
             scheduleDraftExtractor = nil
             commuterStore = nil
             travelPlanningStore = nil
+            #if DEBUG
+            let usesDayBriefUITest = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DAY_BRIEF"] == "1"
+            dayBriefStore = usesDayBriefUITest ? DayBriefUITestStore() : nil
+            inboxStore = usesDayBriefUITest
+                ? DayBriefUITestInboxStore()
+                : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
+            #else
+            dayBriefStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
+            #endif
         case .remote:
             guard let baseURL = configuration.remoteBaseURL else {
                 fatalError("Remote mode requires a base URL")
@@ -208,6 +218,10 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
               )
+            dayBriefStore = RemoteDayBriefStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
 
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
@@ -266,6 +280,7 @@ struct FamilyActivityCoordinatorApp: App {
                     NotificationsView(
                         inboxStore: inboxStore,
                         conflictStore: notificationStore,
+                        dayBriefStore: session.role == .parent ? dayBriefStore : nil,
                         onUnreadCountChanged: { unreadAlertCount = $0 }
                     )
                     .tabItem { Label("Alerts", systemImage: "bell") }
@@ -278,6 +293,7 @@ struct FamilyActivityCoordinatorApp: App {
                         memberStore: session.role == .parent ? memberStore : nil,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
+                        dayBriefStore: session.role == .parent ? dayBriefStore : nil,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )
@@ -459,3 +475,80 @@ enum AppStorage {
         .appending(path: "FamilyActivityCoordinator")
     }
 }
+
+#if DEBUG
+private actor DayBriefUITestStore: DayBriefStore {
+    private var savedPreferences: DayBriefPreferences?
+
+    func preferences() async throws -> DayBriefPreferences? {
+        savedPreferences
+    }
+
+    func savePreferences(_ preferences: DayBriefPreferences) async throws -> DayBriefPreferences {
+        savedPreferences = preferences
+        return preferences
+    }
+
+    func brief(localDate: String) async throws -> DayBrief? {
+        guard localDate == "2026-09-21" else { return nil }
+        return DayBrief(
+            localDate: localDate,
+            timeZone: "America/Los_Angeles",
+            facts: DayBriefFacts(
+                events: [
+                    DayBriefEventFact(
+                        id: "school-dropoff",
+                        title: "School drop-off",
+                        scheduledAt: Date(timeIntervalSince1970: 1_790_003_700),
+                        startTime: Date(timeIntervalSince1970: 1_790_003_700),
+                        endTime: Date(timeIntervalSince1970: 1_790_005_500),
+                        location: "Lincoln Elementary",
+                        roles: [.driver]
+                    )
+                ],
+                reminders: []
+            ),
+            title: "Sunday at a glance",
+            body: "You drive to school drop-off this morning."
+        )
+    }
+}
+
+private actor DayBriefUITestInboxStore: NotificationInboxStore {
+    private var records = [
+        InboxNotification(
+            id: UUID(uuidString: "00000000-0000-4000-8000-000000000001")!,
+            kind: .dayBrief,
+            title: "Your Day Brief",
+            body: "You have one driving responsibility.",
+            destination: .init(kind: .dayBrief, id: "2026-09-21"),
+            occurredAt: Date(timeIntervalSince1970: 1_790_000_000),
+            readAt: nil
+        )
+    ]
+
+    func notifications() async throws -> [InboxNotification] { records }
+
+    func markRead(id: UUID) async throws {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        let item = records[index]
+        records[index] = InboxNotification(
+            id: item.id,
+            kind: item.kind,
+            title: item.title,
+            body: item.body,
+            destination: item.destination,
+            occurredAt: item.occurredAt,
+            readAt: .now
+        )
+    }
+
+    func delete(id: UUID) async throws {
+        records.removeAll { $0.id == id }
+    }
+
+    func ingest(_ notification: InboxNotification) async throws {
+        records.append(notification)
+    }
+}
+#endif
