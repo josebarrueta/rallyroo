@@ -10,6 +10,7 @@ struct SettingsView: View {
     private let memberStore: (any FamilyMemberStore)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
+    private let dayBriefStore: (any DayBriefStore)?
     private let locationSearch: (any LocationSearch)?
     private let canManageFamilyPlaces: Bool
     private let preferences = ConflictAlertPreferences()
@@ -21,6 +22,7 @@ struct SettingsView: View {
         memberStore: (any FamilyMemberStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
+        dayBriefStore: (any DayBriefStore)? = nil,
         locationSearch: (any LocationSearch)? = nil,
         canManageFamilyPlaces: Bool = false,
         onSignOut: SignOutAction = SignOutAction({}),
@@ -32,6 +34,7 @@ struct SettingsView: View {
         self.memberStore = memberStore
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
+        self.dayBriefStore = dayBriefStore
         self.locationSearch = locationSearch
         self.canManageFamilyPlaces = canManageFamilyPlaces
         self.onSignOut = onSignOut
@@ -56,6 +59,17 @@ struct SettingsView: View {
                     Text("Immediate conflict warnings still appear while adding an event.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                if let dayBriefStore {
+                    Section("Daily planning") {
+                        NavigationLink("Day Brief") {
+                            DayBriefSettingsView(store: dayBriefStore)
+                        }
+                        Text("Get a private summary of your schedule, driving duties, and reminders each morning.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 if let calendarSourceStore, let memberStore {
@@ -731,5 +745,106 @@ private struct AddCalendarSourceView: View {
                 errorMessage = "The calendar could not be added. Check the subscription link and try again."
             }
         }
+    }
+}
+
+private struct DayBriefSettingsView: View {
+    let store: any DayBriefStore
+    @State private var enabled = false
+    @State private var weekdayTime = Self.time(hour: 7, minute: 0)
+    @State private var weekendTime = Self.time(hour: 8, minute: 30)
+    @State private var earlyEventLeadMinutes = 60
+    @State private var isLoading = true
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var savedMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Morning Day Brief", isOn: $enabled)
+                Text("Your private brief uses only calendar details and family responsibilities visible to you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Delivery") {
+                DatePicker("Weekdays", selection: $weekdayTime, displayedComponents: .hourAndMinute)
+                DatePicker("Weekends and holidays", selection: $weekendTime, displayedComponents: .hourAndMinute)
+                Picker("Before an early event", selection: $earlyEventLeadMinutes) {
+                    Text("30 minutes").tag(30)
+                    Text("60 minutes").tag(60)
+                    Text("90 minutes").tag(90)
+                }
+                LabeledContent("Time zone", value: TimeZone.current.localizedName(for: .standard, locale: .current) ?? TimeZone.current.identifier)
+                LabeledContent("Public holidays", value: Locale.current.region?.identifier ?? "US")
+            }
+            .disabled(!enabled)
+
+            Section {
+                Button(isSaving ? "Saving…" : "Save Day Brief") { save() }
+                    .disabled(isLoading || isSaving)
+                if let savedMessage {
+                    Text(savedMessage).font(.caption).foregroundStyle(.green)
+                }
+                if let errorMessage {
+                    Text(errorMessage).font(.caption).foregroundStyle(.red)
+                }
+            }
+        }
+        .navigationTitle("Day Brief")
+        .task { await load() }
+        .overlay { if isLoading { ProgressView() } }
+    }
+
+    @MainActor private func load() async {
+        defer { isLoading = false }
+        do {
+            guard let preferences = try await store.preferences() else { return }
+            enabled = preferences.enabled
+            weekdayTime = Self.date(from: preferences.weekdayTime) ?? weekdayTime
+            weekendTime = Self.date(from: preferences.weekendHolidayTime) ?? weekendTime
+            earlyEventLeadMinutes = preferences.earlyEventLeadMinutes
+        } catch {
+            errorMessage = "Couldn't load Day Brief settings."
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        savedMessage = nil
+        errorMessage = nil
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                let region = Locale.current.region?.identifier ?? "US"
+                _ = try await store.savePreferences(DayBriefPreferences(
+                    enabled: enabled,
+                    timeZone: TimeZone.current.identifier,
+                    weekdayTime: Self.string(from: weekdayTime),
+                    weekendHolidayTime: Self.string(from: weekendTime),
+                    earlyEventLeadMinutes: earlyEventLeadMinutes,
+                    holidayRegion: region
+                ))
+                savedMessage = enabled ? "Your Day Brief is scheduled." : "Day Brief is off."
+            } catch {
+                errorMessage = "Couldn't save Day Brief settings."
+            }
+        }
+    }
+
+    private static func string(from date: Date) -> String {
+        let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", components.hour ?? 0, components.minute ?? 0)
+    }
+
+    private static func date(from value: String) -> Date? {
+        let parts = value.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        return Calendar.current.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: .now)
+    }
+
+    private static func time(hour: Int, minute: Int) -> Date {
+        Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: .now) ?? .now
     }
 }
