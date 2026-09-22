@@ -15,6 +15,7 @@
     "test:unit": "vitest run --exclude 'test/*.integration.test.ts'",
     "test:integration": "vitest run test/postgres.integration.test.ts test/redis.integration.test.ts",
     "test:migrations": "./test/migrations.integration.sh",
+    "test:sf511-live": "RUN_SF511_LIVE_TESTS=true node --env-file=.env ./node_modules/vitest/vitest.mjs run test/sf511-live-provider.test.ts",
     "contract-server": "tsx test/support/contract-server.ts"
   },
   "dependencies": {

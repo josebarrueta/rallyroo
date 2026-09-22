@@ -48,7 +48,7 @@ runtimeConfig:
     environment: sandbox
   caltrainPolling:
     enabled: false
-    intervalSeconds: 240
+    intervalSeconds: 60
     maximumBackoffSeconds: 3600
 
 migrations:

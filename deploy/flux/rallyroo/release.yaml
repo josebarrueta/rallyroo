@@ -63,7 +63,7 @@ spec:
         environment: production
       caltrainPolling:
         enabled: true
-        intervalSeconds: 240
+        intervalSeconds: 60
         maximumBackoffSeconds: 3600
     postgres:
       credentialsSecret: rallyroo-postgres
