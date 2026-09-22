@@ -6,6 +6,8 @@ import { CalendarSourceModule } from "./calendar-source-module.js";
 import { DayBriefModule } from "./day-brief.js";
 import { RallyrooDayBriefRepository } from "./day-brief-repository.js";
 import { runCaltrainFeedCycle } from "./caltrain-feed-cycle.js";
+import { CaltrainLiveRefresh } from "./caltrain-live-refresh.js";
+import { caltrainPositionPollingPlan } from "./caltrain-position-polling-plan.js";
 import { CaltrainScheduleRefresher } from "./caltrain-schedule-refresher.js";
 import { CaltrainCommutePoller } from "./caltrain-commute-poller.js";
 import { CaltrainPollingScheduler } from "./caltrain-polling-scheduler.js";
@@ -158,19 +160,29 @@ const leaveAlertDispatcher = googleRoutesAPIKey
     notificationCenter,
   )
   : undefined;
-const commuter = new CommuterModule(
-  repository,
-  new CachedCaltrainVehiclePositionStore(cache),
-);
+const vehiclePositionStore = new CachedCaltrainVehiclePositionStore(cache);
+const commuter = new CommuterModule(repository, vehiclePositionStore);
 const caltrainPolling = caltrainPollingConfiguration();
 const sf511APIKey = caltrainPolling.enabled ? configuredSecret("SF511_API_KEY") : undefined;
 if (caltrainPolling.enabled && !sf511APIKey) {
   throw new Error("SF511_API_KEY is required when Caltrain polling is enabled");
 }
+const sf511Client = sf511APIKey ? new SF511Client(sf511APIKey) : undefined;
+const vehiclePositionRefresher = sf511Client
+  ? new CaltrainVehiclePositionRefresher(sf511Client, commuter)
+  : undefined;
+const commuterLiveRefresh = vehiclePositionRefresher
+  ? new CaltrainLiveRefresh(
+    cache,
+    vehiclePositionStore,
+    (attemptedAt) => vehiclePositionRefresher.refresh(attemptedAt).then(() => undefined),
+  )
+  : undefined;
 const app = buildApp({
   identityProvider,
   repository,
   commuter,
+  ...(commuterLiveRefresh ? { commuterLiveRefresh } : {}),
   invitationEmailSender,
   ...(calendarSources ? { calendarSources } : {}),
   ...(scheduleDraftExtractor ? { scheduleDraftExtractor } : {}),
@@ -265,11 +277,9 @@ notificationDispatchInterval.unref();
 
 const caltrainPollingAbort = new AbortController();
 let caltrainPollingTask: Promise<void> | undefined;
-if (caltrainPolling.enabled && sf511APIKey) {
-  const client = new SF511Client(sf511APIKey);
-  const catalogRefresher = new CaltrainScheduleRefresher(client, commuter);
-  const commutePoller = new CaltrainCommutePoller(client, commuter);
-  const vehiclePositionRefresher = new CaltrainVehiclePositionRefresher(client, commuter);
+if (caltrainPolling.enabled && sf511Client && vehiclePositionRefresher && commuterLiveRefresh) {
+  const catalogRefresher = new CaltrainScheduleRefresher(sf511Client, commuter);
+  const commutePoller = new CaltrainCommutePoller(sf511Client, commuter);
   let nextCatalogRefreshAtMilliseconds: number | undefined;
   const scheduler = new CaltrainPollingScheduler({
     intervalMilliseconds: caltrainPolling.intervalMilliseconds,
@@ -307,11 +317,18 @@ if (caltrainPolling.enabled && sf511APIKey) {
       }
 
       const tracking = await commuter.trackingPlan(attemptedAt);
+      const viewerDemandIsActive = await commuterLiveRefresh.viewerDemandIsActive(attemptedAt);
+      const positionPlan = caltrainPositionPollingPlan(
+        attemptedAt,
+        viewerDemandIsActive,
+        commuterLiveRefresh.lastRefreshAttempt(),
+      );
       await runCaltrainFeedCycle({
         refreshPositions: async (at) => {
+          if (!positionPlan.pollPositions) return;
           const startedAt = performance.now();
           try {
-            await vehiclePositionRefresher.refresh(at);
+            await commuterLiveRefresh.backgroundRefresh(at);
             metrics.observeProvider(
               "sf511_caltrain_positions",
               "success",
@@ -346,7 +363,7 @@ if (caltrainPolling.enabled && sf511APIKey) {
         },
       }, tracking, attemptedAt);
 
-      return { nextDelayMilliseconds: caltrainPolling.intervalMilliseconds };
+      return { nextDelayMilliseconds: positionPlan.nextDelayMilliseconds };
     },
     onFailure: ({ throttled, nextAttemptInSeconds }) => {
       app.log.warn({ throttled, nextAttemptInSeconds }, "Caltrain polling deferred");

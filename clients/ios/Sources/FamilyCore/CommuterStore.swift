@@ -271,4 +271,5 @@ public protocol CommuterStore: Sendable {
     ) async throws -> CommuteSubscription
     func remove(_ subscription: CommuteSubscription) async throws
     func liveTrains() async throws -> CaltrainLiveTrainsResponse
+    func refreshLiveTrains() async throws -> CaltrainLiveTrainsResponse
 }

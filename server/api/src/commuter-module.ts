@@ -405,8 +405,15 @@ export class CommuterModule {
       this.vehiclePositions?.current() ?? this.repository.caltrainVehiclePositions?.(),
       this.repository.providerFeedObservation("CT", "positions"),
        ]);
+    const status = feedStatus(observation, now, 3 * 60 * 1_000);
+    const storedObservationMilliseconds = Date.parse(stored?.observedAt ?? "");
+    const retainedPositionsAreStale = (stored?.positions.length ?? 0) > 0
+      && (!Number.isFinite(storedObservationMilliseconds)
+        || now.getTime() - storedObservationMilliseconds > 3 * 60 * 1_000);
     return {
-      status: feedStatus(observation, now, 3 * 60 * 1_000),
+      status: retainedPositionsAreStale
+        ? { ...status, state: "stale", lastSuccessAt: stored?.observedAt ?? status.lastSuccessAt }
+        : status,
       observedAt: stored?.observedAt ?? null,
       positions: stored?.positions ?? [],
        };
