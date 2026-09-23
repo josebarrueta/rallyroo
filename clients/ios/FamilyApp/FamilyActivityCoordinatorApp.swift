@@ -82,6 +82,7 @@ private actor ShoppingUITestStore: ShoppingStore {
     private var items: [PantryItem]
     private var requests: [ShoppingItemRequest]
     private var observations: [StockObservation]
+    private var tripPlans: [ShoppingTripPlan] = []
 
     init() {
         let timestamp = Date(timeIntervalSince1970: 1_791_187_200)
@@ -109,6 +110,54 @@ private actor ShoppingUITestStore: ShoppingStore {
             familyID: "ui-test-family", itemID: itemID, observedByMemberID: "kid-1",
             level: .low, quantity: 0.5, note: nil, observedAt: timestamp
         )]
+    }
+
+    func trips() async throws -> [ShoppingTripPlan] { tripPlans }
+
+    func prepareTrip(id: UUID, routineID: UUID, plannedFor: String) async throws -> ShoppingTripPlan {
+        if let existing = tripPlans.first(where: { $0.id == id }) { return existing }
+        let now = Date()
+        let entries = items.filter { $0.routineIDs.contains(routineID) }.map { item in
+            ShoppingTripEntry(itemID: item.id, decision: .buy,
+                reason: "Recent Stock evidence says Low.", requestIDs: requests.map(\.id),
+                observationID: observations.first { $0.itemID == item.id }?.id)
+        }
+        let trip = ShoppingTripPlan(id: id, familyID: "ui-test-family", routineID: routineID,
+            plannedFor: plannedFor, status: .draft, version: 1, entries: entries,
+            createdByMemberID: "parent", createdAt: now, updatedAt: now,
+            finalizedAt: nil, finalizedByMemberID: nil)
+        tripPlans.append(trip)
+        return trip
+    }
+
+    func reviewTrip(id: UUID, expectedVersion: Int,
+                    entries: [ShoppingTripDecisionInput]) async throws -> ShoppingTripPlan {
+        guard let index = tripPlans.firstIndex(where: { $0.id == id }),
+              tripPlans[index].version == expectedVersion else { throw URLError(.badServerResponse) }
+        let old = tripPlans[index]
+        let reviewed = ShoppingTripPlan(id: id, familyID: old.familyID, routineID: old.routineID,
+            plannedFor: old.plannedFor, status: .draft, version: old.version + 1,
+            entries: entries.map { entry in
+                ShoppingTripEntry(itemID: entry.itemID, decision: entry.decision,
+                    reason: "Parent decision.", requestIDs: [], observationID: nil)
+            }, createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
+            updatedAt: Date(), finalizedAt: nil, finalizedByMemberID: nil)
+        tripPlans[index] = reviewed
+        return reviewed
+    }
+
+    func finalizeTrip(id: UUID, expectedVersion: Int) async throws -> ShoppingTripPlan {
+        guard let index = tripPlans.firstIndex(where: { $0.id == id }),
+              tripPlans[index].version == expectedVersion else { throw URLError(.badServerResponse) }
+        let old = tripPlans[index]
+        let now = Date()
+        let finalized = ShoppingTripPlan(id: id, familyID: old.familyID,
+            routineID: old.routineID, plannedFor: old.plannedFor, status: .finalized,
+            version: old.version + 1, entries: old.entries,
+            createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
+            updatedAt: now, finalizedAt: now, finalizedByMemberID: "parent")
+        tripPlans[index] = finalized
+        return finalized
     }
 
     func catalog() async throws -> ShoppingCatalog {

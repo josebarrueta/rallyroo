@@ -71,6 +71,17 @@ final class FamilyAppUITests: XCTestCase {
         stockNavigation.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["Add shopping routine"].exists)
         XCTAssertTrue(app.buttons["Add pantry item"].exists)
+        app.buttons["Prepare Neighborhood Market trip"].tap()
+        XCTAssertTrue(app.navigationBars["Shopping Trip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Recent Stock evidence says Low."].exists)
+        XCTAssertTrue(app.staticTexts["Oat milk"].exists)
+        XCTAssertTrue(app.buttons["Finalize Trip"].exists)
+        app.buttons["Finalize Trip"].tap()
+        let confirmation = app.buttons.matching(identifier: "Finalize Trip").element(boundBy: 1)
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
+        confirmation.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Finalized")).firstMatch
+            .waitForExistence(timeout: 5))
     }
 
     func testParentCanEnableTheMorningDayBrief() {

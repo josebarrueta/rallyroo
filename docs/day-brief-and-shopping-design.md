@@ -1,6 +1,6 @@
 # Day Brief and Shopping Design
 
-Status: Day Brief v1 and Shopping v1 catalog/evidence slices implemented; Shopping recommendations, shared trips, and outcomes remain planned.
+Status: Day Brief v1 and Shopping v1 catalog/evidence/reviewed-trip slices implemented; trip outcomes and Purchase history remain planned.
 
 ## Goals
 
@@ -140,13 +140,14 @@ Receipt scanning, barcode capture, learned consumption intervals, and price opti
 
 ### Recommendation strategy
 
-The first release uses deterministic evidence precedence:
+Trip preparation is implemented without AI. The freshness window is seven days, evaluated at the later of preparation time and the planned trip date (UTC calendar day). The implemented evidence precedence is:
 
 1. Explicit unresolved Family request.
 2. Recent Out or Low observation.
 3. Recent Enough observation.
-4. Time since last Purchase compared with expected duration.
-5. Missing or stale evidence, which yields Check at home rather than Buy or Skip.
+4. Missing or stale evidence, which yields Check at home rather than Buy or Skip.
+
+Purchase history and duration-based predictions remain deferred until outcomes are recorded. A critical item without recent evidence remains Check at home; a parent makes the final decision. Open requests override Enough with an explicit conflicting-evidence reason.
 
 Conflicting evidence is surfaced for review rather than silently resolved. The exact freshness windows and confidence thresholds belong inside the module and can evolve without changing callers.
 
@@ -154,15 +155,16 @@ Conflicting evidence is surfaced for review rather than silently resolved. The e
 
 ```ts
 interface ShoppingModule {
-  prepareTrip(account: Account, routineID: string, plannedFor: string): Promise<ShoppingTripPlan>;
-  recordTripOutcome(account: Account, tripID: string, outcomes: ShoppingOutcome[]): Promise<ShoppingTripPlan>;
-  observeStock(account: Account, itemID: string, observation: StockObservationInput): Promise<PantryItemState>;
+  prepareTrip(account: Account, id: string, routineID: string, plannedFor: string): Promise<ShoppingTripPlan>;
+  reviewTrip(account: Account, tripID: string, review: ShoppingTripReview): Promise<ShoppingTripPlan>;
+  finalizeTrip(account: Account, tripID: string, expectedVersion: number): Promise<ShoppingTripPlan>;
+  trips(account: Account): Promise<ShoppingTripPlan[]>;
 }
 ```
 
 Administrative setup for routines, Pantry items, and Replenishment policies may use resource-oriented authenticated operations, while recommendation complexity remains behind `prepareTrip`.
 
-The implementation hides recurrence calculation, evidence ordering, stock staleness, recommendation reasons, Family requests, Purchase history, and protected persistence.
+The implementation hides evidence ordering, stock staleness, recommendation reasons, Family requests, and protected persistence. Drafts are parent-only; finalized plans are Family-readable. Optimistic versions prevent stale parent edits. A finalized Buy decision resolves incorporated open requests; Check at home and Skip do not. Catalog resources used by a plan cannot be deleted, preserving its evidence and readability. There is one plan per routine and planned day; preparing it again returns the existing plan without overwriting decisions.
 
 ### Persistence and privacy
 
@@ -186,8 +188,8 @@ The implementation hides recurrence calculation, evidence ordering, stock stalen
 
 1. Shopping routines and Pantry catalog. **Implemented.**
 2. Family item requests and Stock observations. **Implemented.**
-3. Deterministic Buy / Check at home / Skip preparation.
-4. Parent review and shared shopping experience.
+3. Deterministic Buy / Check at home / Skip preparation. **Implemented.**
+4. Parent review and shared shopping experience. **Implemented.**
 5. Trip outcomes and Purchase history.
 
 The Day Brief and Shopping modules should ship independently. Neither should delay or share persistence with the other merely because both can use AI wording.
