@@ -64,8 +64,12 @@ import {
   ShoppingRoutineReferenceError,
   type PantryItem,
   type ShoppingCatalog,
+  type ShoppingEvidence,
+  type ShoppingItemRequest,
+  type ShoppingItemRequestStatus,
   type ShoppingRepository,
   type ShoppingRoutine,
+  type StockObservation,
 } from "./shopping-module.js";
 import type {
   CaltrainStop,
@@ -3056,6 +3060,164 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     }
   }
 
+  async evidence(familyID: string): Promise<ShoppingEvidence> {
+    const [requests, observations] = await Promise.all([
+      this.pool.query<ShoppingItemRequestRow>(
+        `SELECT family_id, id::text, pantry_item_id::text, requested_by_member_id,
+                status, requested_at, resolved_at, resolved_by_member_id, details_ciphertext
+         FROM shopping_item_requests
+         WHERE family_id = $1 AND status = 'open'
+         ORDER BY requested_at, id`,
+        [familyID],
+      ),
+      this.pool.query<StockObservationRow>(
+        `SELECT DISTINCT ON (pantry_item_id)
+                family_id, id::text, pantry_item_id::text, observed_by_member_id,
+                level, observed_at, details_ciphertext
+         FROM stock_observations
+         WHERE family_id = $1
+         ORDER BY pantry_item_id, observed_at DESC, id DESC`,
+        [familyID],
+      ),
+    ]);
+    return {
+      openRequests: await Promise.all(requests.rows.map((row) => this.itemRequestFromRow(row))),
+      latestObservations: await Promise.all(
+        observations.rows.map((row) => this.stockObservationFromRow(row)),
+      ),
+    };
+  }
+
+  async itemRequest(
+    familyID: string,
+    requestID: string,
+  ): Promise<ShoppingItemRequest | null> {
+    const result = await this.pool.query<ShoppingItemRequestRow>(
+      `SELECT family_id, id::text, pantry_item_id::text, requested_by_member_id,
+              status, requested_at, resolved_at, resolved_by_member_id, details_ciphertext
+       FROM shopping_item_requests WHERE family_id = $1 AND id = $2::uuid`,
+      [familyID, requestID],
+    );
+    const row = result.rows[0];
+    return row ? this.itemRequestFromRow(row) : null;
+  }
+
+  async saveItemRequestIfAbsent(
+    request: ShoppingItemRequest,
+  ): Promise<ShoppingItemRequest> {
+    const details = await this.familyDataProtector.protect(
+      request.familyID,
+      `shopping-item-request:${request.id}:details`,
+      JSON.stringify({ quantity: request.quantity, note: request.note }),
+    );
+    await this.pool.query(
+      `INSERT INTO shopping_item_requests (
+         family_id, id, pantry_item_id, requested_by_member_id, status,
+         requested_at, resolved_at, resolved_by_member_id, details_ciphertext
+       ) VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6::timestamptz, $7::timestamptz, $8, $9)
+       ON CONFLICT (family_id, id) DO NOTHING`,
+      [
+        request.familyID, request.id, request.itemID, request.requestedByMemberID,
+        request.status, request.requestedAt, request.resolvedAt,
+        request.resolvedByMemberID, details,
+      ],
+    );
+    const stored = await this.itemRequest(request.familyID, request.id);
+    if (!stored) throw new Error("Unable to persist Shopping item request");
+    return stored;
+  }
+
+  async closeItemRequest(
+    familyID: string,
+    requestID: string,
+    status: Exclude<ShoppingItemRequestStatus, "open">,
+    resolvedAt: string,
+    resolvedByMemberID: string,
+  ): Promise<ShoppingItemRequest | null> {
+    await this.pool.query(
+      `UPDATE shopping_item_requests
+       SET status = $3, resolved_at = $4::timestamptz, resolved_by_member_id = $5
+       WHERE family_id = $1 AND id = $2::uuid AND status = 'open'`,
+      [familyID, requestID, status, resolvedAt, resolvedByMemberID],
+    );
+    return this.itemRequest(familyID, requestID);
+  }
+
+  async stockObservation(
+    familyID: string,
+    observationID: string,
+  ): Promise<StockObservation | null> {
+    const result = await this.pool.query<StockObservationRow>(
+      `SELECT family_id, id::text, pantry_item_id::text, observed_by_member_id,
+              level, observed_at, details_ciphertext
+       FROM stock_observations WHERE family_id = $1 AND id = $2::uuid`,
+      [familyID, observationID],
+    );
+    const row = result.rows[0];
+    return row ? this.stockObservationFromRow(row) : null;
+  }
+
+  async saveStockObservationIfAbsent(
+    observation: StockObservation,
+  ): Promise<StockObservation> {
+    const details = await this.familyDataProtector.protect(
+      observation.familyID,
+      `stock-observation:${observation.id}:details`,
+      JSON.stringify({ quantity: observation.quantity, note: observation.note }),
+    );
+    await this.pool.query(
+      `INSERT INTO stock_observations (
+         family_id, id, pantry_item_id, observed_by_member_id,
+         level, observed_at, details_ciphertext
+       ) VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6::timestamptz, $7)
+       ON CONFLICT (family_id, id) DO NOTHING`,
+      [
+        observation.familyID, observation.id, observation.itemID,
+        observation.observedByMemberID, observation.level,
+        observation.observedAt, details,
+      ],
+    );
+    const stored = await this.stockObservation(observation.familyID, observation.id);
+    if (!stored) throw new Error("Unable to persist Stock observation");
+    return stored;
+  }
+
+  private async itemRequestFromRow(row: ShoppingItemRequestRow): Promise<ShoppingItemRequest> {
+    const details = parseShoppingEvidenceDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `shopping-item-request:${row.id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      itemID: row.pantry_item_id,
+      requestedByMemberID: row.requested_by_member_id,
+      ...details,
+      status: row.status,
+      requestedAt: asISOString(row.requested_at),
+      resolvedAt: row.resolved_at ? asISOString(row.resolved_at) : null,
+      resolvedByMemberID: row.resolved_by_member_id,
+    };
+  }
+
+  private async stockObservationFromRow(row: StockObservationRow): Promise<StockObservation> {
+    const details = parseShoppingEvidenceDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `stock-observation:${row.id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      itemID: row.pantry_item_id,
+      observedByMemberID: row.observed_by_member_id,
+      level: row.level,
+      ...details,
+      observedAt: asISOString(row.observed_at),
+    };
+  }
+
   private async shoppingRoutineFromRow(row: ShoppingRoutineRow): Promise<ShoppingRoutine> {
     const details = parseShoppingRoutineDetails(await this.familyDataProtector.reveal(
       row.family_id,
@@ -3136,6 +3298,28 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 }
 
+interface ShoppingItemRequestRow {
+  family_id: string;
+  id: string;
+  pantry_item_id: string;
+  requested_by_member_id: string;
+  status: ShoppingItemRequestStatus;
+  requested_at: Date | string;
+  resolved_at: Date | string | null;
+  resolved_by_member_id: string | null;
+  details_ciphertext: string;
+}
+
+interface StockObservationRow {
+  family_id: string;
+  id: string;
+  pantry_item_id: string;
+  observed_by_member_id: string;
+  level: StockObservation["level"];
+  observed_at: Date | string;
+  details_ciphertext: string;
+}
+
 interface ShoppingRoutineRow {
   family_id: string;
   id: string;
@@ -3203,6 +3387,25 @@ function parseDayBrief(value: string): DayBrief {
     throw new Error("Invalid protected Day brief");
   }
   return brief as DayBrief;
+}
+
+function parseShoppingEvidenceDetails(
+  value: string,
+): Pick<ShoppingItemRequest, "quantity" | "note"> {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Shopping evidence");
+  const details = parsed as Record<string, unknown>;
+  if ((details.quantity !== null
+      && (typeof details.quantity !== "number" || !Number.isFinite(details.quantity)
+        || details.quantity < 0 || details.quantity > 1_000_000))
+    || (details.note !== null
+      && (typeof details.note !== "string" || !details.note || details.note.length > 500))) {
+    throw new Error("Invalid protected Shopping evidence");
+  }
+  return {
+    quantity: details.quantity as number | null,
+    note: details.note as string | null,
+  };
 }
 
 function parseShoppingRoutineDetails(value: string): Pick<ShoppingRoutine, "storeName"> {

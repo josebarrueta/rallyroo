@@ -49,12 +49,69 @@ export interface ShoppingCatalog {
   items: PantryItem[];
 }
 
+export type ShoppingItemRequestStatus = "open" | "resolved" | "cancelled";
+
+export interface ShoppingItemRequest {
+  id: string;
+  familyID: string;
+  itemID: string;
+  requestedByMemberID: string;
+  quantity: number | null;
+  note: string | null;
+  status: ShoppingItemRequestStatus;
+  requestedAt: string;
+  resolvedAt: string | null;
+  resolvedByMemberID: string | null;
+}
+
+export interface ShoppingItemRequestDraft {
+  itemID: string;
+  quantity?: number | null;
+  note?: string | null;
+}
+
+export type StockLevel = "enough" | "low" | "out";
+
+export interface StockObservation {
+  id: string;
+  familyID: string;
+  itemID: string;
+  observedByMemberID: string;
+  level: StockLevel;
+  quantity: number | null;
+  note: string | null;
+  observedAt: string;
+}
+
+export interface StockObservationInput {
+  level: StockLevel;
+  quantity?: number | null;
+  note?: string | null;
+}
+
+export interface ShoppingEvidence {
+  openRequests: ShoppingItemRequest[];
+  latestObservations: StockObservation[];
+}
+
 export interface ShoppingRepository {
   catalog(familyID: string): Promise<ShoppingCatalog>;
   saveRoutine(routine: ShoppingRoutine): Promise<ShoppingRoutine>;
   deleteRoutine(familyID: string, routineID: string): Promise<boolean>;
   savePantryItem(item: PantryItem): Promise<PantryItem>;
   deletePantryItem(familyID: string, itemID: string): Promise<boolean>;
+  evidence(familyID: string): Promise<ShoppingEvidence>;
+  itemRequest(familyID: string, requestID: string): Promise<ShoppingItemRequest | null>;
+  saveItemRequestIfAbsent(request: ShoppingItemRequest): Promise<ShoppingItemRequest>;
+  closeItemRequest(
+    familyID: string,
+    requestID: string,
+    status: Exclude<ShoppingItemRequestStatus, "open">,
+    resolvedAt: string,
+    resolvedByMemberID: string,
+  ): Promise<ShoppingItemRequest | null>;
+  stockObservation(familyID: string, observationID: string): Promise<StockObservation | null>;
+  saveStockObservationIfAbsent(observation: StockObservation): Promise<StockObservation>;
 }
 
 export type ShoppingModuleFailureReason =
@@ -63,7 +120,12 @@ export type ShoppingModuleFailureReason =
   | "routine_not_found"
   | "routine_name_conflict"
   | "invalid_pantry_item"
-  | "pantry_item_name_conflict";
+  | "pantry_item_name_conflict"
+  | "pantry_item_not_found"
+  | "invalid_item_request"
+  | "item_request_not_found"
+  | "item_request_forbidden"
+  | "invalid_stock_observation";
 
 export class ShoppingNameConflictError extends Error {
   constructor(public readonly kind: "routine" | "pantry_item") {
@@ -204,6 +266,97 @@ export class ShoppingModule {
     requireParent(account);
     return this.repository.deletePantryItem(account.familyID, itemID);
   }
+
+  evidence(account: Account): Promise<ShoppingEvidence> {
+    return this.repository.evidence(account.familyID);
+  }
+
+  async requestItem(
+    account: Account,
+    id: string,
+    draft: ShoppingItemRequestDraft,
+  ): Promise<ShoppingItemRequest> {
+    const existing = await this.repository.itemRequest(account.familyID, id);
+    if (existing) return existing;
+    const catalog = await this.repository.catalog(account.familyID);
+    if (!catalog.items.some((item) => item.id === draft.itemID)) {
+      throw new ShoppingModuleError("pantry_item_not_found");
+    }
+    const quantity = optionalPositiveNumber(
+      draft.quantity, 1_000_000, "invalid_item_request",
+    );
+    const note = optionalText(draft.note, 500, "invalid_item_request");
+    const requestedAt = timestamp(this.now(), "invalid_item_request");
+    return this.repository.saveItemRequestIfAbsent({
+      id,
+      familyID: account.familyID,
+      itemID: draft.itemID,
+      requestedByMemberID: account.memberID,
+      quantity,
+      note,
+      status: "open",
+      requestedAt,
+      resolvedAt: null,
+      resolvedByMemberID: null,
+    });
+  }
+
+  async closeRequest(
+    account: Account,
+    requestID: string,
+    status: "resolved" | "cancelled",
+  ): Promise<ShoppingItemRequest> {
+    const request = await this.repository.itemRequest(account.familyID, requestID);
+    if (!request) throw new ShoppingModuleError("item_request_not_found");
+    if (request.status !== "open") return request;
+    if (status === "resolved" && account.role !== "parent") {
+      throw new ShoppingModuleError("parent_required");
+    }
+    if (status === "cancelled" && account.role !== "parent"
+      && request.requestedByMemberID !== account.memberID) {
+      throw new ShoppingModuleError("item_request_forbidden");
+    }
+    const closed = await this.repository.closeItemRequest(
+      account.familyID,
+      requestID,
+      status,
+      timestamp(this.now(), "invalid_item_request"),
+      account.memberID,
+    );
+    if (!closed) throw new ShoppingModuleError("item_request_not_found");
+    return closed;
+  }
+
+  async observeStock(
+    account: Account,
+    id: string,
+    itemID: string,
+    input: StockObservationInput,
+  ): Promise<StockObservation> {
+    const existing = await this.repository.stockObservation(account.familyID, id);
+    if (existing) return existing;
+    const catalog = await this.repository.catalog(account.familyID);
+    if (!catalog.items.some((item) => item.id === itemID)) {
+      throw new ShoppingModuleError("pantry_item_not_found");
+    }
+    if (input.level !== "enough" && input.level !== "low" && input.level !== "out") {
+      throw new ShoppingModuleError("invalid_stock_observation");
+    }
+    const quantity = optionalPositiveNumber(
+      input.quantity, 1_000_000, "invalid_stock_observation", true,
+    );
+    const note = optionalText(input.note, 500, "invalid_stock_observation");
+    return this.repository.saveStockObservationIfAbsent({
+      id,
+      familyID: account.familyID,
+      itemID,
+      observedByMemberID: account.memberID,
+      level: input.level,
+      quantity,
+      note,
+      observedAt: timestamp(this.now(), "invalid_stock_observation"),
+    });
+  }
 }
 
 export function normalizedShoppingName(value: string): string {
@@ -250,6 +403,10 @@ function optionalPositiveNumber(
 }
 
 function validTimestamp(value: Date): string {
-  if (!Number.isFinite(value.getTime())) throw new ShoppingModuleError("invalid_pantry_item");
+  return timestamp(value, "invalid_pantry_item");
+}
+
+function timestamp(value: Date, reason: ShoppingModuleFailureReason): string {
+  if (!Number.isFinite(value.getTime())) throw new ShoppingModuleError(reason);
   return value.toISOString();
 }

@@ -156,13 +156,17 @@ _Avoid_: Purchase record, prediction
 The Family's expectation for when and where a Pantry item should be reconsidered, based on criticality, normal duration, and optional minimum or target quantity.
 _Avoid_: Purchase history, automatic order
 
+**Family item request**:
+A Member-authored request to consider one Pantry item for replenishment. It remains evidence until cancelled, resolved, or incorporated into a parent-finalized Shopping trip plan; it does not silently become a purchase decision.
+_Avoid_: Stock observation, Shopping list entry, automatic purchase
+
 **Shopping trip plan**:
 A proposal for one occurrence of a Shopping routine that separates items to buy, check at home, or skip, with the evidence behind each recommendation. A parent finalizes it before shopping.
 _Avoid_: Shopping routine, authoritative inventory
 
 **Shopping list entry**:
-An explicit Family request or parent-approved decision about an item for a Shopping trip plan, including its buy, check, skipped, or purchased state.
-_Avoid_: Pantry item, AI recommendation
+A parent-approved decision about an item for a specific Shopping trip plan, including its buy, check, skipped, or purchased state. It may be informed by a Family item request but is not the request itself.
+_Avoid_: Pantry item, Family item request, AI recommendation
 
 **Purchase record**:
 Timestamped evidence that a Pantry item was purchased at a store, with optional quantity and price. It informs replenishment without proving how much remains.

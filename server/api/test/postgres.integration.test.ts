@@ -140,22 +140,81 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       routines: [{ id: routineID, storeName: "Private Market", intervalWeeks: 3 }],
       items: [{ id: itemID, name: "Secret cereal", routineIDs: [routineID] }],
     });
+    const requestID = "30000000-0000-4000-8000-000000000001";
+    const observationID = "40000000-0000-4000-8000-000000000001";
+    const request = await shopping.requestItem(account, requestID, {
+      itemID, quantity: 2, note: "Private request note",
+    });
+    const observation = await shopping.observeStock(account, observationID, itemID, {
+      level: "low", quantity: 0.5, note: "Private observation note",
+    });
+    expect(await shopping.evidence(account)).toEqual({
+      openRequests: [request], latestObservations: [observation],
+    });
+    await shopping.closeRequest(account, requestID, "resolved");
+    expect((await shopping.evidence(account)).openRequests).toEqual([]);
 
     const inspection = new Pool({ connectionString: databaseURL });
     try {
       const stored = await inspection.query<{ details_ciphertext: string }>(
         `SELECT details_ciphertext FROM shopping_routines WHERE family_id = $1
          UNION ALL
-         SELECT details_ciphertext FROM pantry_items WHERE family_id = $1`,
+         SELECT details_ciphertext FROM pantry_items WHERE family_id = $1
+         UNION ALL
+         SELECT details_ciphertext FROM shopping_item_requests WHERE family_id = $1
+         UNION ALL
+         SELECT details_ciphertext FROM stock_observations WHERE family_id = $1`,
         [account.familyID],
       );
-      expect(stored.rows).toHaveLength(2);
+      expect(stored.rows).toHaveLength(4);
       for (const row of stored.rows) expect(row.details_ciphertext).toMatch(/^rr1\./);
       expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Private Market");
       expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Secret cereal");
+      expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Private request note");
+      expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Private observation note");
     } finally {
       await inspection.end();
     }
+  });
+
+  it("preserves concurrent Shopping evidence writes and resolves resource-ID replays", async () => {
+    const firstRepository = repositoryForTest();
+    const secondRepository = repositoryForTest();
+    const account = await firstRepository.provisionParentAccount(
+      "shopping-evidence-concurrency-parent",
+      "Shopping Parent",
+    );
+    const first = new ShoppingModule(
+      firstRepository,
+      () => new Date("2026-10-02T12:00:00.000Z"),
+    );
+    const second = new ShoppingModule(
+      secondRepository,
+      () => new Date("2026-10-03T12:00:00.000Z"),
+    );
+    const itemID = "20000000-0000-4000-8000-000000000021";
+    const requestID = "30000000-0000-4000-8000-000000000021";
+    await first.savePantryItem(account, itemID, {
+      name: "Concurrent milk", critical: false, routineIDs: [],
+    });
+
+    const requests = await Promise.all([
+      first.requestItem(account, requestID, { itemID, quantity: 1, note: "Shared request" }),
+      second.requestItem(account, requestID, { itemID, quantity: 1, note: "Shared request" }),
+    ]);
+    expect(requests[0]).toEqual(requests[1]);
+
+    await Promise.all([
+      first.observeStock(account, "40000000-0000-4000-8000-000000000021", itemID, {
+        level: "enough", quantity: 1, note: null,
+      }),
+      second.observeStock(account, "40000000-0000-4000-8000-000000000022", itemID, {
+        level: "out", quantity: 0, note: null,
+      }),
+    ]);
+    const evidence = await first.evidence(account);
+    expect(evidence.openRequests).toHaveLength(1);
+    expect(evidence.latestObservations).toMatchObject([{ itemID, level: "out" }]);
   });
 
   it("serializes concurrent normalized Shopping names inside protected persistence", async () => {

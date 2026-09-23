@@ -80,6 +80,8 @@ private actor ShoppingUITestStore: ShoppingStore {
     private let routineID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
     private var routines: [ShoppingRoutine]
     private var items: [PantryItem]
+    private var requests: [ShoppingItemRequest]
+    private var observations: [StockObservation]
 
     init() {
         let timestamp = Date(timeIntervalSince1970: 1_791_187_200)
@@ -88,17 +90,36 @@ private actor ShoppingUITestStore: ShoppingStore {
             intervalWeeks: 1, preferredWeekday: 6, createdByMemberID: "parent",
             createdAt: timestamp, updatedAt: timestamp
         )]
+        let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
         items = [PantryItem(
-            id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
-            familyID: "ui-test-family", name: "Oat milk", category: "Dairy alternatives",
-            unit: "cartons", critical: true, expectedDurationDays: 7,
-            minimumQuantity: 1, targetQuantity: 2, routineIDs: [routineID],
-            createdByMemberID: "parent", createdAt: timestamp, updatedAt: timestamp
+            id: itemID, familyID: "ui-test-family", name: "Oat milk",
+            category: "Dairy alternatives", unit: "cartons", critical: true,
+            expectedDurationDays: 7, minimumQuantity: 1, targetQuantity: 2,
+            routineIDs: [routineID], createdByMemberID: "parent",
+            createdAt: timestamp, updatedAt: timestamp
+        )]
+        requests = [ShoppingItemRequest(
+            id: UUID(uuidString: "30000000-0000-4000-8000-000000000001")!,
+            familyID: "ui-test-family", itemID: itemID, requestedByMemberID: "kid-1",
+            quantity: 2, note: "For breakfast", status: .open,
+            requestedAt: timestamp, resolvedAt: nil, resolvedByMemberID: nil
+        )]
+        observations = [StockObservation(
+            id: UUID(uuidString: "40000000-0000-4000-8000-000000000001")!,
+            familyID: "ui-test-family", itemID: itemID, observedByMemberID: "kid-1",
+            level: .low, quantity: 0.5, note: nil, observedAt: timestamp
         )]
     }
 
     func catalog() async throws -> ShoppingCatalog {
         ShoppingCatalog(routines: routines, items: items)
+    }
+
+    func evidence() async throws -> ShoppingEvidence {
+        ShoppingEvidence(
+            openRequests: requests.filter { $0.status == .open },
+            latestObservations: observations
+        )
     }
 
     func saveRoutine(id: UUID, draft: ShoppingRoutineDraft) async throws -> ShoppingRoutine {
@@ -131,6 +152,48 @@ private actor ShoppingUITestStore: ShoppingStore {
     }
 
     func deletePantryItem(id: UUID) async throws { items.removeAll { $0.id == id } }
+
+    func requestItem(
+        id: UUID, draft: ShoppingItemRequestDraft
+    ) async throws -> ShoppingItemRequest {
+        if let existing = requests.first(where: { $0.id == id }) { return existing }
+        let request = ShoppingItemRequest(
+            id: id, familyID: "ui-test-family", itemID: draft.itemID,
+            requestedByMemberID: "parent", quantity: draft.quantity, note: draft.note,
+            status: .open, requestedAt: Date(), resolvedAt: nil, resolvedByMemberID: nil
+        )
+        requests.append(request)
+        return request
+    }
+
+    func closeRequest(
+        id: UUID, status: ShoppingItemRequestStatus
+    ) async throws -> ShoppingItemRequest {
+        let index = requests.firstIndex(where: { $0.id == id })!
+        let current = requests[index]
+        let closed = ShoppingItemRequest(
+            id: current.id, familyID: current.familyID, itemID: current.itemID,
+            requestedByMemberID: current.requestedByMemberID, quantity: current.quantity,
+            note: current.note, status: status, requestedAt: current.requestedAt,
+            resolvedAt: Date(), resolvedByMemberID: "parent"
+        )
+        requests[index] = closed
+        return closed
+    }
+
+    func observeStock(
+        id: UUID, itemID: UUID, input: StockObservationInput
+    ) async throws -> StockObservation {
+        if let existing = observations.first(where: { $0.id == id }) { return existing }
+        let observation = StockObservation(
+            id: id, familyID: "ui-test-family", itemID: itemID,
+            observedByMemberID: "parent", level: input.level,
+            quantity: input.quantity, note: input.note, observedAt: Date()
+        )
+        observations.removeAll { $0.itemID == itemID }
+        observations.append(observation)
+        return observation
+    }
 }
 #endif
 

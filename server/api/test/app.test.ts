@@ -177,6 +177,38 @@ describe("Rallyroo API", () => {
       items: [{ id: itemID, name: "Oat milk", routineIDs: [routineID] }],
     });
 
+    const requestID = "30000000-0000-4000-8000-000000000001";
+    const observationID = "40000000-0000-4000-8000-000000000001";
+    expect((await app.inject({
+      method: "PUT",
+      url: `/v1/shopping/requests/${requestID}`,
+      headers: { authorization: "Bearer kid-token" },
+      payload: { itemID, quantity: 2, note: "For breakfast" },
+    })).statusCode).toBe(200);
+    expect((await app.inject({
+      method: "PUT",
+      url: `/v1/shopping/stock-observations/${observationID}`,
+      headers: { authorization: "Bearer kid-token" },
+      payload: { itemID, level: "low", quantity: 0.5, note: null },
+    })).statusCode).toBe(200);
+
+    const evidence = await app.inject({
+      method: "GET",
+      url: "/v1/shopping/evidence",
+      headers: authorization,
+    });
+    expect(evidence.statusCode).toBe(200);
+    expect(evidence.json()).toMatchObject({
+      openRequests: [{ id: requestID, itemID, requestedByMemberID: "kid-1" }],
+      latestObservations: [{ id: observationID, itemID, level: "low" }],
+    });
+    expect((await app.inject({
+      method: "PATCH",
+      url: `/v1/shopping/requests/${requestID}`,
+      headers: authorization,
+      payload: { status: "resolved" },
+    })).statusCode).toBe(200);
+
     const forbidden = await app.inject({
       method: "PUT",
       url: "/v1/shopping/routines/10000000-0000-4000-8000-000000000002",
