@@ -9,7 +9,7 @@ describe("caltrainPositionPollingPlan", () => {
       now,
       false,
       new Date("2026-09-21T16:29:00Z"),
-    )).toEqual({ pollPositions: true, nextDelayMilliseconds: 5 * 60 * 1_000 });
+    )).toEqual({ pollPositions: true, nextDelayMilliseconds: 2 * 60 * 1_000 });
   });
 
   it("does not poll every scheduler tick without viewer demand", () => {
@@ -20,11 +20,11 @@ describe("caltrainPositionPollingPlan", () => {
     ).pollPositions).toBe(false);
   });
 
-  it("polls after five minutes while someone is viewing live trains", () => {
+  it("polls after two minutes while someone is viewing live trains", () => {
     expect(caltrainPositionPollingPlan(
       now,
       true,
-      new Date("2026-09-21T16:54:00Z"),
+      new Date("2026-09-21T16:57:00Z"),
     ).pollPositions).toBe(true);
   });
 

@@ -380,16 +380,7 @@ struct WeeklyScheduleView: View {
      }
 
     private var commuterSubtitle: String {
-        guard let commuterState else { return "Manage alerts" }
-        guard let installation = commuterState.installation else { return "Set up alerts" }
-        if installation.status == .disabled { return "Alerts paused" }
-        if [.degraded, .stale].contains(commuterState.providerStatus.catalog.state)
-             || [.degraded, .stale].contains(commuterState.providerStatus.realtime.state) {
-            return "Service needs attention"
-          }
-        let active = commuterState.subscriptions.filter { $0.status == .active }.count
-        if active == 0 { return "Add an alert" }
-        return active == 1 ? "1 active alert" : "\(active) active alerts"
+        commuterState?.scheduleCardSubtitle ?? "Manage alerts"
      }
 
     private func presentSharedCapture(_ imageData: Data) {
@@ -929,7 +920,7 @@ private struct EventRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: compact ? 7 : 12) {
             RoundedRectangle(cornerRadius: 2)
-              .fill(Color(familyColorTag: display.primaryColorTag))
+              .fill(participantColorGradient)
               .frame(width: 5)
             VStack(alignment: .leading, spacing: compact ? 3 : 4) {
                 HStack(spacing: 6) {
@@ -945,9 +936,8 @@ private struct EventRow: View {
                     Spacer(minLength: 0)
                 }
                 if !display.participantNames.isEmpty {
-                    Text(display.participantNames.joined(separator: " • "))
+                    participantNamesText
                         .font(compact ? .caption2 : .subheadline)
-                        .foregroundStyle(Color(familyColorTag: display.primaryColorTag))
                         .lineLimit(1)
                 }
                 Text(timeRange)
@@ -984,6 +974,31 @@ private struct EventRow: View {
             .padding(8)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(lifecycleAccessibilityID)
+    }
+
+    private var participantNamesText: Text {
+        display.participantNames.enumerated().reduce(Text("")) { result, item in
+            let separator = item.offset == 0 ? Text("") : Text(" • ").foregroundColor(.secondary)
+            let tag = display.participantColorTags.indices.contains(item.offset)
+                ? display.participantColorTags[item.offset]
+                : display.primaryColorTag
+            return result + separator + Text(item.element).foregroundColor(Color(familyColorTag: tag))
+        }
+    }
+
+    private var participantColorGradient: LinearGradient {
+        let tags = display.participantColorTags.isEmpty
+            ? [display.primaryColorTag]
+            : display.participantColorTags.map(Optional.some)
+        let count = Double(tags.count)
+        let stops = tags.enumerated().flatMap { index, tag -> [Gradient.Stop] in
+            let color = Color(familyColorTag: tag)
+            return [
+                Gradient.Stop(color: color, location: Double(index) / count),
+                Gradient.Stop(color: color, location: Double(index + 1) / count),
+            ]
+        }
+        return LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
     }
 
     private func statusBadge(_ title: String) -> some View {

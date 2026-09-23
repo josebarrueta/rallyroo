@@ -251,6 +251,22 @@ public struct CommuterState: Codable, Equatable, Sendable {
     public let installation: CommuterInstallation?
     public let subscriptions: [CommuteSubscription]
     public let providerStatus: CommuterProviderStatus
+
+    public var scheduleCardSubtitle: String {
+        guard let installation else { return "Set up alerts" }
+        if installation.status == .disabled { return "Alerts paused" }
+        let activeCount = subscriptions.filter { $0.status == .active }.count
+        if activeCount == 0 { return "Add an alert" }
+        return activeCount == 1 ? "1 active alert" : "\(activeCount) active alerts"
+    }
+}
+
+public extension CaltrainLiveTrainsResponse {
+    func positions(matchingTrainNumber query: String) -> [CaltrainVehiclePosition] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return positions }
+        return positions.filter { $0.tripID.localizedCaseInsensitiveContains(normalized) }
+    }
 }
 
 public protocol CommuterStore: Sendable {

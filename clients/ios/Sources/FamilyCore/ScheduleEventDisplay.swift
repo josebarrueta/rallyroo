@@ -4,12 +4,14 @@ import Foundation
 public struct ScheduleEventDisplay: Equatable, Sendable {
     public let event: FamilyEvent
     public let participantNames: [String]
+    public let participantColorTags: [String]
     public let primaryColorTag: String?
 
     public init(event: FamilyEvent, members: [FamilyMember]) {
         self.event = event
         let participants = members.filter { event.participantIDs.contains($0.id) }
         participantNames = participants.map(\.name)
-        primaryColorTag = participants.first?.colorTag
+        participantColorTags = participants.map(\.colorTag)
+        primaryColorTag = participantColorTags.first
     }
 }
