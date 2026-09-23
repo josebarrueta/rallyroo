@@ -41,6 +41,24 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 5))
     }
 
+    func testParentCanManageShoppingRoutinesAndPantryCatalog() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let shopping = app.buttons["Shopping and Pantry"]
+        XCTAssertTrue(shopping.waitForExistence(timeout: 5))
+        shopping.tap()
+
+        XCTAssertTrue(app.navigationBars["Shopping and Pantry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Neighborhood Market"].exists)
+        XCTAssertTrue(app.staticTexts["Oat milk"].exists)
+        XCTAssertTrue(app.buttons["Add shopping routine"].exists)
+        XCTAssertTrue(app.buttons["Add pantry item"].exists)
+    }
+
     func testParentCanEnableTheMorningDayBrief() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"

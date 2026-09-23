@@ -11,8 +11,10 @@ struct SettingsView: View {
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let dayBriefStore: (any DayBriefStore)?
+    private let shoppingStore: (any ShoppingStore)?
     private let locationSearch: (any LocationSearch)?
     private let canManageFamilyPlaces: Bool
+    private let canManageShoppingCatalog: Bool
     private let preferences = ConflictAlertPreferences()
 
     init(
@@ -23,8 +25,10 @@ struct SettingsView: View {
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
         dayBriefStore: (any DayBriefStore)? = nil,
+        shoppingStore: (any ShoppingStore)? = nil,
         locationSearch: (any LocationSearch)? = nil,
         canManageFamilyPlaces: Bool = false,
+        canManageShoppingCatalog: Bool = false,
         onSignOut: SignOutAction = SignOutAction({}),
         onDeleteAccount: DeleteAccountAction = DeleteAccountAction({})
     ) {
@@ -35,8 +39,10 @@ struct SettingsView: View {
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
         self.dayBriefStore = dayBriefStore
+        self.shoppingStore = shoppingStore
         self.locationSearch = locationSearch
         self.canManageFamilyPlaces = canManageFamilyPlaces
+        self.canManageShoppingCatalog = canManageShoppingCatalog
         self.onSignOut = onSignOut
         self.onDeleteAccount = onDeleteAccount
     }
@@ -67,6 +73,20 @@ struct SettingsView: View {
                             DayBriefSettingsView(store: dayBriefStore)
                         }
                         Text("Get a private summary of your schedule, driving duties, and reminders each morning.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let shoppingStore {
+                    Section("Household") {
+                        NavigationLink("Shopping and Pantry") {
+                            ShoppingCatalogView(
+                                store: shoppingStore,
+                                canManage: canManageShoppingCatalog
+                            )
+                        }
+                        Text("Manage store routines and the Family Pantry catalog.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -846,5 +866,392 @@ private struct DayBriefSettingsView: View {
 
     private static func time(hour: Int, minute: Int) -> Date {
         Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: .now) ?? .now
+    }
+}
+
+private struct ShoppingCatalogView: View {
+    let store: any ShoppingStore
+    let canManage: Bool
+    @State private var catalog = ShoppingCatalog(routines: [], items: [])
+    @State private var isAddingRoutine = false
+    @State private var isAddingItem = false
+    @State private var editingRoutine: ShoppingRoutine?
+    @State private var editingItem: PantryItem?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section("Shopping routines") {
+                if catalog.routines.isEmpty {
+                    Text("No shopping routines yet")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(catalog.routines) { routine in
+                    if canManage {
+                        Button { editingRoutine = routine } label: {
+                            routineRow(routine)
+                        }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) { deleteRoutine(routine) }
+                        }
+                    } else {
+                        routineRow(routine)
+                    }
+                }
+            }
+
+            Section("Pantry catalog") {
+                if catalog.items.isEmpty {
+                    Text("No Pantry items yet")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(catalog.items) { item in
+                    if canManage {
+                        Button { editingItem = item } label: {
+                            itemRow(item)
+                        }
+                        .swipeActions {
+                            Button("Delete", role: .destructive) { deleteItem(item) }
+                        }
+                    } else {
+                        itemRow(item)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Shopping and Pantry")
+        .toolbar {
+            if canManage {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { isAddingRoutine = true } label: {
+                        Label("Add shopping routine", systemImage: "storefront")
+                    }
+                    Button { isAddingItem = true } label: {
+                        Label("Add pantry item", systemImage: "plus")
+                    }
+                }
+            }
+        }
+        .task { await load() }
+        .refreshable { await load() }
+        .sheet(isPresented: $isAddingRoutine) {
+            ShoppingRoutineEditor(store: store, routine: nil) { await load() }
+        }
+        .sheet(item: $editingRoutine) { routine in
+            ShoppingRoutineEditor(store: store, routine: routine) { await load() }
+        }
+        .sheet(isPresented: $isAddingItem) {
+            PantryItemEditor(store: store, item: nil, routines: catalog.routines) { await load() }
+        }
+        .sheet(item: $editingItem) { item in
+            PantryItemEditor(store: store, item: item, routines: catalog.routines) { await load() }
+        }
+        .alert("Shopping Catalog Unavailable", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Please try again.")
+        }
+    }
+
+    private func routineRow(_ routine: ShoppingRoutine) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(routine.storeName)
+                .font(.headline)
+                .foregroundStyle(.primary)
+            Text(routineSummary(routine))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func itemRow(_ item: PantryItem) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.name)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text(itemSummary(item))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if item.critical {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Critical item")
+            }
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        do {
+            catalog = try await store.catalog()
+            errorMessage = nil
+        } catch {
+            errorMessage = "We couldn't load the Shopping catalog."
+        }
+    }
+
+    private func deleteRoutine(_ routine: ShoppingRoutine) {
+        Task {
+            do {
+                try await store.deleteRoutine(id: routine.id)
+                await load()
+            } catch {
+                errorMessage = "We couldn't delete that Shopping routine."
+            }
+        }
+    }
+
+    private func deleteItem(_ item: PantryItem) {
+        Task {
+            do {
+                try await store.deletePantryItem(id: item.id)
+                await load()
+            } catch {
+                errorMessage = "We couldn't delete that Pantry item."
+            }
+        }
+    }
+
+    private func routineSummary(_ routine: ShoppingRoutine) -> String {
+        let cadence = routine.intervalWeeks == 1 ? "Every week" : "Every \(routine.intervalWeeks) weeks"
+        guard let weekday = routine.preferredWeekday else { return cadence }
+        return "\(cadence) · \(Self.weekdayName(weekday))"
+    }
+
+    private func itemSummary(_ item: PantryItem) -> String {
+        let routineNames = item.routineIDs.compactMap { id in
+            catalog.routines.first(where: { $0.id == id })?.storeName
+        }
+        let detail = [item.category, item.unit].compactMap { $0 }.joined(separator: " · ")
+        return [detail, routineNames.joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    static func weekdayName(_ weekday: Int) -> String {
+        guard (1...7).contains(weekday) else { return "Any day" }
+        return Calendar.current.weekdaySymbols[weekday % 7]
+    }
+}
+
+private struct ShoppingRoutineEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let routine: ShoppingRoutine?
+    let onSaved: @MainActor () async -> Void
+    @State private var storeName: String
+    @State private var intervalWeeks: Int
+    @State private var preferredWeekday: Int
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        store: any ShoppingStore,
+        routine: ShoppingRoutine?,
+        onSaved: @escaping @MainActor () async -> Void
+    ) {
+        self.store = store
+        self.routine = routine
+        self.onSaved = onSaved
+        _storeName = State(initialValue: routine?.storeName ?? "")
+        _intervalWeeks = State(initialValue: routine?.intervalWeeks ?? 1)
+        _preferredWeekday = State(initialValue: routine?.preferredWeekday ?? 0)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Store name", text: $storeName)
+                    .textInputAutocapitalization(.words)
+                Stepper(
+                    intervalWeeks == 1 ? "Every week" : "Every \(intervalWeeks) weeks",
+                    value: $intervalWeeks,
+                    in: 1...52
+                )
+                Picker("Preferred day", selection: $preferredWeekday) {
+                    Text("Any day").tag(0)
+                    ForEach(1...7, id: \.self) { weekday in
+                        Text(ShoppingCatalogView.weekdayName(weekday)).tag(weekday)
+                    }
+                }
+            }
+            .navigationTitle(routine == nil ? "New Routine" : "Edit Routine")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .disabled(storeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                }
+            }
+            .alert("Routine Not Saved", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private func save() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                _ = try await store.saveRoutine(
+                    id: routine?.id ?? UUID(),
+                    draft: ShoppingRoutineDraft(
+                        storeName: storeName,
+                        intervalWeeks: intervalWeeks,
+                        preferredWeekday: preferredWeekday == 0 ? nil : preferredWeekday
+                    )
+                )
+                await onSaved()
+                dismiss()
+            } catch {
+                errorMessage = "Check the store name and try again."
+            }
+        }
+    }
+}
+
+private struct PantryItemEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let item: PantryItem?
+    let routines: [ShoppingRoutine]
+    let onSaved: @MainActor () async -> Void
+    @State private var name: String
+    @State private var category: String
+    @State private var unit: String
+    @State private var critical: Bool
+    @State private var expectedDurationDays: String
+    @State private var minimumQuantity: String
+    @State private var targetQuantity: String
+    @State private var selectedRoutineIDs: Set<UUID>
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(
+        store: any ShoppingStore,
+        item: PantryItem?,
+        routines: [ShoppingRoutine],
+        onSaved: @escaping @MainActor () async -> Void
+    ) {
+        self.store = store
+        self.item = item
+        self.routines = routines
+        self.onSaved = onSaved
+        _name = State(initialValue: item?.name ?? "")
+        _category = State(initialValue: item?.category ?? "")
+        _unit = State(initialValue: item?.unit ?? "")
+        _critical = State(initialValue: item?.critical ?? false)
+        _expectedDurationDays = State(initialValue: item?.expectedDurationDays.map(String.init) ?? "")
+        _minimumQuantity = State(initialValue: item?.minimumQuantity.map(Self.quantityText) ?? "")
+        _targetQuantity = State(initialValue: item?.targetQuantity.map(Self.quantityText) ?? "")
+        _selectedRoutineIDs = State(initialValue: Set(item?.routineIDs ?? []))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Item") {
+                    TextField("Name", text: $name)
+                    TextField("Category (optional)", text: $category)
+                    TextField("Unit (optional)", text: $unit)
+                    Toggle("Critical item", isOn: $critical)
+                }
+                Section("Replenishment expectations") {
+                    TextField("Expected duration in days", text: $expectedDurationDays)
+                        .keyboardType(.numberPad)
+                    TextField("Minimum quantity", text: $minimumQuantity)
+                        .keyboardType(.decimalPad)
+                    TextField("Target quantity", text: $targetQuantity)
+                        .keyboardType(.decimalPad)
+                }
+                Section("Shopping routines") {
+                    if routines.isEmpty {
+                        Text("Create a Shopping routine first.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(routines) { routine in
+                        Toggle(routine.storeName, isOn: Binding(
+                            get: { selectedRoutineIDs.contains(routine.id) },
+                            set: { selected in
+                                if selected { selectedRoutineIDs.insert(routine.id) }
+                                else { selectedRoutineIDs.remove(routine.id) }
+                            }
+                        ))
+                    }
+                }
+            }
+            .navigationTitle(item == nil ? "New Pantry Item" : "Edit Pantry Item")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .disabled(!isValid || isSaving)
+                }
+            }
+            .alert("Item Not Saved", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard expectedDurationDays.isEmpty || Int(expectedDurationDays).map({ $0 > 0 }) == true else { return false }
+        guard minimumQuantity.isEmpty || Double(minimumQuantity).map({ $0 >= 0 }) == true else { return false }
+        guard targetQuantity.isEmpty || Double(targetQuantity).map({ $0 >= 0 }) == true else { return false }
+        if let minimum = Double(minimumQuantity), let target = Double(targetQuantity), target < minimum {
+            return false
+        }
+        return true
+    }
+
+    private func save() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                _ = try await store.savePantryItem(
+                    id: item?.id ?? UUID(),
+                    draft: PantryItemDraft(
+                        name: name,
+                        category: optional(category),
+                        unit: optional(unit),
+                        critical: critical,
+                        expectedDurationDays: Int(expectedDurationDays),
+                        minimumQuantity: Double(minimumQuantity),
+                        targetQuantity: Double(targetQuantity),
+                        routineIDs: selectedRoutineIDs.sorted { $0.uuidString < $1.uuidString }
+                    )
+                )
+                await onSaved()
+                dismiss()
+            } catch {
+                errorMessage = "Check the item details and try again."
+            }
+        }
+    }
+
+    private func optional(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func quantityText(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(value)
     }
 }

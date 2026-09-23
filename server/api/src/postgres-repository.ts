@@ -58,6 +58,15 @@ import {
   parseStoredCaltrainStaticSchedule,
   type CaltrainStaticScheduleSnapshot,
 } from "./caltrain-static-schedule.js";
+import {
+  normalizedShoppingName,
+  ShoppingNameConflictError,
+  ShoppingRoutineReferenceError,
+  type PantryItem,
+  type ShoppingCatalog,
+  type ShoppingRepository,
+  type ShoppingRoutine,
+} from "./shopping-module.js";
 import type {
   CaltrainStop,
   CaltrainStopsSnapshot,
@@ -69,7 +78,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository, DayBriefPersistence {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository, DayBriefPersistence, ShoppingRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -1063,6 +1072,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM pantry_items WHERE family_id = $1", [row.family_id]);
+        await client.query("DELETE FROM shopping_routines WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM saved_places WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM commuter_installations WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM calendar_sources WHERE family_id = $1", [row.family_id]);
@@ -1108,6 +1119,32 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         );
         await client.query(
           `UPDATE event_travel_plans
+           SET created_by_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           )
+           WHERE family_id = $1 AND created_by_member_id = $2`,
+          [row.family_id, row.member_id, subject],
+        );
+        await client.query(
+          `UPDATE shopping_routines
+           SET created_by_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           )
+           WHERE family_id = $1 AND created_by_member_id = $2`,
+          [row.family_id, row.member_id, subject],
+        );
+        await client.query(
+          `UPDATE pantry_items
            SET created_by_member_id = (
              SELECT account.member_id
              FROM accounts account
@@ -1322,6 +1359,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
              NOT EXISTS (SELECT 1 FROM family_invitations WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM calendar_sources WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM commuter_installations WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM shopping_routines WHERE family_id = $1) AND
+             NOT EXISTS (SELECT 1 FROM pantry_items WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM event_mutation_results WHERE family_id = $1) AND
              NOT EXISTS (SELECT 1 FROM schedule_update_notifications WHERE family_id = $1)
              AS disposable`,
@@ -2814,6 +2853,244 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     };
   }
 
+  async catalog(familyID: string): Promise<ShoppingCatalog> {
+    const [routines, items] = await Promise.all([
+      this.pool.query<ShoppingRoutineRow>(
+        `SELECT family_id, id::text, interval_weeks, preferred_weekday,
+                details_ciphertext, created_by_member_id, created_at, updated_at
+         FROM shopping_routines WHERE family_id = $1 ORDER BY created_at, id`,
+        [familyID],
+      ),
+      this.pool.query<PantryItemRow>(
+        `SELECT i.family_id, i.id::text, i.details_ciphertext,
+                i.created_by_member_id, i.created_at, i.updated_at,
+                COALESCE(array_agg(r.routine_id::text ORDER BY r.routine_id)
+                  FILTER (WHERE r.routine_id IS NOT NULL), '{}') AS routine_ids
+         FROM pantry_items i
+         LEFT JOIN pantry_item_routines r
+           ON r.family_id = i.family_id AND r.pantry_item_id = i.id
+         WHERE i.family_id = $1
+         GROUP BY i.family_id, i.id, i.details_ciphertext,
+                  i.created_by_member_id, i.created_at, i.updated_at
+         ORDER BY i.created_at, i.id`,
+        [familyID],
+      ),
+    ]);
+    return {
+      routines: await Promise.all(routines.rows.map((row) => this.shoppingRoutineFromRow(row))),
+      items: await Promise.all(items.rows.map((row) => this.pantryItemFromRow(row))),
+    };
+  }
+
+  async saveRoutine(routine: ShoppingRoutine): Promise<ShoppingRoutine> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`shopping:${routine.familyID}`],
+      );
+      const rows = await client.query<ShoppingRoutineRow>(
+        `SELECT family_id, id::text, interval_weeks, preferred_weekday,
+                details_ciphertext, created_by_member_id, created_at, updated_at
+         FROM shopping_routines WHERE family_id = $1 ORDER BY created_at, id FOR UPDATE`,
+        [routine.familyID],
+      );
+      const family = await Promise.all(rows.rows.map((row) => this.shoppingRoutineFromRow(row)));
+      if (family.some((candidate) => candidate.id !== routine.id
+        && normalizedShoppingName(candidate.storeName)
+          === normalizedShoppingName(routine.storeName))) {
+        throw new ShoppingNameConflictError("routine");
+      }
+      const details = await this.familyDataProtector.protect(
+        routine.familyID,
+        `shopping-routine:${routine.id}:details`,
+        JSON.stringify({ storeName: routine.storeName }),
+      );
+      await client.query(
+        `INSERT INTO shopping_routines (
+           family_id, id, interval_weeks, preferred_weekday, details_ciphertext,
+           created_by_member_id, created_at, updated_at
+         ) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz)
+         ON CONFLICT (family_id, id) DO UPDATE SET
+           interval_weeks = EXCLUDED.interval_weeks,
+           preferred_weekday = EXCLUDED.preferred_weekday,
+           details_ciphertext = EXCLUDED.details_ciphertext,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          routine.familyID, routine.id, routine.intervalWeeks, routine.preferredWeekday,
+          details, routine.createdByMemberID, routine.createdAt, routine.updatedAt,
+        ],
+      );
+      await client.query("COMMIT");
+      return routine;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteRoutine(familyID: string, routineID: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`shopping:${familyID}`],
+      );
+      const result = await client.query(
+        "DELETE FROM shopping_routines WHERE family_id = $1 AND id = $2::uuid",
+        [familyID, routineID],
+      );
+      await client.query("COMMIT");
+      return (result.rowCount ?? 0) > 0;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async savePantryItem(item: PantryItem): Promise<PantryItem> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`shopping:${item.familyID}`],
+      );
+      if (item.routineIDs.length > 0) {
+        const routines = await client.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM shopping_routines
+           WHERE family_id = $1 AND id = ANY($2::uuid[])`,
+          [item.familyID, item.routineIDs],
+        );
+        if (routines.rows[0]?.count !== item.routineIDs.length) {
+          throw new ShoppingRoutineReferenceError();
+        }
+      }
+      const rows = await client.query<PantryItemRow>(
+        `SELECT i.family_id, i.id::text, i.details_ciphertext,
+                i.created_by_member_id, i.created_at, i.updated_at,
+                COALESCE(array_agg(r.routine_id::text ORDER BY r.routine_id)
+                  FILTER (WHERE r.routine_id IS NOT NULL), '{}') AS routine_ids
+         FROM pantry_items i
+         LEFT JOIN pantry_item_routines r
+           ON r.family_id = i.family_id AND r.pantry_item_id = i.id
+         WHERE i.family_id = $1
+         GROUP BY i.family_id, i.id, i.details_ciphertext,
+                  i.created_by_member_id, i.created_at, i.updated_at
+         ORDER BY i.created_at, i.id`,
+        [item.familyID],
+      );
+      const family = await Promise.all(rows.rows.map((row) => this.pantryItemFromRow(row)));
+      if (family.some((candidate) => candidate.id !== item.id
+        && normalizedShoppingName(candidate.name) === normalizedShoppingName(item.name))) {
+        throw new ShoppingNameConflictError("pantry_item");
+      }
+      const details = await this.familyDataProtector.protect(
+        item.familyID,
+        `pantry-item:${item.id}:details`,
+        JSON.stringify({
+          name: item.name,
+          category: item.category,
+          unit: item.unit,
+          critical: item.critical,
+          expectedDurationDays: item.expectedDurationDays,
+          minimumQuantity: item.minimumQuantity,
+          targetQuantity: item.targetQuantity,
+        }),
+      );
+      await client.query(
+        `INSERT INTO pantry_items (
+           family_id, id, details_ciphertext, created_by_member_id, created_at, updated_at
+         ) VALUES ($1, $2::uuid, $3, $4, $5::timestamptz, $6::timestamptz)
+         ON CONFLICT (family_id, id) DO UPDATE SET
+           details_ciphertext = EXCLUDED.details_ciphertext,
+           updated_at = EXCLUDED.updated_at`,
+        [item.familyID, item.id, details, item.createdByMemberID, item.createdAt, item.updatedAt],
+      );
+      await client.query(
+        "DELETE FROM pantry_item_routines WHERE family_id = $1 AND pantry_item_id = $2::uuid",
+        [item.familyID, item.id],
+      );
+      for (const routineID of item.routineIDs) {
+        await client.query(
+          `INSERT INTO pantry_item_routines (family_id, pantry_item_id, routine_id)
+           VALUES ($1, $2::uuid, $3::uuid)`,
+          [item.familyID, item.id, routineID],
+        );
+      }
+      await client.query("COMMIT");
+      return item;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deletePantryItem(familyID: string, itemID: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`shopping:${familyID}`],
+      );
+      const result = await client.query(
+        "DELETE FROM pantry_items WHERE family_id = $1 AND id = $2::uuid",
+        [familyID, itemID],
+      );
+      await client.query("COMMIT");
+      return (result.rowCount ?? 0) > 0;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async shoppingRoutineFromRow(row: ShoppingRoutineRow): Promise<ShoppingRoutine> {
+    const details = parseShoppingRoutineDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `shopping-routine:${row.id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      storeName: details.storeName,
+      intervalWeeks: row.interval_weeks,
+      preferredWeekday: row.preferred_weekday,
+      createdByMemberID: row.created_by_member_id,
+      createdAt: asISOString(row.created_at),
+      updatedAt: asISOString(row.updated_at),
+    };
+  }
+
+  private async pantryItemFromRow(row: PantryItemRow): Promise<PantryItem> {
+    const details = parsePantryItemDetails(await this.familyDataProtector.reveal(
+      row.family_id,
+      `pantry-item:${row.id}:details`,
+      row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      ...details,
+      routineIDs: row.routine_ids,
+      createdByMemberID: row.created_by_member_id,
+      createdAt: asISOString(row.created_at),
+      updatedAt: asISOString(row.updated_at),
+    };
+  }
+
   private async savedPlaceFromRow(row: SavedPlaceRow): Promise<SavedPlace> {
     const details = parseSavedPlaceDetails(await this.familyDataProtector.reveal(
       row.family_id,
@@ -2857,6 +3134,27 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       ? this.familyDataProtector.reveal(familyID, purpose, value)
       : value;
   }
+}
+
+interface ShoppingRoutineRow {
+  family_id: string;
+  id: string;
+  interval_weeks: number;
+  preferred_weekday: number | null;
+  details_ciphertext: string;
+  created_by_member_id: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface PantryItemRow {
+  family_id: string;
+  id: string;
+  details_ciphertext: string;
+  created_by_member_id: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+  routine_ids: string[];
 }
 
 interface DayBriefPreferencesRow {
@@ -2905,6 +3203,52 @@ function parseDayBrief(value: string): DayBrief {
     throw new Error("Invalid protected Day brief");
   }
   return brief as DayBrief;
+}
+
+function parseShoppingRoutineDetails(value: string): Pick<ShoppingRoutine, "storeName"> {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Shopping routine");
+  const storeName = (parsed as Record<string, unknown>).storeName;
+  if (typeof storeName !== "string" || !storeName.trim() || storeName.length > 120) {
+    throw new Error("Invalid protected Shopping routine");
+  }
+  return { storeName };
+}
+
+function parsePantryItemDetails(value: string): Pick<
+  PantryItem,
+  "name" | "category" | "unit" | "critical" | "expectedDurationDays"
+    | "minimumQuantity" | "targetQuantity"
+> {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Pantry item");
+  const details = parsed as Record<string, unknown>;
+  const nullableString = (candidate: unknown, maximum: number): candidate is string | null =>
+    candidate === null || (typeof candidate === "string" && candidate.length > 0
+      && candidate.length <= maximum);
+  const nullableNumber = (candidate: unknown, minimum: number, maximum: number): candidate is number | null =>
+    candidate === null || (typeof candidate === "number" && Number.isFinite(candidate)
+      && candidate >= minimum && candidate <= maximum);
+  if (typeof details.name !== "string" || !details.name.trim() || details.name.length > 120
+    || !nullableString(details.category, 100)
+    || !nullableString(details.unit, 60)
+    || typeof details.critical !== "boolean"
+    || !nullableNumber(details.expectedDurationDays, 1, 3_650)
+    || !nullableNumber(details.minimumQuantity, 0, 1_000_000)
+    || !nullableNumber(details.targetQuantity, 0, 1_000_000)
+    || (details.minimumQuantity !== null && details.targetQuantity !== null
+      && details.targetQuantity < details.minimumQuantity)) {
+    throw new Error("Invalid protected Pantry item");
+  }
+  return {
+    name: details.name,
+    category: details.category,
+    unit: details.unit,
+    critical: details.critical,
+    expectedDurationDays: details.expectedDurationDays,
+    minimumQuantity: details.minimumQuantity,
+    targetQuantity: details.targetQuantity,
+  };
 }
 
 interface SavedPlaceRow {

@@ -105,7 +105,7 @@ A question attached to a schedule draft when required information is ambiguous. 
 _Avoid_: Model guess, default date
 
 **Protected Family detail**:
-Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, or notification. Scheduling instants, alert triggers, statuses, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
+Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, Shopping routine, Pantry item, Shopping list, Purchase, or notification. Scheduling instants, alert triggers, statuses, cadences, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
 _Avoid_: Schedule metadata, trigger, ciphertext
 
 **Commuter installation**:
