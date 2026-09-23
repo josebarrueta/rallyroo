@@ -282,6 +282,52 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     }
   });
 
+  it("atomically completes a Shopping trip once and encrypts Purchase details", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const account = await first.provisionParentAccount("purchase-parent", "Parent");
+    const shopping = new ShoppingModule(first, () => new Date("2026-10-11T12:00:00Z"));
+    const routineID = "10000000-0000-4000-8000-000000000055";
+    const itemID = "20000000-0000-4000-8000-000000000055";
+    const tripID = "50000000-0000-4000-8000-000000000055";
+    await shopping.saveRoutine(account, routineID, {
+      storeName: "Market", intervalWeeks: 1, preferredWeekday: null,
+    });
+    await shopping.savePantryItem(account, itemID, {
+      name: "Rice", critical: false, routineIDs: [routineID],
+    });
+    const draft = await shopping.prepareTrip(account, tripID, routineID, "2026-10-11");
+    const finalized = await shopping.finalizeTrip(account, tripID, draft.version);
+    const outcomes = [{ itemID, status: "purchased" as const, quantity: 3, price: 12.75 }];
+    const results = await Promise.allSettled([
+      shopping.completeTrip(account, tripID, finalized.version, outcomes),
+      new ShoppingModule(second).completeTrip(account, tripID, finalized.version, outcomes),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    const purchases = await second.purchases(account.familyID);
+    expect(purchases).toMatchObject([{ tripID, itemID, quantity: 3, price: 12.75 }]);
+    expect((await second.trips(account.familyID))[0]).toMatchObject({
+      status: "completed", outcomes: [{ status: "purchased" }],
+    });
+    expect((await shopping.evidence(account)).latestObservations).toEqual([]);
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const stored = await inspection.query<{ details_ciphertext: string }>(
+        `SELECT details_ciphertext FROM shopping_purchases WHERE family_id = $1
+         UNION ALL SELECT details_ciphertext FROM shopping_trip_plans WHERE family_id = $1`,
+        [account.familyID],
+      );
+      expect(stored.rows).toHaveLength(2);
+      for (const row of stored.rows) {
+        expect(row.details_ciphertext).toMatch(/^rr1\./);
+        expect(row.details_ciphertext).not.toContain("12.75");
+      }
+    } finally {
+      await inspection.end();
+    }
+  });
+
   it("serializes concurrent normalized Shopping names inside protected persistence", async () => {
     const firstRepository = repositoryForTest();
     const secondRepository = repositoryForTest();
@@ -1597,8 +1643,14 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       critical: false,
       routineIDs: ["10000000-0000-4000-8000-000000000199"],
     });
-    await shopping.prepareTrip(account, "50000000-0000-4000-8000-000000000199",
+    const deletionTrip = await shopping.prepareTrip(account,
+      "50000000-0000-4000-8000-000000000199",
       "10000000-0000-4000-8000-000000000199", "2026-10-11");
+    const finalizedTrip = await shopping.finalizeTrip(account, deletionTrip.id, deletionTrip.version);
+    await shopping.completeTrip(account, finalizedTrip.id, finalizedTrip.version, [{
+      itemID: "20000000-0000-4000-8000-000000000199",
+      status: "purchased", quantity: 2, price: null,
+    }]);
     await data.saveEvent({
       id: "00000000-0000-4000-8000-000000000199",
       familyID: account.familyID,

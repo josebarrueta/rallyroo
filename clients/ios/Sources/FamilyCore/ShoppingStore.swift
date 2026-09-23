@@ -250,6 +250,47 @@ public struct ShoppingEvidence: Codable, Equatable, Sendable {
 public enum ShoppingTripStatus: String, Codable, Sendable {
   case draft
   case finalized
+  case completed
+}
+
+public enum ShoppingOutcomeStatus: String, Codable, Sendable {
+  case purchased
+  case skipped
+  case unavailable
+  case deferred
+}
+
+public struct ShoppingOutcomeInput: Codable, Equatable, Sendable {
+  public let itemID: UUID
+  public let status: ShoppingOutcomeStatus
+  public let quantity: Double?
+  public let price: Double?
+
+  public init(itemID: UUID, status: ShoppingOutcomeStatus, quantity: Double?, price: Double?) {
+    self.itemID = itemID
+    self.status = status
+    self.quantity = quantity
+    self.price = price
+  }
+}
+
+public struct ShoppingPurchase: Codable, Equatable, Sendable {
+  public let familyID: String
+  public let tripID: UUID
+  public let itemID: UUID
+  public let purchasedAt: Date
+  public let quantity: Double?
+  public let price: Double?
+
+  public init(familyID: String, tripID: UUID, itemID: UUID,
+              purchasedAt: Date, quantity: Double?, price: Double?) {
+    self.familyID = familyID
+    self.tripID = tripID
+    self.itemID = itemID
+    self.purchasedAt = purchasedAt
+    self.quantity = quantity
+    self.price = price
+  }
 }
 
 public enum ShoppingTripDecision: String, Codable, Sendable {
@@ -283,16 +324,21 @@ public struct ShoppingTripPlan: Codable, Equatable, Identifiable, Sendable {
   public let status: ShoppingTripStatus
   public let version: Int
   public let entries: [ShoppingTripEntry]
+  public let outcomes: [ShoppingOutcomeInput]
   public let createdByMemberID: String
   public let createdAt: Date
   public let updatedAt: Date
   public let finalizedAt: Date?
   public let finalizedByMemberID: String?
+  public let completedAt: Date?
+  public let completedByMemberID: String?
 
   public init(id: UUID, familyID: String, routineID: UUID, plannedFor: String,
               status: ShoppingTripStatus, version: Int, entries: [ShoppingTripEntry],
-              createdByMemberID: String, createdAt: Date, updatedAt: Date,
-              finalizedAt: Date?, finalizedByMemberID: String?) {
+              outcomes: [ShoppingOutcomeInput], createdByMemberID: String,
+              createdAt: Date, updatedAt: Date,
+              finalizedAt: Date?, finalizedByMemberID: String?,
+              completedAt: Date?, completedByMemberID: String?) {
     self.id = id
     self.familyID = familyID
     self.routineID = routineID
@@ -300,11 +346,14 @@ public struct ShoppingTripPlan: Codable, Equatable, Identifiable, Sendable {
     self.status = status
     self.version = version
     self.entries = entries
+    self.outcomes = outcomes
     self.createdByMemberID = createdByMemberID
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.finalizedAt = finalizedAt
     self.finalizedByMemberID = finalizedByMemberID
+    self.completedAt = completedAt
+    self.completedByMemberID = completedByMemberID
   }
 }
 
@@ -319,6 +368,9 @@ public struct ShoppingTripDecisionInput: Codable, Equatable, Sendable {
 }
 
 public protocol ShoppingStore: Sendable {
+  func purchases() async throws -> [ShoppingPurchase]
+  func completeTrip(id: UUID, expectedVersion: Int,
+                    outcomes: [ShoppingOutcomeInput]) async throws -> ShoppingTripPlan
   func trips() async throws -> [ShoppingTripPlan]
   func prepareTrip(id: UUID, routineID: UUID, plannedFor: String) async throws -> ShoppingTripPlan
   func reviewTrip(id: UUID, expectedVersion: Int,
@@ -352,6 +404,19 @@ public actor RemoteShoppingStore: ShoppingStore {
     decoder = JSONDecoder()
     encoder.dateEncodingStrategy = .iso8601
     decoder.dateDecodingStrategy = .iso8601
+  }
+
+  public func purchases() async throws -> [ShoppingPurchase] {
+    try await sendAndDecode(HTTPRequest(method: .get, url: shoppingURL.appending(path: "purchases")))
+  }
+
+  public func completeTrip(id: UUID, expectedVersion: Int,
+                           outcomes: [ShoppingOutcomeInput]) async throws -> ShoppingTripPlan {
+    try await sendAndDecode(HTTPRequest(
+      method: .post, url: tripURL(id).appending(path: "complete"),
+      headers: ["Content-Type": "application/json"],
+      body: try encoder.encode(TripCompletion(expectedVersion: expectedVersion, outcomes: outcomes))
+    ))
   }
 
   public func trips() async throws -> [ShoppingTripPlan] {
@@ -489,6 +554,11 @@ private struct TripPreparation: Encodable {
 private struct TripReview: Encodable {
   let expectedVersion: Int
   let entries: [ShoppingTripDecisionInput]
+}
+
+private struct TripCompletion: Encodable {
+  let expectedVersion: Int
+  let outcomes: [ShoppingOutcomeInput]
 }
 
 private struct TripFinalization: Encodable {

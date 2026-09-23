@@ -77,10 +77,16 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Oat milk"].exists)
         XCTAssertTrue(app.buttons["Finalize Trip"].exists)
         app.buttons["Finalize Trip"].tap()
-        let confirmation = app.buttons.matching(identifier: "Finalize Trip").element(boundBy: 1)
+        let confirmation = app.buttons["Confirm Finalization"]
         XCTAssertTrue(confirmation.waitForExistence(timeout: 2))
         confirmation.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Finalized")).firstMatch
+            .waitForExistence(timeout: 5))
+        app.buttons["Record Trip Outcomes"].tap()
+        XCTAssertTrue(app.buttons["Purchased Oat milk"].waitForExistence(timeout: 2))
+        app.buttons["Purchased Oat milk"].tap()
+        app.buttons["Complete Trip"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Completed")).firstMatch
             .waitForExistence(timeout: 5))
     }
 

@@ -1,6 +1,6 @@
 # Day Brief and Shopping Design
 
-Status: Day Brief v1 and Shopping v1 catalog/evidence/reviewed-trip slices implemented; trip outcomes and Purchase history remain planned.
+Status: Day Brief v1 and Shopping v1 catalog, evidence, reviewed trips, outcomes, and Purchase history implemented; receipt/barcode capture and learned consumption remain deferred.
 
 ## Goals
 
@@ -134,7 +134,7 @@ A parent reviews and finalizes the plan. AI may summarize the plan or group item
 
 ### Trip completion
 
-A parent marks each planned entry as purchased, skipped, unavailable, or deferred. A purchase creates a Purchase record and may update the Stock observation. Skipping does not imply that stock is enough unless the parent explicitly records that observation.
+A parent marks every planned entry as purchased, skipped, unavailable, or deferred in one version-guarded completion. A purchased entry creates an encrypted Purchase record with optional quantity and price. Completion does not create a Stock observation; neither a Purchase nor a skip proves that stock remains at home. Retrying a completed trip is idempotent, and concurrent completion cannot duplicate Purchases. Family Members may read completed trips and Purchase history but only parents may complete them.
 
 Receipt scanning, barcode capture, learned consumption intervals, and price optimization are later capabilities. They are not required for the initial release.
 
@@ -147,7 +147,7 @@ Trip preparation is implemented without AI. The freshness window is seven days, 
 3. Recent Enough observation.
 4. Missing or stale evidence, which yields Check at home rather than Buy or Skip.
 
-Purchase history and duration-based predictions remain deferred until outcomes are recorded. A critical item without recent evidence remains Check at home; a parent makes the final decision. Open requests override Enough with an explicit conflicting-evidence reason.
+Recent Purchase history now provides an uncertainty reason—“Purchased recently; check at home before buying”—when no Stock observation exists. The item's expected duration, or seven days by default, sets that window. A Purchase alone never yields Buy or Skip. A critical item without recent evidence remains Check at home; a parent makes the final decision. Open requests override Enough with an explicit conflicting-evidence reason. Learned consumption predictions remain deferred.
 
 Conflicting evidence is surfaced for review rather than silently resolved. The exact freshness windows and confidence thresholds belong inside the module and can evolve without changing callers.
 
@@ -158,7 +158,9 @@ interface ShoppingModule {
   prepareTrip(account: Account, id: string, routineID: string, plannedFor: string): Promise<ShoppingTripPlan>;
   reviewTrip(account: Account, tripID: string, review: ShoppingTripReview): Promise<ShoppingTripPlan>;
   finalizeTrip(account: Account, tripID: string, expectedVersion: number): Promise<ShoppingTripPlan>;
+  completeTrip(account: Account, tripID: string, expectedVersion: number, outcomes: ShoppingOutcomeInput[]): Promise<ShoppingTripPlan>;
   trips(account: Account): Promise<ShoppingTripPlan[]>;
+  purchases(account: Account): Promise<ShoppingPurchase[]>;
 }
 ```
 
@@ -190,6 +192,6 @@ The implementation hides evidence ordering, stock staleness, recommendation reas
 2. Family item requests and Stock observations. **Implemented.**
 3. Deterministic Buy / Check at home / Skip preparation. **Implemented.**
 4. Parent review and shared shopping experience. **Implemented.**
-5. Trip outcomes and Purchase history.
+5. Trip outcomes and Purchase history. **Implemented.**
 
 The Day Brief and Shopping modules should ship independently. Neither should delay or share persistence with the other merely because both can use AI wording.

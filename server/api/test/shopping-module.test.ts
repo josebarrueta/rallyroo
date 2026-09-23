@@ -326,6 +326,58 @@ describe("ShoppingModule catalog", () => {
     expect(await module.trips(parent)).toEqual([first]);
   });
 
+  it("records parent-confirmed outcomes once and treats purchases as uncertain evidence", async () => {
+    let now = new Date("2026-10-11T12:00:00.000Z");
+    const module = new ShoppingModule(new InMemoryShoppingRepository(), () => now);
+    await module.saveRoutine(parent, routineID, {
+      storeName: "Market", intervalWeeks: 1, preferredWeekday: null,
+    });
+    await module.savePantryItem(parent, itemID, {
+      name: "Oat milk", critical: true, routineIDs: [routineID],
+    });
+    const first = await module.prepareTrip(parent,
+      "50000000-0000-4000-8000-000000000051", routineID, "2026-10-11");
+    const finalized = await module.finalizeTrip(parent, first.id, first.version);
+    const outcomes = [{ itemID, status: "purchased" as const, quantity: 2, price: 8.5 }];
+    await expect(module.completeTrip(kid, first.id, finalized.version, outcomes))
+      .rejects.toEqual(new ShoppingModuleError("parent_required"));
+    const completed = await module.completeTrip(parent, first.id, finalized.version, outcomes);
+    expect(completed).toMatchObject({ status: "completed", version: 3,
+      outcomes: [{ itemID, status: "purchased", quantity: 2, price: 8.5 }] });
+    expect(await module.completeTrip(parent, first.id, finalized.version, outcomes)).toEqual(completed);
+    expect(await module.purchases(kid)).toMatchObject([{
+      itemID, tripID: first.id, quantity: 2, price: 8.5,
+    }]);
+    now = new Date("2026-10-18T12:00:00.000Z");
+    const next = await module.prepareTrip(parent,
+      "50000000-0000-4000-8000-000000000052", routineID, "2026-10-18");
+    expect(next.entries).toMatchObject([{
+      decision: "check_at_home", reason: "Purchased recently; check at home before buying.",
+    }]);
+  });
+
+  it("requires one outcome per planned entry and never infers Stock from skipped items", async () => {
+    const module = new ShoppingModule(new InMemoryShoppingRepository());
+    await module.saveRoutine(parent, routineID, {
+      storeName: "Market", intervalWeeks: 1, preferredWeekday: null,
+    });
+    await module.savePantryItem(parent, itemID, { name: "Milk", critical: false, routineIDs: [routineID] });
+    const draft = await module.prepareTrip(parent,
+      "50000000-0000-4000-8000-000000000053", routineID, "2026-10-11");
+    const trip = await module.finalizeTrip(parent, draft.id, draft.version);
+    await expect(module.completeTrip(parent, trip.id, trip.version, []))
+      .rejects.toEqual(new ShoppingModuleError("invalid_trip_outcomes"));
+    await expect(module.completeTrip(parent, trip.id, trip.version, [
+      { itemID, status: "skipped", quantity: 1, price: null },
+    ])).rejects.toEqual(new ShoppingModuleError("invalid_trip_outcomes"));
+    const completed = await module.completeTrip(parent, trip.id, trip.version, [
+      { itemID, status: "skipped", quantity: null, price: null },
+    ]);
+    expect(completed.status).toBe("completed");
+    expect(await module.purchases(parent)).toEqual([]);
+    expect((await module.evidence(parent)).latestObservations).toEqual([]);
+  });
+
   it("retains catalog items referenced by a Shopping trip", async () => {
     const module = new ShoppingModule(new InMemoryShoppingRepository());
     await module.saveRoutine(parent, routineID, {
