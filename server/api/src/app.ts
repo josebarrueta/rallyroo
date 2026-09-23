@@ -290,6 +290,16 @@ const shoppingTripReviewSchema = z.object({
 const shoppingTripFinalizationSchema = z.object({
   expectedVersion: z.number().int().positive(),
 }).strict();
+const shoppingTripCompletionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  outcomes: z.array(z.object({
+    itemID: shoppingResourceIDSchema,
+    status: z.enum(["purchased", "skipped", "unavailable", "deferred"]),
+    quantity: z.number().positive().max(1_000_000).nullable().default(null),
+    price: z.number().min(0).max(1_000_000).nullable().default(null),
+  }).strict().refine((outcome) => outcome.status === "purchased"
+    || (outcome.quantity === null && outcome.price === null))).max(500),
+}).strict();
 const shoppingRequestStatusSchema = z.object({
   status: z.enum(["resolved", "cancelled"]),
 }).strict();
@@ -598,6 +608,11 @@ export function buildApp({
     return shopping.trips(requiredAccount(request));
   });
 
+  app.get("/v1/shopping/purchases", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    return shopping.purchases(requiredAccount(request));
+  });
+
   app.put("/v1/shopping/trips/:id", async (request, reply) => {
     if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
     const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
@@ -631,6 +646,20 @@ export function buildApp({
     if (!id.success || !input.success) return reply.code(400).send({ error: "invalid_shopping_trip" });
     try {
       return await shopping.finalizeTrip(requiredAccount(request), id.data, input.data.expectedVersion);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.post("/v1/shopping/trips/:id/complete", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const input = shoppingTripCompletionSchema.safeParse(request.body);
+    if (!id.success || !input.success) return reply.code(400).send({ error: "invalid_trip_outcomes" });
+    try {
+      return await shopping.completeTrip(
+        requiredAccount(request), id.data, input.data.expectedVersion, input.data.outcomes,
+      );
     } catch (error) {
       return sendShoppingError(error, reply);
     }
@@ -1781,6 +1810,8 @@ function sendShoppingError(error: unknown, reply: FastifyReply) {
     return reply.code(409).send({ error: "shopping_trip_conflict" });
   case "shopping_trip_catalog_in_use":
     return reply.code(409).send({ error: "shopping_trip_catalog_in_use" });
+  case "invalid_trip_outcomes":
+    return reply.code(400).send({ error: "invalid_trip_outcomes" });
   }
 }
 

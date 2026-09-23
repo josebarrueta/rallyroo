@@ -11,6 +11,8 @@ import {
   type ShoppingRepository,
   type ShoppingRoutine,
   type ShoppingTripPlan,
+  type ShoppingOutcomeInput,
+  type ShoppingPurchase,
   type StockObservation,
 } from "./shopping-module.js";
 
@@ -20,6 +22,7 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
   private readonly requests: ShoppingItemRequest[] = [];
   private readonly observations: StockObservation[] = [];
   private readonly tripPlans: ShoppingTripPlan[] = [];
+  private readonly purchaseRecords: ShoppingPurchase[] = [];
 
   async catalog(familyID: string): Promise<ShoppingCatalog> {
     return {
@@ -177,6 +180,13 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
     return { ...observation };
   }
 
+  async purchases(familyID: string): Promise<ShoppingPurchase[]> {
+    return this.purchaseRecords.filter((purchase) => purchase.familyID === familyID)
+      .sort((left, right) => right.purchasedAt.localeCompare(left.purchasedAt)
+        || right.tripID.localeCompare(left.tripID))
+      .map((purchase) => ({ ...purchase }));
+  }
+
   async trips(familyID: string): Promise<ShoppingTripPlan[]> {
     return this.tripPlans.filter((trip) => trip.familyID === familyID)
       .sort((left, right) => right.plannedFor.localeCompare(left.plannedFor)
@@ -210,6 +220,31 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
     if (index < 0) return null;
     this.tripPlans[index] = copyTrip(trip);
     return copyTrip(trip);
+  }
+
+  async completeTrip(
+    familyID: string,
+    tripID: string,
+    expectedVersion: number,
+    outcomes: ShoppingOutcomeInput[],
+    completedAt: string,
+    completedByMemberID: string,
+  ): Promise<ShoppingTripPlan | null> {
+    const index = this.tripPlans.findIndex((trip) => trip.familyID === familyID
+      && trip.id === tripID && trip.status === "finalized" && trip.version === expectedVersion);
+    if (index < 0) return null;
+    this.tripPlans[index] = {
+      ...this.tripPlans[index]!, status: "completed", version: expectedVersion + 1,
+      outcomes: outcomes.map((outcome) => ({ ...outcome })),
+      updatedAt: completedAt, completedAt, completedByMemberID,
+    };
+    for (const outcome of outcomes.filter((entry) => entry.status === "purchased")) {
+      this.purchaseRecords.push({
+        familyID, tripID, itemID: outcome.itemID, purchasedAt: completedAt,
+        quantity: outcome.quantity, price: outcome.price,
+      });
+    }
+    return copyTrip(this.tripPlans[index]!);
   }
 
   async finalizeTrip(
@@ -251,5 +286,6 @@ function copyTrip(trip: ShoppingTripPlan): ShoppingTripPlan {
   return {
     ...trip,
     entries: trip.entries.map((entry) => ({ ...entry, requestIDs: [...entry.requestIDs] })),
+    outcomes: trip.outcomes.map((outcome) => ({ ...outcome })),
   };
 }

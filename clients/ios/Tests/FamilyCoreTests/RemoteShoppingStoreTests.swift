@@ -183,7 +183,7 @@ final class RemoteShoppingStoreTests: XCTestCase {
     let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
     func tripJSON(status: String, version: Int) -> Data {
       Data("""
-      {"id":"\(tripID)","familyID":"family-1","routineID":"\(routineID)","plannedFor":"2026-10-11","status":"\(status)","version":\(version),"entries":[{"itemID":"\(itemID)","decision":"buy","reason":"Parent decision.","requestIDs":[],"observationID":null}],"createdByMemberID":"parent-1","createdAt":"2026-10-10T12:00:00.000Z","updatedAt":"2026-10-10T12:00:00.000Z","finalizedAt":null,"finalizedByMemberID":null}
+      {"id":"\(tripID)","familyID":"family-1","routineID":"\(routineID)","plannedFor":"2026-10-11","status":"\(status)","version":\(version),"entries":[{"itemID":"\(itemID)","decision":"buy","reason":"Parent decision.","requestIDs":[],"observationID":null}],"outcomes":[],"createdByMemberID":"parent-1","createdAt":"2026-10-10T12:00:00.000Z","updatedAt":"2026-10-10T12:00:00.000Z","finalizedAt":null,"finalizedByMemberID":null,"completedAt":null,"completedByMemberID":null}
       """.utf8)
     }
     let transport = ShoppingRecordingTransport(responses: [
@@ -211,6 +211,34 @@ final class RemoteShoppingStoreTests: XCTestCase {
     XCTAssertEqual(try bodyObject(requests[0])["plannedFor"] as? String, "2026-10-11")
     XCTAssertEqual(try bodyObject(requests[1])["expectedVersion"] as? Int, 1)
     XCTAssertEqual(try bodyObject(requests[2])["expectedVersion"] as? Int, 2)
+  }
+
+  func testCompletesTripAndReadsPurchaseHistory() async throws {
+    let tripID = UUID(uuidString: "50000000-0000-4000-8000-000000000081")!
+    let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000081")!
+    let purchase = """
+    {"familyID":"family-1","tripID":"\(tripID)","itemID":"\(itemID)","purchasedAt":"2026-10-11T12:00:00.000Z","quantity":2,"price":8.5}
+    """
+    let trip = """
+    {"id":"\(tripID)","familyID":"family-1","routineID":"10000000-0000-4000-8000-000000000081","plannedFor":"2026-10-11","status":"completed","version":3,"entries":[{"itemID":"\(itemID)","decision":"buy","reason":"Parent decision.","requestIDs":[],"observationID":null}],"outcomes":[{"itemID":"\(itemID)","status":"purchased","quantity":2,"price":8.5}],"createdByMemberID":"parent-1","createdAt":"2026-10-10T12:00:00.000Z","updatedAt":"2026-10-11T12:00:00.000Z","finalizedAt":"2026-10-10T13:00:00.000Z","finalizedByMemberID":"parent-1","completedAt":"2026-10-11T12:00:00.000Z","completedByMemberID":"parent-1"}
+    """
+    let transport = ShoppingRecordingTransport(responses: [
+      HTTPResponse(statusCode: 200, body: Data(trip.utf8)),
+      HTTPResponse(statusCode: 200, body: Data("[\(purchase)]".utf8)),
+    ])
+    let store = RemoteShoppingStore(baseURL: URL(string: "https://api.example.com")!, transport: transport)
+    let completed = try await store.completeTrip(id: tripID, expectedVersion: 2, outcomes: [
+      ShoppingOutcomeInput(itemID: itemID, status: .purchased, quantity: 2, price: 8.5),
+    ])
+    XCTAssertEqual(completed.status, .completed)
+    XCTAssertEqual(completed.outcomes.first?.status, .purchased)
+    let purchases = try await store.purchases()
+    XCTAssertEqual(purchases.first?.quantity, 2)
+    let requests = await transport.recordedRequests()
+    XCTAssertEqual(requests.map(\.url.path), [
+      "/v1/shopping/trips/\(tripID.uuidString.lowercased())/complete", "/v1/shopping/purchases",
+    ])
+    XCTAssertEqual(try bodyObject(requests[0])["expectedVersion"] as? Int, 2)
   }
 
   func testDeletesRoutineAndPantryItemAtResourcePaths() async throws {

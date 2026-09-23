@@ -72,6 +72,8 @@ import {
   type ShoppingRoutine,
   type ShoppingTripEntry,
   type ShoppingTripPlan,
+  type ShoppingOutcomeInput,
+  type ShoppingPurchase,
   type StockObservation,
 } from "./shopping-module.js";
 import type {
@@ -1079,6 +1081,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM shopping_purchases WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM shopping_trip_plans WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM pantry_items WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM shopping_routines WHERE family_id = $1", [row.family_id]);
@@ -3205,7 +3208,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const rows = await this.pool.query<ShoppingTripRow>(
       `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
               details_ciphertext, created_by_member_id, created_at, updated_at,
-              finalized_at, finalized_by_member_id
+              finalized_at, finalized_by_member_id, completed_at, completed_by_member_id
        FROM shopping_trip_plans WHERE family_id = $1
        ORDER BY planned_for DESC, id DESC`,
       [familyID],
@@ -3217,7 +3220,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const rows = await this.pool.query<ShoppingTripRow>(
       `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
               details_ciphertext, created_by_member_id, created_at, updated_at,
-              finalized_at, finalized_by_member_id
+              finalized_at, finalized_by_member_id, completed_at, completed_by_member_id
        FROM shopping_trip_plans WHERE family_id = $1 AND id = $2::uuid`,
       [familyID, tripID],
     );
@@ -3262,7 +3265,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const rows = await this.pool.query<ShoppingTripRow>(
       `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
               details_ciphertext, created_by_member_id, created_at, updated_at,
-              finalized_at, finalized_by_member_id
+              finalized_at, finalized_by_member_id, completed_at, completed_by_member_id
        FROM shopping_trip_plans
        WHERE family_id = $1 AND routine_id = $2::uuid AND planned_for = $3::date`,
       [familyID, routineID, plannedFor],
@@ -3301,6 +3304,78 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     } finally {
       client.release();
     }
+  }
+
+  async purchases(familyID: string): Promise<ShoppingPurchase[]> {
+    const rows = await this.pool.query<ShoppingPurchaseRow>(
+      `SELECT family_id, trip_id::text, pantry_item_id::text, purchased_at, details_ciphertext
+       FROM shopping_purchases WHERE family_id = $1
+       ORDER BY purchased_at DESC, trip_id DESC, pantry_item_id DESC`,
+      [familyID],
+    );
+    return Promise.all(rows.rows.map(async (row) => {
+      const details = parseShoppingPurchaseDetails(await this.familyDataProtector.reveal(
+        row.family_id, `shopping-purchase:${row.trip_id}:${row.pantry_item_id}:details`,
+        row.details_ciphertext,
+      ));
+      return {
+        familyID: row.family_id, tripID: row.trip_id, itemID: row.pantry_item_id,
+        purchasedAt: asISOString(row.purchased_at), ...details,
+      };
+    }));
+  }
+
+  async completeTrip(
+    familyID: string,
+    tripID: string,
+    expectedVersion: number,
+    outcomes: ShoppingOutcomeInput[],
+    completedAt: string,
+    completedByMemberID: string,
+  ): Promise<ShoppingTripPlan | null> {
+    const trip = await this.trip(familyID, tripID);
+    if (!trip || trip.status !== "finalized") return null;
+    const ciphertext = await this.protectShoppingTrip({ ...trip, outcomes });
+    const purchases = await Promise.all(outcomes
+      .filter((outcome) => outcome.status === "purchased")
+      .map(async (outcome) => ({
+        ...outcome,
+        ciphertext: await this.familyDataProtector.protect(
+          familyID, `shopping-purchase:${tripID}:${outcome.itemID}:details`,
+          JSON.stringify({ quantity: outcome.quantity, price: outcome.price }),
+        ),
+      })));
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query(
+        `UPDATE shopping_trip_plans
+         SET status = 'completed', version = version + 1,
+             updated_at = $4::timestamptz, completed_at = $4::timestamptz,
+             completed_by_member_id = $5, details_ciphertext = $6
+         WHERE family_id = $1 AND id = $2::uuid AND version = $3 AND status = 'finalized'`,
+        [familyID, tripID, expectedVersion, completedAt, completedByMemberID, ciphertext],
+      );
+      if (!updated.rowCount) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      for (const purchase of purchases) {
+        await client.query(
+          `INSERT INTO shopping_purchases (
+             family_id, trip_id, pantry_item_id, purchased_at, details_ciphertext
+           ) VALUES ($1, $2::uuid, $3::uuid, $4::timestamptz, $5)`,
+          [familyID, tripID, purchase.itemID, completedAt, purchase.ciphertext],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return this.trip(familyID, tripID);
   }
 
   async finalizeTrip(
@@ -3353,12 +3428,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
 
   private protectShoppingTrip(trip: ShoppingTripPlan): Promise<string> {
     return this.familyDataProtector.protect(
-      trip.familyID, `shopping-trip:${trip.id}:details`, JSON.stringify(trip.entries),
+      trip.familyID, `shopping-trip:${trip.id}:details`,
+      JSON.stringify({ entries: trip.entries, outcomes: trip.outcomes }),
     );
   }
 
   private async shoppingTripFromRow(row: ShoppingTripRow): Promise<ShoppingTripPlan> {
-    const entries = parseShoppingTripEntries(await this.familyDataProtector.reveal(
+    const { entries, outcomes } = parseShoppingTripDetails(await this.familyDataProtector.reveal(
       row.family_id, `shopping-trip:${row.id}:details`, row.details_ciphertext,
     ));
     return {
@@ -3369,11 +3445,14 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       status: row.status,
       version: row.version,
       entries,
+      outcomes,
       createdByMemberID: row.created_by_member_id,
       createdAt: asISOString(row.created_at),
       updatedAt: asISOString(row.updated_at),
       finalizedAt: row.finalized_at ? asISOString(row.finalized_at) : null,
       finalizedByMemberID: row.finalized_by_member_id,
+      completedAt: row.completed_at ? asISOString(row.completed_at) : null,
+      completedByMemberID: row.completed_by_member_id,
     };
   }
 
@@ -3493,6 +3572,14 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 }
 
+interface ShoppingPurchaseRow {
+  family_id: string;
+  trip_id: string;
+  pantry_item_id: string;
+  purchased_at: Date | string;
+  details_ciphertext: string;
+}
+
 interface ShoppingTripRow {
   family_id: string;
   id: string;
@@ -3506,6 +3593,8 @@ interface ShoppingTripRow {
   updated_at: Date | string;
   finalized_at: Date | string | null;
   finalized_by_member_id: string | null;
+  completed_at: Date | string | null;
+  completed_by_member_id: string | null;
 }
 
 interface ShoppingItemRequestRow {
@@ -3609,14 +3698,32 @@ function shoppingTripCatalogReference(error: unknown): boolean {
   );
 }
 
-function parseShoppingTripEntries(value: string): ShoppingTripEntry[] {
+function parseShoppingPurchaseDetails(value: string): Pick<ShoppingPurchase, "quantity" | "price"> {
   const parsed: unknown = JSON.parse(value);
-  if (!Array.isArray(parsed) || parsed.length > 500) {
+  if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Purchase");
+  const details = parsed as Record<string, unknown>;
+  if ((details.quantity !== null && (typeof details.quantity !== "number"
+      || !Number.isFinite(details.quantity) || details.quantity <= 0 || details.quantity > 1_000_000))
+    || (details.price !== null && (typeof details.price !== "number"
+      || !Number.isFinite(details.price) || details.price < 0 || details.price > 1_000_000))) {
+    throw new Error("Invalid protected Purchase");
+  }
+  return { quantity: details.quantity as number | null, price: details.price as number | null };
+}
+
+function parseShoppingTripDetails(value: string): Pick<ShoppingTripPlan, "entries" | "outcomes"> {
+  const parsed: unknown = JSON.parse(value);
+  const entriesValue = Array.isArray(parsed) ? parsed
+    : parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>).entries : null;
+  const outcomesValue = Array.isArray(parsed) ? []
+    : parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>).outcomes : null;
+  if (!Array.isArray(entriesValue) || entriesValue.length > 500
+    || !Array.isArray(outcomesValue) || outcomesValue.length > 500) {
     throw new Error("Invalid protected Shopping trip");
   }
   const entries: ShoppingTripEntry[] = [];
   const seen = new Set<string>();
-  for (const candidate of parsed) {
+  for (const candidate of entriesValue) {
     if (!candidate || typeof candidate !== "object") {
       throw new Error("Invalid protected Shopping trip");
     }
@@ -3635,7 +3742,28 @@ function parseShoppingTripEntries(value: string): ShoppingTripEntry[] {
     seen.add(entry.itemID);
     entries.push(entry as unknown as ShoppingTripEntry);
   }
-  return entries;
+  const outcomes: ShoppingOutcomeInput[] = [];
+  const outcomeItems = new Set<string>();
+  for (const candidate of outcomesValue) {
+    if (!candidate || typeof candidate !== "object") throw new Error("Invalid protected Shopping trip");
+    const outcome = candidate as Record<string, unknown>;
+    if (typeof outcome.itemID !== "string" || !seen.has(outcome.itemID)
+      || outcomeItems.has(outcome.itemID)
+      || !["purchased", "skipped", "unavailable", "deferred"].includes(String(outcome.status))
+      || (outcome.quantity !== null && (typeof outcome.quantity !== "number"
+        || !Number.isFinite(outcome.quantity) || outcome.quantity <= 0 || outcome.quantity > 1_000_000))
+      || (outcome.price !== null && (typeof outcome.price !== "number"
+        || !Number.isFinite(outcome.price) || outcome.price < 0 || outcome.price > 1_000_000))
+      || (outcome.status !== "purchased" && (outcome.quantity !== null || outcome.price !== null))) {
+      throw new Error("Invalid protected Shopping trip");
+    }
+    outcomeItems.add(outcome.itemID);
+    outcomes.push(outcome as unknown as ShoppingOutcomeInput);
+  }
+  if (outcomes.length > 0 && outcomes.length !== entries.length) {
+    throw new Error("Invalid protected Shopping trip");
+  }
+  return { entries, outcomes };
 }
 
 function parseShoppingEvidenceDetails(

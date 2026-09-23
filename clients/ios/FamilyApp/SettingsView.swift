@@ -877,6 +877,7 @@ private struct ShoppingCatalogView: View {
     @State private var catalog = ShoppingCatalog(routines: [], items: [])
     @State private var evidence = ShoppingEvidence(openRequests: [], latestObservations: [])
     @State private var trips: [ShoppingTripPlan] = []
+    @State private var purchases: [ShoppingPurchase] = []
     @State private var activeTrip: ShoppingTripPlan?
     @State private var pendingTripIDs: [UUID: UUID] = [:]
     @State private var isAddingRoutine = false
@@ -920,7 +921,7 @@ private struct ShoppingCatalogView: View {
                         VStack(alignment: .leading) {
                             Text(catalog.routines.first(where: { $0.id == trip.routineID })?.storeName ?? "Shopping trip")
                                 .font(.headline)
-                            Text("\(trip.plannedFor) · \(trip.status == .draft ? "Draft" : "Finalized")")
+                            Text("\(trip.plannedFor) · \(trip.status == .draft ? "Draft" : trip.status == .finalized ? "Finalized" : "Completed")")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -930,6 +931,19 @@ private struct ShoppingCatalogView: View {
                     ForEach(catalog.routines) { routine in
                         Button("Prepare \(routine.storeName) trip") {
                             prepareTrip(routine)
+                        }
+                    }
+                }
+            }
+
+            if !purchases.isEmpty {
+                Section("Purchase history") {
+                    ForEach(Array(purchases.enumerated()), id: \.offset) { _, purchase in
+                        VStack(alignment: .leading) {
+                            Text(catalog.items.first(where: { $0.id == purchase.itemID })?.name ?? "Pantry item")
+                            Text("Purchased \(purchase.purchasedAt.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -1090,9 +1104,11 @@ private struct ShoppingCatalogView: View {
             async let loadedCatalog = store.catalog()
             async let loadedEvidence = store.evidence()
             async let loadedTrips = store.trips()
+            async let loadedPurchases = store.purchases()
             catalog = try await loadedCatalog
             evidence = try await loadedEvidence
             trips = try await loadedTrips
+            purchases = try await loadedPurchases
             errorMessage = nil
         } catch {
             errorMessage = "We couldn't load the Shopping catalog."
@@ -1212,6 +1228,7 @@ private struct ShoppingTripView: View {
     @State private var decisions: [ShoppingTripDecisionInput]
     @State private var isSaving = false
     @State private var isConfirmingFinalization = false
+    @State private var isRecordingOutcomes = false
     @State private var errorMessage: String?
 
     init(store: any ShoppingStore, trip: ShoppingTripPlan, catalog: ShoppingCatalog,
@@ -1232,7 +1249,7 @@ private struct ShoppingTripView: View {
                 Section {
                     Text(catalog.routines.first(where: { $0.id == trip.routineID })?.storeName ?? "Shopping trip")
                         .font(.headline)
-                    Text("Planned for \(trip.plannedFor) · \(trip.status == .draft ? "Draft" : "Finalized")")
+                    Text("Planned for \(trip.plannedFor) · \(trip.status == .draft ? "Draft" : trip.status == .finalized ? "Finalized" : "Completed")")
                         .foregroundStyle(.secondary)
                     if trip.status == .draft {
                         Text("Recommendations are a starting point. Review every decision before finalizing.")
@@ -1249,6 +1266,10 @@ private struct ShoppingTripView: View {
                                      ?? "Added by a parent.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                if let outcome = trip.outcomes.first(where: { $0.itemID == entry.itemID }) {
+                                    Text(outcomeTitle(outcome.status))
+                                        .font(.caption.bold())
+                                }
                                 if canManage && trip.status == .draft {
                                     Picker("Decision for \(itemName(entry.itemID))", selection: Binding(
                                         get: { decisions.first(where: { $0.itemID == entry.itemID })?.decision ?? decision },
@@ -1267,6 +1288,11 @@ private struct ShoppingTripView: View {
                                 }
                             }
                         }
+                    }
+                }
+                if canManage && trip.status == .finalized {
+                    Section {
+                        Button("Record Trip Outcomes") { isRecordingOutcomes = true }
                     }
                 }
                 if canManage && trip.status == .draft {
@@ -1293,8 +1319,14 @@ private struct ShoppingTripView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .sheet(isPresented: $isRecordingOutcomes) {
+                ShoppingTripOutcomeEditor(store: store, trip: trip, catalog: catalog) { completed in
+                    trip = completed
+                    await onSaved()
+                }
+            }
             .confirmationDialog("Finalize this Shopping trip?", isPresented: $isConfirmingFinalization) {
-                Button("Finalize Trip") { finalize() }
+                Button("Confirm Finalization") { finalize() }
             } message: {
                 Text("The Family will see your reviewed decisions. Buy requests included in the plan will be resolved.")
             }
@@ -1309,6 +1341,15 @@ private struct ShoppingTripView: View {
 
     private var hasChanges: Bool {
         decisions != trip.entries.map { ShoppingTripDecisionInput(itemID: $0.itemID, decision: $0.decision) }
+    }
+
+    private func outcomeTitle(_ status: ShoppingOutcomeStatus) -> String {
+        switch status {
+        case .purchased: "Purchased"
+        case .skipped: "Skipped"
+        case .unavailable: "Unavailable"
+        case .deferred: "Deferred"
+        }
     }
 
     private func itemName(_ id: UUID) -> String {
@@ -1346,6 +1387,112 @@ private struct ShoppingTripView: View {
                 await onSaved()
             } catch {
                 errorMessage = "The trip may have changed. Close and reopen it before finalizing."
+            }
+        }
+    }
+}
+
+private struct ShoppingTripOutcomeEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let trip: ShoppingTripPlan
+    let catalog: ShoppingCatalog
+    let onCompleted: @MainActor (ShoppingTripPlan) async -> Void
+    @State private var choices: [UUID: ShoppingOutcomeStatus] = [:]
+    @State private var quantities: [UUID: String] = [:]
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Record what happened for each planned item. A Purchase does not prove what remains at home.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(trip.entries, id: \.itemID) { entry in
+                    let name = catalog.items.first(where: { $0.id == entry.itemID })?.name ?? "Pantry item"
+                    Section(name) {
+                        ForEach([ShoppingOutcomeStatus.purchased, .skipped, .unavailable, .deferred],
+                                id: \.rawValue) { status in
+                            Button {
+                                choices[entry.itemID] = status
+                            } label: {
+                                HStack {
+                                    Text("\(statusTitle(status)) \(name)")
+                                    Spacer()
+                                    if choices[entry.itemID] == status {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        if choices[entry.itemID] == .purchased {
+                            TextField("Quantity for \(name) (optional)", text: Binding(
+                                get: { quantities[entry.itemID] ?? "" },
+                                set: { quantities[entry.itemID] = $0 }
+                            ))
+                            .keyboardType(.decimalPad)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Trip Outcomes")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Complete Trip") { complete() }
+                        .disabled(!canComplete || isSaving)
+                }
+            }
+            .alert("Trip Not Completed", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private var canComplete: Bool {
+        trip.entries.allSatisfy { entry in
+            guard let choice = choices[entry.itemID] else { return false }
+            let quantity = quantities[entry.itemID] ?? ""
+            return choice != .purchased || quantity.isEmpty
+                || Double(quantity).map { $0.isFinite && $0 > 0 && $0 <= 1_000_000 } == true
+        }
+    }
+
+    private func statusTitle(_ status: ShoppingOutcomeStatus) -> String {
+        switch status {
+        case .purchased: "Purchased"
+        case .skipped: "Skipped"
+        case .unavailable: "Unavailable"
+        case .deferred: "Deferred"
+        }
+    }
+
+    private func complete() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                let outcomes = trip.entries.map { entry in
+                    let choice = choices[entry.itemID]!
+                    return ShoppingOutcomeInput(itemID: entry.itemID, status: choice,
+                        quantity: choice == .purchased ? Double(quantities[entry.itemID] ?? "") : nil,
+                        price: nil)
+                }
+                let completed = try await store.completeTrip(
+                    id: trip.id, expectedVersion: trip.version, outcomes: outcomes
+                )
+                await onCompleted(completed)
+                dismiss()
+            } catch {
+                errorMessage = "The trip may have changed. Your outcomes are still here; close and reopen the trip before retrying."
             }
         }
     }

@@ -277,6 +277,37 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("only lets a parent complete a finalized Shopping trip and shares Purchase history", async () => {
+    const shopping = new ShoppingModule(new InMemoryShoppingRepository());
+    const app = buildApp({ identityProvider, repository: repository(), shopping });
+    const parentHeaders = { authorization: "Bearer parent-token" };
+    const kidHeaders = { authorization: "Bearer kid-token" };
+    const routineID = "10000000-0000-4000-8000-000000000062";
+    const itemID = "20000000-0000-4000-8000-000000000062";
+    const tripID = "50000000-0000-4000-8000-000000000062";
+    await app.inject({ method: "PUT", url: `/v1/shopping/routines/${routineID}`,
+      headers: parentHeaders, payload: { storeName: "Market", intervalWeeks: 1, preferredWeekday: null } });
+    await app.inject({ method: "PUT", url: `/v1/shopping/pantry-items/${itemID}`,
+      headers: parentHeaders, payload: { name: "Milk", critical: false, routineIDs: [routineID] } });
+    const prepared = await app.inject({ method: "PUT", url: `/v1/shopping/trips/${tripID}`,
+      headers: parentHeaders, payload: { routineID, plannedFor: "2026-10-11" } });
+    const finalized = await app.inject({ method: "POST", url: `/v1/shopping/trips/${tripID}/finalize`,
+      headers: parentHeaders, payload: { expectedVersion: prepared.json().version } });
+    const payload = { expectedVersion: finalized.json().version,
+      outcomes: [{ itemID, status: "purchased", quantity: 2, price: 8.5 }] };
+    expect((await app.inject({ method: "POST", url: `/v1/shopping/trips/${tripID}/complete`,
+      headers: kidHeaders, payload })).statusCode).toBe(403);
+    const completed = await app.inject({ method: "POST", url: `/v1/shopping/trips/${tripID}/complete`,
+      headers: parentHeaders, payload });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ status: "completed", outcomes: payload.outcomes });
+    expect((await app.inject({ method: "GET", url: "/v1/shopping/purchases", headers: kidHeaders }))
+      .json()).toMatchObject([{ tripID, itemID, quantity: 2, price: 8.5 }]);
+    expect((await app.inject({ method: "GET", url: "/v1/shopping/purchases",
+      headers: { authorization: "Bearer other-parent-token" } })).json()).toEqual([]);
+    await app.close();
+  });
+
   it("lets a parent configure and retrieve only their private Day brief", async () => {
     let preferences: DayBriefPreferences | null = null;
     const brief: DayBriefRecord = {

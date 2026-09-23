@@ -83,6 +83,7 @@ private actor ShoppingUITestStore: ShoppingStore {
     private var requests: [ShoppingItemRequest]
     private var observations: [StockObservation]
     private var tripPlans: [ShoppingTripPlan] = []
+    private var purchaseRecords: [ShoppingPurchase] = []
 
     init() {
         let timestamp = Date(timeIntervalSince1970: 1_791_187_200)
@@ -112,6 +113,30 @@ private actor ShoppingUITestStore: ShoppingStore {
         )]
     }
 
+    func purchases() async throws -> [ShoppingPurchase] { purchaseRecords }
+
+    func completeTrip(id: UUID, expectedVersion: Int,
+                      outcomes: [ShoppingOutcomeInput]) async throws -> ShoppingTripPlan {
+        guard let index = tripPlans.firstIndex(where: { $0.id == id }),
+              tripPlans[index].version == expectedVersion,
+              tripPlans[index].status == .finalized else { throw URLError(.badServerResponse) }
+        let old = tripPlans[index]
+        let now = Date()
+        let completed = ShoppingTripPlan(id: id, familyID: old.familyID,
+            routineID: old.routineID, plannedFor: old.plannedFor, status: .completed,
+            version: old.version + 1, entries: old.entries, outcomes: outcomes,
+            createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
+            updatedAt: now, finalizedAt: old.finalizedAt,
+            finalizedByMemberID: old.finalizedByMemberID,
+            completedAt: now, completedByMemberID: "parent")
+        tripPlans[index] = completed
+        purchaseRecords.append(contentsOf: outcomes.filter { $0.status == .purchased }.map { outcome in
+            ShoppingPurchase(familyID: old.familyID, tripID: id, itemID: outcome.itemID,
+                purchasedAt: now, quantity: outcome.quantity, price: outcome.price)
+        })
+        return completed
+    }
+
     func trips() async throws -> [ShoppingTripPlan] { tripPlans }
 
     func prepareTrip(id: UUID, routineID: UUID, plannedFor: String) async throws -> ShoppingTripPlan {
@@ -123,9 +148,10 @@ private actor ShoppingUITestStore: ShoppingStore {
                 observationID: observations.first { $0.itemID == item.id }?.id)
         }
         let trip = ShoppingTripPlan(id: id, familyID: "ui-test-family", routineID: routineID,
-            plannedFor: plannedFor, status: .draft, version: 1, entries: entries,
+            plannedFor: plannedFor, status: .draft, version: 1, entries: entries, outcomes: [],
             createdByMemberID: "parent", createdAt: now, updatedAt: now,
-            finalizedAt: nil, finalizedByMemberID: nil)
+            finalizedAt: nil, finalizedByMemberID: nil,
+            completedAt: nil, completedByMemberID: nil)
         tripPlans.append(trip)
         return trip
     }
@@ -140,8 +166,9 @@ private actor ShoppingUITestStore: ShoppingStore {
             entries: entries.map { entry in
                 ShoppingTripEntry(itemID: entry.itemID, decision: entry.decision,
                     reason: "Parent decision.", requestIDs: [], observationID: nil)
-            }, createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
-            updatedAt: Date(), finalizedAt: nil, finalizedByMemberID: nil)
+            }, outcomes: [], createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
+            updatedAt: Date(), finalizedAt: nil, finalizedByMemberID: nil,
+            completedAt: nil, completedByMemberID: nil)
         tripPlans[index] = reviewed
         return reviewed
     }
@@ -153,9 +180,10 @@ private actor ShoppingUITestStore: ShoppingStore {
         let now = Date()
         let finalized = ShoppingTripPlan(id: id, familyID: old.familyID,
             routineID: old.routineID, plannedFor: old.plannedFor, status: .finalized,
-            version: old.version + 1, entries: old.entries,
+            version: old.version + 1, entries: old.entries, outcomes: [],
             createdByMemberID: old.createdByMemberID, createdAt: old.createdAt,
-            updatedAt: now, finalizedAt: now, finalizedByMemberID: "parent")
+            updatedAt: now, finalizedAt: now, finalizedByMemberID: "parent",
+            completedAt: nil, completedByMemberID: nil)
         tripPlans[index] = finalized
         return finalized
     }
