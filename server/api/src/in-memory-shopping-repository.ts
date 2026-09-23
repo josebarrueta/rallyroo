@@ -2,6 +2,7 @@ import {
   normalizedShoppingName,
   ShoppingNameConflictError,
   ShoppingRoutineReferenceError,
+  ShoppingTripCatalogInUseError,
   type PantryItem,
   type ShoppingCatalog,
   type ShoppingEvidence,
@@ -9,6 +10,7 @@ import {
   type ShoppingItemRequestStatus,
   type ShoppingRepository,
   type ShoppingRoutine,
+  type ShoppingTripPlan,
   type StockObservation,
 } from "./shopping-module.js";
 
@@ -17,6 +19,7 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
   private readonly items: PantryItem[] = [];
   private readonly requests: ShoppingItemRequest[] = [];
   private readonly observations: StockObservation[] = [];
+  private readonly tripPlans: ShoppingTripPlan[] = [];
 
   async catalog(familyID: string): Promise<ShoppingCatalog> {
     return {
@@ -42,6 +45,9 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
   }
 
   async deleteRoutine(familyID: string, routineID: string): Promise<boolean> {
+    if (this.tripPlans.some((trip) => trip.familyID === familyID && trip.routineID === routineID)) {
+      throw new ShoppingTripCatalogInUseError();
+    }
     const index = this.routines.findIndex((routine) => routine.familyID === familyID
       && routine.id === routineID);
     if (index < 0) return false;
@@ -77,6 +83,10 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
   }
 
   async deletePantryItem(familyID: string, itemID: string): Promise<boolean> {
+    if (this.tripPlans.some((trip) => trip.familyID === familyID
+      && trip.entries.some((entry) => entry.itemID === itemID))) {
+      throw new ShoppingTripCatalogInUseError();
+    }
     const index = this.items.findIndex((item) => item.familyID === familyID && item.id === itemID);
     if (index < 0) return false;
     this.items.splice(index, 1);
@@ -166,4 +176,80 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
     this.observations.push({ ...observation });
     return { ...observation };
   }
+
+  async trips(familyID: string): Promise<ShoppingTripPlan[]> {
+    return this.tripPlans.filter((trip) => trip.familyID === familyID)
+      .sort((left, right) => right.plannedFor.localeCompare(left.plannedFor)
+        || right.id.localeCompare(left.id))
+      .map(copyTrip);
+  }
+
+  async trip(familyID: string, tripID: string): Promise<ShoppingTripPlan | null> {
+    const trip = this.tripPlans.find((candidate) =>
+      candidate.familyID === familyID && candidate.id === tripID);
+    return trip ? copyTrip(trip) : null;
+  }
+
+  async saveTripIfAbsent(trip: ShoppingTripPlan): Promise<ShoppingTripPlan> {
+    const existing = await this.trip(trip.familyID, trip.id);
+    if (existing) return existing;
+    const sameDay = this.tripPlans.find((candidate) => candidate.familyID === trip.familyID
+      && candidate.routineID === trip.routineID && candidate.plannedFor === trip.plannedFor);
+    if (sameDay) return copyTrip(sameDay);
+    this.tripPlans.push(copyTrip(trip));
+    return copyTrip(trip);
+  }
+
+  async replaceDraftTrip(
+    trip: ShoppingTripPlan,
+    expectedVersion: number,
+  ): Promise<ShoppingTripPlan | null> {
+    const index = this.tripPlans.findIndex((candidate) => candidate.familyID === trip.familyID
+      && candidate.id === trip.id && candidate.status === "draft"
+      && candidate.version === expectedVersion);
+    if (index < 0) return null;
+    this.tripPlans[index] = copyTrip(trip);
+    return copyTrip(trip);
+  }
+
+  async finalizeTrip(
+    familyID: string,
+    tripID: string,
+    expectedVersion: number,
+    finalizedAt: string,
+    finalizedByMemberID: string,
+    resolvedRequestIDs: string[],
+  ): Promise<ShoppingTripPlan | null> {
+    const index = this.tripPlans.findIndex((trip) => trip.familyID === familyID
+      && trip.id === tripID && trip.status === "draft" && trip.version === expectedVersion);
+    if (index < 0) return null;
+    this.tripPlans[index] = {
+      ...this.tripPlans[index]!,
+      status: "finalized",
+      version: expectedVersion + 1,
+      updatedAt: finalizedAt,
+      finalizedAt,
+      finalizedByMemberID,
+    };
+    const requestIDs = new Set(resolvedRequestIDs);
+    for (let requestIndex = 0; requestIndex < this.requests.length; requestIndex += 1) {
+      const request = this.requests[requestIndex]!;
+      if (request.familyID === familyID && request.status === "open" && requestIDs.has(request.id)) {
+        this.requests[requestIndex] = {
+          ...request,
+          status: "resolved",
+          resolvedAt: finalizedAt,
+          resolvedByMemberID: finalizedByMemberID,
+        };
+      }
+    }
+    return copyTrip(this.tripPlans[index]!);
+  }
+}
+
+function copyTrip(trip: ShoppingTripPlan): ShoppingTripPlan {
+  return {
+    ...trip,
+    entries: trip.entries.map((entry) => ({ ...entry, requestIDs: [...entry.requestIDs] })),
+  };
 }

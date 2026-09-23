@@ -11,7 +11,7 @@ import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
 import type { FamilyEvent } from "../src/domain.js";
-import { ShoppingModule } from "../src/shopping-module.js";
+import { ShoppingModule, ShoppingModuleError } from "../src/shopping-module.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -215,6 +215,71 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     const evidence = await first.evidence(account);
     expect(evidence.openRequests).toHaveLength(1);
     expect(evidence.latestObservations).toMatchObject([{ itemID, level: "out" }]);
+  });
+
+  it("persists encrypted Shopping trip plans and rejects concurrent stale reviews", async () => {
+    const firstRepository = repositoryForTest();
+    const secondRepository = repositoryForTest();
+    const account = await firstRepository.provisionParentAccount(
+      "shopping-trip-parent",
+      "Shopping Parent",
+    );
+    const first = new ShoppingModule(
+      firstRepository,
+      () => new Date("2026-10-10T12:00:00.000Z"),
+    );
+    const second = new ShoppingModule(
+      secondRepository,
+      () => new Date("2026-10-10T13:00:00.000Z"),
+    );
+    const routineID = "10000000-0000-4000-8000-000000000031";
+    const itemID = "20000000-0000-4000-8000-000000000031";
+    const tripID = "50000000-0000-4000-8000-000000000031";
+    await first.saveRoutine(account, routineID, {
+      storeName: "Private trip store", intervalWeeks: 1, preferredWeekday: null,
+    });
+    await first.savePantryItem(account, itemID, {
+      name: "Private trip item", critical: false, routineIDs: [routineID],
+    });
+    const [draft, duplicate] = await Promise.all([
+      first.prepareTrip(account, tripID, routineID, "2026-10-11"),
+      second.prepareTrip(account, "50000000-0000-4000-8000-000000000032", routineID, "2026-10-11"),
+    ]);
+    expect(duplicate).toEqual(draft);
+
+    const reviews = await Promise.allSettled([
+      first.reviewTrip(account, tripID, {
+        expectedVersion: draft.version,
+        entries: [{ itemID, decision: "buy" }],
+      }),
+      second.reviewTrip(account, tripID, {
+        expectedVersion: draft.version,
+        entries: [{ itemID, decision: "skip" }],
+      }),
+    ]);
+    expect(reviews.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(reviews.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const reviewed = (await first.trips(account))[0]!;
+    const finalized = await first.finalizeTrip(account, tripID, reviewed.version);
+    const kid = { ...account, memberID: "unpersisted-kid", role: "kid" as const };
+    await expect(second.trips(kid)).resolves.toEqual([finalized]);
+    await expect(first.deletePantryItem(account, itemID))
+      .rejects.toEqual(new ShoppingModuleError("shopping_trip_catalog_in_use"));
+    await expect(first.deleteRoutine(account, routineID))
+      .rejects.toEqual(new ShoppingModuleError("shopping_trip_catalog_in_use"));
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const stored = await inspection.query<{ details_ciphertext: string }>(
+        "SELECT details_ciphertext FROM shopping_trip_plans WHERE family_id = $1 AND id = $2",
+        [account.familyID, tripID],
+      );
+      expect(stored.rows[0]?.details_ciphertext).toMatch(/^rr1\./);
+      expect(stored.rows[0]?.details_ciphertext).not.toContain("Parent decision");
+      expect(stored.rows[0]?.details_ciphertext).not.toContain("Private trip item");
+    } finally {
+      await inspection.end();
+    }
   });
 
   it("serializes concurrent normalized Shopping names inside protected persistence", async () => {
@@ -1532,6 +1597,8 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       critical: false,
       routineIDs: ["10000000-0000-4000-8000-000000000199"],
     });
+    await shopping.prepareTrip(account, "50000000-0000-4000-8000-000000000199",
+      "10000000-0000-4000-8000-000000000199", "2026-10-11");
     await data.saveEvent({
       id: "00000000-0000-4000-8000-000000000199",
       familyID: account.familyID,
@@ -1552,6 +1619,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await data.membersForFamily(account.familyID)).toEqual([]);
     expect(await data.eventsForFamily(account.familyID)).toEqual([]);
     expect(await shopping.catalog(account)).toEqual({ routines: [], items: [] });
+    expect(await shopping.trips(account)).toEqual([]);
     expect(await commuter.state(account)).toMatchObject({ installation: null, subscriptions: [] });
   });
 

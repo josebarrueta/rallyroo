@@ -231,6 +231,52 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("keeps Shopping drafts parent-only and shares finalized plans", async () => {
+    const shopping = new ShoppingModule(new InMemoryShoppingRepository());
+    const app = buildApp({ identityProvider, repository: repository(), shopping });
+    const parentHeaders = { authorization: "Bearer parent-token" };
+    const kidHeaders = { authorization: "Bearer kid-token" };
+    const routineID = "10000000-0000-4000-8000-000000000031";
+    const itemID = "20000000-0000-4000-8000-000000000031";
+    const tripID = "50000000-0000-4000-8000-000000000031";
+    await app.inject({ method: "PUT", url: `/v1/shopping/routines/${routineID}`,
+      headers: parentHeaders, payload: { storeName: "Market", intervalWeeks: 1, preferredWeekday: null } });
+    await app.inject({ method: "PUT", url: `/v1/shopping/pantry-items/${itemID}`,
+      headers: parentHeaders, payload: { name: "Milk", critical: true, routineIDs: [routineID] } });
+    const payload = { routineID, plannedFor: "2026-10-11" };
+    expect((await app.inject({ method: "PUT", url: `/v1/shopping/trips/${tripID}`,
+      headers: kidHeaders, payload })).statusCode).toBe(403);
+    const prepared = await app.inject({ method: "PUT", url: `/v1/shopping/trips/${tripID}`,
+      headers: parentHeaders, payload });
+    expect(prepared.statusCode).toBe(200);
+    expect(prepared.json()).toMatchObject({ status: "draft", entries: [{ itemID, decision: "check_at_home" }] });
+    expect((await app.inject({ method: "GET", url: "/v1/shopping/trips", headers: kidHeaders })).json())
+      .toEqual([]);
+    const otherFamilyHeaders = { authorization: "Bearer other-parent-token" };
+    expect((await app.inject({ method: "GET", url: "/v1/shopping/trips",
+      headers: otherFamilyHeaders })).json()).toEqual([]);
+    const reviewPayload = {
+      expectedVersion: prepared.json().version, entries: [{ itemID, decision: "buy" }],
+    };
+    expect((await app.inject({ method: "PATCH", url: `/v1/shopping/trips/${tripID}`,
+      headers: kidHeaders, payload: reviewPayload })).statusCode).toBe(403);
+    expect((await app.inject({ method: "PATCH", url: `/v1/shopping/trips/${tripID}`,
+      headers: otherFamilyHeaders, payload: reviewPayload })).statusCode).toBe(404);
+    const reviewed = await app.inject({ method: "PATCH", url: `/v1/shopping/trips/${tripID}`,
+      headers: parentHeaders,
+      payload: reviewPayload });
+    expect(reviewed.statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: `/v1/shopping/trips/${tripID}/finalize`,
+      headers: parentHeaders, payload: { expectedVersion: prepared.json().version } })).statusCode)
+      .toBe(409);
+    const finalized = await app.inject({ method: "POST", url: `/v1/shopping/trips/${tripID}/finalize`,
+      headers: parentHeaders, payload: { expectedVersion: reviewed.json().version } });
+    expect(finalized.statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/v1/shopping/trips", headers: kidHeaders })).json())
+      .toEqual([finalized.json()]);
+    await app.close();
+  });
+
   it("lets a parent configure and retrieve only their private Day brief", async () => {
     let preferences: DayBriefPreferences | null = null;
     const brief: DayBriefRecord = {

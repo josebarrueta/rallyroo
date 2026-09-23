@@ -62,6 +62,7 @@ import {
   normalizedShoppingName,
   ShoppingNameConflictError,
   ShoppingRoutineReferenceError,
+  ShoppingTripCatalogInUseError,
   type PantryItem,
   type ShoppingCatalog,
   type ShoppingEvidence,
@@ -69,6 +70,8 @@ import {
   type ShoppingItemRequestStatus,
   type ShoppingRepository,
   type ShoppingRoutine,
+  type ShoppingTripEntry,
+  type ShoppingTripPlan,
   type StockObservation,
 } from "./shopping-module.js";
 import type {
@@ -1076,6 +1079,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM shopping_trip_plans WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM pantry_items WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM shopping_routines WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM saved_places WHERE family_id = $1", [row.family_id]);
@@ -1136,6 +1140,19 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         );
         await client.query(
           `UPDATE shopping_routines
+           SET created_by_member_id = (
+             SELECT account.member_id
+             FROM accounts account
+             WHERE account.family_id = $1 AND account.identity_subject <> $3
+             ORDER BY CASE WHEN account.role = 'parent' THEN 0 ELSE 1 END,
+                      account.identity_subject
+             LIMIT 1
+           )
+           WHERE family_id = $1 AND created_by_member_id = $2`,
+          [row.family_id, row.member_id, subject],
+        );
+        await client.query(
+          `UPDATE shopping_trip_plans
            SET created_by_member_id = (
              SELECT account.member_id
              FROM accounts account
@@ -2952,6 +2969,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       return (result.rowCount ?? 0) > 0;
     } catch (error) {
       await client.query("ROLLBACK");
+      if (shoppingTripCatalogReference(error)) throw new ShoppingTripCatalogInUseError();
       throw error;
     } finally {
       client.release();
@@ -3054,6 +3072,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       return (result.rowCount ?? 0) > 0;
     } catch (error) {
       await client.query("ROLLBACK");
+      if (shoppingTripCatalogReference(error)) throw new ShoppingTripCatalogInUseError();
       throw error;
     } finally {
       client.release();
@@ -3067,7 +3086,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
                 status, requested_at, resolved_at, resolved_by_member_id, details_ciphertext
          FROM shopping_item_requests
          WHERE family_id = $1 AND status = 'open'
-         ORDER BY requested_at, id`,
+         ORDER BY requested_at DESC, id DESC`,
         [familyID],
       ),
       this.pool.query<StockObservationRow>(
@@ -3180,6 +3199,182 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     const stored = await this.stockObservation(observation.familyID, observation.id);
     if (!stored) throw new Error("Unable to persist Stock observation");
     return stored;
+  }
+
+  async trips(familyID: string): Promise<ShoppingTripPlan[]> {
+    const rows = await this.pool.query<ShoppingTripRow>(
+      `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
+              details_ciphertext, created_by_member_id, created_at, updated_at,
+              finalized_at, finalized_by_member_id
+       FROM shopping_trip_plans WHERE family_id = $1
+       ORDER BY planned_for DESC, id DESC`,
+      [familyID],
+    );
+    return Promise.all(rows.rows.map((row) => this.shoppingTripFromRow(row)));
+  }
+
+  async trip(familyID: string, tripID: string): Promise<ShoppingTripPlan | null> {
+    const rows = await this.pool.query<ShoppingTripRow>(
+      `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
+              details_ciphertext, created_by_member_id, created_at, updated_at,
+              finalized_at, finalized_by_member_id
+       FROM shopping_trip_plans WHERE family_id = $1 AND id = $2::uuid`,
+      [familyID, tripID],
+    );
+    return rows.rows[0] ? this.shoppingTripFromRow(rows.rows[0]) : null;
+  }
+
+  async saveTripIfAbsent(trip: ShoppingTripPlan): Promise<ShoppingTripPlan> {
+    const ciphertext = await this.protectShoppingTrip(trip);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const inserted = await client.query(
+        `INSERT INTO shopping_trip_plans (
+           family_id, id, routine_id, planned_for, status, version, details_ciphertext,
+           created_by_member_id, created_at, updated_at, finalized_at, finalized_by_member_id
+         ) VALUES ($1, $2::uuid, $3::uuid, $4::date, $5, $6, $7, $8,
+                   $9::timestamptz, $10::timestamptz, $11::timestamptz, $12)
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [trip.familyID, trip.id, trip.routineID, trip.plannedFor, trip.status,
+          trip.version, ciphertext, trip.createdByMemberID, trip.createdAt, trip.updatedAt,
+          trip.finalizedAt, trip.finalizedByMemberID],
+      );
+      if (inserted.rowCount) await this.replaceShoppingTripItems(client, trip);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    const stored = await this.trip(trip.familyID, trip.id)
+      ?? await this.shoppingTripForDay(trip.familyID, trip.routineID, trip.plannedFor);
+    if (!stored) throw new Error("Unable to persist Shopping trip");
+    return stored;
+  }
+
+  private async shoppingTripForDay(
+    familyID: string,
+    routineID: string,
+    plannedFor: string,
+  ): Promise<ShoppingTripPlan | null> {
+    const rows = await this.pool.query<ShoppingTripRow>(
+      `SELECT family_id, id::text, routine_id::text, planned_for::text, status, version,
+              details_ciphertext, created_by_member_id, created_at, updated_at,
+              finalized_at, finalized_by_member_id
+       FROM shopping_trip_plans
+       WHERE family_id = $1 AND routine_id = $2::uuid AND planned_for = $3::date`,
+      [familyID, routineID, plannedFor],
+    );
+    return rows.rows[0] ? this.shoppingTripFromRow(rows.rows[0]) : null;
+  }
+
+  async replaceDraftTrip(
+    trip: ShoppingTripPlan,
+    expectedVersion: number,
+  ): Promise<ShoppingTripPlan | null> {
+    const ciphertext = await this.protectShoppingTrip(trip);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query(
+        `UPDATE shopping_trip_plans SET details_ciphertext = $4, version = $5,
+                updated_at = $6::timestamptz
+         WHERE family_id = $1 AND id = $2::uuid AND status = 'draft' AND version = $3`,
+        [trip.familyID, trip.id, expectedVersion, ciphertext, trip.version, trip.updatedAt],
+      );
+      if (!updated.rowCount) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query(
+        "DELETE FROM shopping_trip_plan_items WHERE family_id = $1 AND trip_id = $2::uuid",
+        [trip.familyID, trip.id],
+      );
+      await this.replaceShoppingTripItems(client, trip);
+      await client.query("COMMIT");
+      return trip;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async finalizeTrip(
+    familyID: string,
+    tripID: string,
+    expectedVersion: number,
+    finalizedAt: string,
+    finalizedByMemberID: string,
+    resolvedRequestIDs: string[],
+  ): Promise<ShoppingTripPlan | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query(
+        `UPDATE shopping_trip_plans
+         SET status = 'finalized', version = version + 1, updated_at = $4::timestamptz,
+             finalized_at = $4::timestamptz, finalized_by_member_id = $5
+         WHERE family_id = $1 AND id = $2::uuid AND version = $3 AND status = 'draft'`,
+        [familyID, tripID, expectedVersion, finalizedAt, finalizedByMemberID],
+      );
+      if (!updated.rowCount) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      await client.query(
+        `UPDATE shopping_item_requests SET status = 'resolved',
+           resolved_at = $3::timestamptz, resolved_by_member_id = $4
+         WHERE family_id = $1 AND id = ANY($2::uuid[]) AND status = 'open'`,
+        [familyID, resolvedRequestIDs, finalizedAt, finalizedByMemberID],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return this.trip(familyID, tripID);
+  }
+
+  private async replaceShoppingTripItems(client: PoolClient, trip: ShoppingTripPlan): Promise<void> {
+    for (const [position, entry] of trip.entries.entries()) {
+      await client.query(
+        `INSERT INTO shopping_trip_plan_items (family_id, trip_id, pantry_item_id, position)
+         VALUES ($1, $2::uuid, $3::uuid, $4)`,
+        [trip.familyID, trip.id, entry.itemID, position],
+      );
+    }
+  }
+
+  private protectShoppingTrip(trip: ShoppingTripPlan): Promise<string> {
+    return this.familyDataProtector.protect(
+      trip.familyID, `shopping-trip:${trip.id}:details`, JSON.stringify(trip.entries),
+    );
+  }
+
+  private async shoppingTripFromRow(row: ShoppingTripRow): Promise<ShoppingTripPlan> {
+    const entries = parseShoppingTripEntries(await this.familyDataProtector.reveal(
+      row.family_id, `shopping-trip:${row.id}:details`, row.details_ciphertext,
+    ));
+    return {
+      id: row.id,
+      familyID: row.family_id,
+      routineID: row.routine_id,
+      plannedFor: row.planned_for,
+      status: row.status,
+      version: row.version,
+      entries,
+      createdByMemberID: row.created_by_member_id,
+      createdAt: asISOString(row.created_at),
+      updatedAt: asISOString(row.updated_at),
+      finalizedAt: row.finalized_at ? asISOString(row.finalized_at) : null,
+      finalizedByMemberID: row.finalized_by_member_id,
+    };
   }
 
   private async itemRequestFromRow(row: ShoppingItemRequestRow): Promise<ShoppingItemRequest> {
@@ -3298,6 +3493,21 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 }
 
+interface ShoppingTripRow {
+  family_id: string;
+  id: string;
+  routine_id: string;
+  planned_for: string;
+  status: ShoppingTripPlan["status"];
+  version: number;
+  details_ciphertext: string;
+  created_by_member_id: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+  finalized_at: Date | string | null;
+  finalized_by_member_id: string | null;
+}
+
 interface ShoppingItemRequestRow {
   family_id: string;
   id: string;
@@ -3387,6 +3597,45 @@ function parseDayBrief(value: string): DayBrief {
     throw new Error("Invalid protected Day brief");
   }
   return brief as DayBrief;
+}
+
+function shoppingTripCatalogReference(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error) || !("constraint" in error)) {
+    return false;
+  }
+  return error.code === "23503" && (
+    error.constraint === "shopping_trip_plans_family_id_routine_id_fkey"
+    || error.constraint === "shopping_trip_plan_items_family_id_pantry_item_id_fkey"
+  );
+}
+
+function parseShoppingTripEntries(value: string): ShoppingTripEntry[] {
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.length > 500) {
+    throw new Error("Invalid protected Shopping trip");
+  }
+  const entries: ShoppingTripEntry[] = [];
+  const seen = new Set<string>();
+  for (const candidate of parsed) {
+    if (!candidate || typeof candidate !== "object") {
+      throw new Error("Invalid protected Shopping trip");
+    }
+    const entry = candidate as Record<string, unknown>;
+    if (typeof entry.itemID !== "string" || !/^[0-9a-f-]{36}$/i.test(entry.itemID)
+      || seen.has(entry.itemID)
+      || (entry.decision !== "buy" && entry.decision !== "check_at_home"
+        && entry.decision !== "skip")
+      || typeof entry.reason !== "string" || !entry.reason || entry.reason.length > 500
+      || !Array.isArray(entry.requestIDs) || entry.requestIDs.length > 500
+      || entry.requestIDs.some((id) => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))
+      || (entry.observationID !== null && (typeof entry.observationID !== "string"
+        || !/^[0-9a-f-]{36}$/i.test(entry.observationID)))) {
+      throw new Error("Invalid protected Shopping trip");
+    }
+    seen.add(entry.itemID);
+    entries.push(entry as unknown as ShoppingTripEntry);
+  }
+  return entries;
 }
 
 function parseShoppingEvidenceDetails(

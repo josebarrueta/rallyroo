@@ -876,6 +876,9 @@ private struct ShoppingCatalogView: View {
     let currentMemberID: String?
     @State private var catalog = ShoppingCatalog(routines: [], items: [])
     @State private var evidence = ShoppingEvidence(openRequests: [], latestObservations: [])
+    @State private var trips: [ShoppingTripPlan] = []
+    @State private var activeTrip: ShoppingTripPlan?
+    @State private var pendingTripIDs: [UUID: UUID] = [:]
     @State private var isAddingRoutine = false
     @State private var isAddingItem = false
     @State private var editingRoutine: ShoppingRoutine?
@@ -901,6 +904,33 @@ private struct ShoppingCatalogView: View {
                         }
                     } else {
                         routineRow(routine)
+                    }
+                }
+            }
+
+            Section("Shopping trips") {
+                if trips.isEmpty {
+                    Text("No Shopping trips yet")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(trips) { trip in
+                    Button {
+                        activeTrip = trip
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(catalog.routines.first(where: { $0.id == trip.routineID })?.storeName ?? "Shopping trip")
+                                .font(.headline)
+                            Text("\(trip.plannedFor) · \(trip.status == .draft ? "Draft" : "Finalized")")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if canManage {
+                    ForEach(catalog.routines) { routine in
+                        Button("Prepare \(routine.storeName) trip") {
+                            prepareTrip(routine)
+                        }
                     }
                 }
             }
@@ -968,6 +998,11 @@ private struct ShoppingCatalogView: View {
         }
         .sheet(item: $editingItem) { item in
             PantryItemEditor(store: store, item: item, routines: catalog.routines) { await load() }
+        }
+        .sheet(item: $activeTrip) { trip in
+            ShoppingTripView(store: store, trip: trip, catalog: catalog, canManage: canManage) {
+                await load()
+            }
         }
         .sheet(item: $requestingItem) { item in
             ShoppingRequestEditor(store: store, item: item) { await load() }
@@ -1054,11 +1089,34 @@ private struct ShoppingCatalogView: View {
         do {
             async let loadedCatalog = store.catalog()
             async let loadedEvidence = store.evidence()
+            async let loadedTrips = store.trips()
             catalog = try await loadedCatalog
             evidence = try await loadedEvidence
+            trips = try await loadedTrips
             errorMessage = nil
         } catch {
             errorMessage = "We couldn't load the Shopping catalog."
+        }
+    }
+
+    private func prepareTrip(_ routine: ShoppingRoutine) {
+        let id = pendingTripIDs[routine.id] ?? UUID()
+        pendingTripIDs[routine.id] = id
+        let date = DateFormatter()
+        date.calendar = Calendar(identifier: .gregorian)
+        date.dateFormat = "yyyy-MM-dd"
+        let plannedFor = date.string(from: Date())
+        Task {
+            do {
+                let trip = try await store.prepareTrip(
+                    id: id, routineID: routine.id, plannedFor: plannedFor
+                )
+                pendingTripIDs[routine.id] = nil
+                await load()
+                activeTrip = trip
+            } catch {
+                errorMessage = "We couldn't prepare the Shopping trip. Please try again."
+            }
         }
     }
 
@@ -1141,6 +1199,155 @@ private struct ShoppingCatalogView: View {
     static func weekdayName(_ weekday: Int) -> String {
         guard (1...7).contains(weekday) else { return "Any day" }
         return Calendar.current.weekdaySymbols[weekday % 7]
+    }
+}
+
+private struct ShoppingTripView: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let catalog: ShoppingCatalog
+    let canManage: Bool
+    let onSaved: @MainActor () async -> Void
+    @State private var trip: ShoppingTripPlan
+    @State private var decisions: [ShoppingTripDecisionInput]
+    @State private var isSaving = false
+    @State private var isConfirmingFinalization = false
+    @State private var errorMessage: String?
+
+    init(store: any ShoppingStore, trip: ShoppingTripPlan, catalog: ShoppingCatalog,
+         canManage: Bool, onSaved: @escaping @MainActor () async -> Void) {
+        self.store = store
+        self.catalog = catalog
+        self.canManage = canManage
+        self.onSaved = onSaved
+        _trip = State(initialValue: trip)
+        _decisions = State(initialValue: trip.entries.map {
+            ShoppingTripDecisionInput(itemID: $0.itemID, decision: $0.decision)
+        })
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(catalog.routines.first(where: { $0.id == trip.routineID })?.storeName ?? "Shopping trip")
+                        .font(.headline)
+                    Text("Planned for \(trip.plannedFor) · \(trip.status == .draft ? "Draft" : "Finalized")")
+                        .foregroundStyle(.secondary)
+                    if trip.status == .draft {
+                        Text("Recommendations are a starting point. Review every decision before finalizing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                ForEach([ShoppingTripDecision.buy, .checkAtHome, .skip], id: \.rawValue) { decision in
+                    Section(decisionTitle(decision)) {
+                        ForEach(decisions.filter { $0.decision == decision }, id: \.itemID) { entry in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(itemName(entry.itemID)).font(.headline)
+                                Text(trip.entries.first(where: { $0.itemID == entry.itemID })?.reason
+                                     ?? "Added by a parent.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if canManage && trip.status == .draft {
+                                    Picker("Decision for \(itemName(entry.itemID))", selection: Binding(
+                                        get: { decisions.first(where: { $0.itemID == entry.itemID })?.decision ?? decision },
+                                        set: { newValue in
+                                            guard let index = decisions.firstIndex(where: { $0.itemID == entry.itemID }) else { return }
+                                            decisions[index] = ShoppingTripDecisionInput(itemID: entry.itemID, decision: newValue)
+                                        }
+                                    )) {
+                                        Text("Buy").tag(ShoppingTripDecision.buy)
+                                        Text("Check at home").tag(ShoppingTripDecision.checkAtHome)
+                                        Text("Skip").tag(ShoppingTripDecision.skip)
+                                    }
+                                    Button("Remove \(itemName(entry.itemID)) from trip", role: .destructive) {
+                                        decisions.removeAll { $0.itemID == entry.itemID }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if canManage && trip.status == .draft {
+                    Section {
+                        Menu("Add Pantry item") {
+                            ForEach(catalog.items.filter { item in
+                                !decisions.contains(where: { $0.itemID == item.id })
+                            }) { item in
+                                Button(item.name) {
+                                    decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
+                                }
+                            }
+                        }
+                        Button("Save Review") { saveReview() }
+                            .disabled(!hasChanges || isSaving)
+                        Button("Finalize Trip") { isConfirmingFinalization = true }
+                            .disabled(hasChanges || isSaving)
+                    }
+                }
+            }
+            .navigationTitle("Shopping Trip")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .confirmationDialog("Finalize this Shopping trip?", isPresented: $isConfirmingFinalization) {
+                Button("Finalize Trip") { finalize() }
+            } message: {
+                Text("The Family will see your reviewed decisions. Buy requests included in the plan will be resolved.")
+            }
+            .alert("Shopping Trip Not Saved", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private var hasChanges: Bool {
+        decisions != trip.entries.map { ShoppingTripDecisionInput(itemID: $0.itemID, decision: $0.decision) }
+    }
+
+    private func itemName(_ id: UUID) -> String {
+        catalog.items.first(where: { $0.id == id })?.name ?? "Pantry item"
+    }
+
+    private func decisionTitle(_ decision: ShoppingTripDecision) -> String {
+        switch decision {
+        case .buy: "Buy"
+        case .checkAtHome: "Check at home"
+        case .skip: "Skip"
+        }
+    }
+
+    private func saveReview() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                trip = try await store.reviewTrip(id: trip.id, expectedVersion: trip.version, entries: decisions)
+                decisions = trip.entries.map { ShoppingTripDecisionInput(itemID: $0.itemID, decision: $0.decision) }
+                await onSaved()
+            } catch {
+                errorMessage = "The trip may have changed. Your choices are still here; close and reopen the trip to refresh before retrying."
+            }
+        }
+    }
+
+    private func finalize() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                trip = try await store.finalizeTrip(id: trip.id, expectedVersion: trip.version)
+                await onSaved()
+            } catch {
+                errorMessage = "The trip may have changed. Close and reopen it before finalizing."
+            }
+        }
     }
 }
 

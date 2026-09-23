@@ -94,6 +94,32 @@ export interface ShoppingEvidence {
   latestObservations: StockObservation[];
 }
 
+export type ShoppingTripStatus = "draft" | "finalized";
+export type ShoppingTripDecision = "buy" | "check_at_home" | "skip";
+
+export interface ShoppingTripEntry {
+  itemID: string;
+  decision: ShoppingTripDecision;
+  reason: string;
+  requestIDs: string[];
+  observationID: string | null;
+}
+
+export interface ShoppingTripPlan {
+  id: string;
+  familyID: string;
+  routineID: string;
+  plannedFor: string;
+  status: ShoppingTripStatus;
+  version: number;
+  entries: ShoppingTripEntry[];
+  createdByMemberID: string;
+  createdAt: string;
+  updatedAt: string;
+  finalizedAt: string | null;
+  finalizedByMemberID: string | null;
+}
+
 export interface ShoppingRepository {
   catalog(familyID: string): Promise<ShoppingCatalog>;
   saveRoutine(routine: ShoppingRoutine): Promise<ShoppingRoutine>;
@@ -112,6 +138,26 @@ export interface ShoppingRepository {
   ): Promise<ShoppingItemRequest | null>;
   stockObservation(familyID: string, observationID: string): Promise<StockObservation | null>;
   saveStockObservationIfAbsent(observation: StockObservation): Promise<StockObservation>;
+  trips(familyID: string): Promise<ShoppingTripPlan[]>;
+  trip(familyID: string, tripID: string): Promise<ShoppingTripPlan | null>;
+  saveTripIfAbsent(trip: ShoppingTripPlan): Promise<ShoppingTripPlan>;
+  replaceDraftTrip(
+    trip: ShoppingTripPlan,
+    expectedVersion: number,
+  ): Promise<ShoppingTripPlan | null>;
+  finalizeTrip(
+    familyID: string,
+    tripID: string,
+    expectedVersion: number,
+    finalizedAt: string,
+    finalizedByMemberID: string,
+    resolvedRequestIDs: string[],
+  ): Promise<ShoppingTripPlan | null>;
+}
+
+export interface ShoppingTripReview {
+  expectedVersion: number;
+  entries: Array<{ itemID: string; decision: ShoppingTripDecision }>;
 }
 
 export type ShoppingModuleFailureReason =
@@ -125,12 +171,23 @@ export type ShoppingModuleFailureReason =
   | "invalid_item_request"
   | "item_request_not_found"
   | "item_request_forbidden"
-  | "invalid_stock_observation";
+  | "invalid_stock_observation"
+  | "invalid_shopping_trip"
+  | "shopping_trip_not_found"
+  | "shopping_trip_conflict"
+  | "shopping_trip_catalog_in_use";
 
 export class ShoppingNameConflictError extends Error {
   constructor(public readonly kind: "routine" | "pantry_item") {
     super(`${kind}_name_conflict`);
     this.name = "ShoppingNameConflictError";
+  }
+}
+
+export class ShoppingTripCatalogInUseError extends Error {
+  constructor() {
+    super("shopping_trip_catalog_in_use");
+    this.name = "ShoppingTripCatalogInUseError";
   }
 }
 
@@ -200,7 +257,14 @@ export class ShoppingModule {
 
   async deleteRoutine(account: Account, routineID: string): Promise<boolean> {
     requireParent(account);
-    return this.repository.deleteRoutine(account.familyID, routineID);
+    try {
+      return await this.repository.deleteRoutine(account.familyID, routineID);
+    } catch (error) {
+      if (error instanceof ShoppingTripCatalogInUseError) {
+        throw new ShoppingModuleError("shopping_trip_catalog_in_use");
+      }
+      throw error;
+    }
   }
 
   async savePantryItem(
@@ -264,7 +328,14 @@ export class ShoppingModule {
 
   async deletePantryItem(account: Account, itemID: string): Promise<boolean> {
     requireParent(account);
-    return this.repository.deletePantryItem(account.familyID, itemID);
+    try {
+      return await this.repository.deletePantryItem(account.familyID, itemID);
+    } catch (error) {
+      if (error instanceof ShoppingTripCatalogInUseError) {
+        throw new ShoppingModuleError("shopping_trip_catalog_in_use");
+      }
+      throw error;
+    }
   }
 
   evidence(account: Account): Promise<ShoppingEvidence> {
@@ -327,6 +398,131 @@ export class ShoppingModule {
     return closed;
   }
 
+  async trips(account: Account): Promise<ShoppingTripPlan[]> {
+    const trips = await this.repository.trips(account.familyID);
+    return account.role === "parent" ? trips : trips.filter((trip) => trip.status === "finalized");
+  }
+
+  async prepareTrip(
+    account: Account,
+    id: string,
+    routineID: string,
+    plannedFor: string,
+  ): Promise<ShoppingTripPlan> {
+    requireParent(account);
+    const existing = await this.repository.trip(account.familyID, id);
+    if (existing) return existing;
+    if (!validDateOnly(plannedFor)) throw new ShoppingModuleError("invalid_shopping_trip");
+    const catalog = await this.repository.catalog(account.familyID);
+    if (!catalog.routines.some((routine) => routine.id === routineID)) {
+      throw new ShoppingModuleError("routine_not_found");
+    }
+    const evidence = await this.repository.evidence(account.familyID);
+    const now = this.now();
+    const createdAt = timestamp(now, "invalid_shopping_trip");
+    const evidenceAsOf = new Date(Math.max(now.getTime(), Date.parse(`${plannedFor}T00:00:00.000Z`)));
+    const entries = catalog.items
+      .filter((item) => item.routineIDs.includes(routineID))
+      .sort((left, right) => left.name.localeCompare(right.name, "en-US")
+        || left.id.localeCompare(right.id))
+      .map((item) => recommendedEntry(item.id, evidence, evidenceAsOf));
+    return this.repository.saveTripIfAbsent({
+      id,
+      familyID: account.familyID,
+      routineID,
+      plannedFor,
+      status: "draft",
+      version: 1,
+      entries,
+      createdByMemberID: account.memberID,
+      createdAt,
+      updatedAt: createdAt,
+      finalizedAt: null,
+      finalizedByMemberID: null,
+    });
+  }
+
+  async reviewTrip(
+    account: Account,
+    tripID: string,
+    review: ShoppingTripReview,
+  ): Promise<ShoppingTripPlan> {
+    requireParent(account);
+    const trip = await this.repository.trip(account.familyID, tripID);
+    if (!trip) throw new ShoppingModuleError("shopping_trip_not_found");
+    if (trip.status !== "draft" || !Number.isSafeInteger(review.expectedVersion)
+      || review.expectedVersion < 1 || review.entries.length > 500) {
+      throw new ShoppingModuleError("shopping_trip_conflict");
+    }
+    const itemIDs = review.entries.map((entry) => entry.itemID);
+    if (new Set(itemIDs).size !== itemIDs.length
+      || review.entries.some((entry) => !isTripDecision(entry.decision))) {
+      throw new ShoppingModuleError("invalid_shopping_trip");
+    }
+    const [catalog, evidence] = await Promise.all([
+      this.repository.catalog(account.familyID),
+      this.repository.evidence(account.familyID),
+    ]);
+    if (itemIDs.some((itemID) => !catalog.items.some((item) => item.id === itemID))) {
+      throw new ShoppingModuleError("pantry_item_not_found");
+    }
+    const existingEntries = new Map(trip.entries.map((entry) => [entry.itemID, entry]));
+    const now = this.now();
+    const evidenceAsOf = new Date(Math.max(now.getTime(), Date.parse(`${trip.plannedFor}T00:00:00.000Z`)));
+    const entries = review.entries.map((entry) => {
+      const existing = existingEntries.get(entry.itemID);
+      const evidenceEntry = existing ?? recommendedEntry(entry.itemID, evidence, evidenceAsOf);
+      return {
+        ...evidenceEntry,
+        decision: entry.decision,
+        reason: existing && existing.decision === entry.decision
+          ? existing.reason
+          : existing ? "Parent decision." : "Added by a parent.",
+      };
+    }).sort((left, right) => {
+      const leftName = catalog.items.find((item) => item.id === left.itemID)?.name ?? "";
+      const rightName = catalog.items.find((item) => item.id === right.itemID)?.name ?? "";
+      return leftName.localeCompare(rightName, "en-US")
+        || left.itemID.localeCompare(right.itemID);
+    });
+    const updated = await this.repository.replaceDraftTrip({
+      ...trip,
+      version: trip.version + 1,
+      entries,
+      updatedAt: timestamp(now, "invalid_shopping_trip"),
+    }, review.expectedVersion);
+    if (!updated) throw new ShoppingModuleError("shopping_trip_conflict");
+    return updated;
+  }
+
+  async finalizeTrip(
+    account: Account,
+    tripID: string,
+    expectedVersion: number,
+  ): Promise<ShoppingTripPlan> {
+    requireParent(account);
+    const trip = await this.repository.trip(account.familyID, tripID);
+    if (!trip) throw new ShoppingModuleError("shopping_trip_not_found");
+    if (trip.status === "finalized") return trip;
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      throw new ShoppingModuleError("shopping_trip_conflict");
+    }
+    const finalizedAt = timestamp(this.now(), "invalid_shopping_trip");
+    const requestIDs = [...new Set(trip.entries
+      .filter((entry) => entry.decision === "buy")
+      .flatMap((entry) => entry.requestIDs))];
+    const finalized = await this.repository.finalizeTrip(
+      account.familyID,
+      tripID,
+      expectedVersion,
+      finalizedAt,
+      account.memberID,
+      requestIDs,
+    );
+    if (!finalized) throw new ShoppingModuleError("shopping_trip_conflict");
+    return finalized;
+  }
+
   async observeStock(
     account: Account,
     id: string,
@@ -361,6 +557,63 @@ export class ShoppingModule {
 
 export function normalizedShoppingName(value: string): string {
   return value.trim().normalize("NFKC").toLocaleLowerCase("en-US");
+}
+
+const STOCK_FRESHNESS_MILLISECONDS = 7 * 24 * 60 * 60 * 1_000;
+
+function recommendedEntry(
+  itemID: string,
+  evidence: ShoppingEvidence,
+  now: Date,
+): ShoppingTripEntry {
+  const requests = evidence.openRequests.filter((request) => request.itemID === itemID);
+  const observation = evidence.latestObservations.find((candidate) => candidate.itemID === itemID);
+  const age = observation ? now.getTime() - new Date(observation.observedAt).getTime() : Infinity;
+  const fresh = age >= 0 && age <= STOCK_FRESHNESS_MILLISECONDS;
+  if (requests.length > 0) {
+    const conflict = fresh && observation?.level === "enough"
+      ? "; recent Stock evidence says Enough"
+      : "";
+    return {
+      itemID,
+      decision: "buy",
+      reason: `Requested by a Family Member${conflict}.`,
+      requestIDs: requests.map((request) => request.id).sort(),
+      observationID: observation?.id ?? null,
+    };
+  }
+  if (!observation) {
+    return {
+      itemID, decision: "check_at_home", reason: "No recent Stock evidence is available.",
+      requestIDs: [], observationID: null,
+    };
+  }
+  if (!fresh) {
+    return {
+      itemID, decision: "check_at_home", reason: "The latest Stock evidence is stale.",
+      requestIDs: [], observationID: observation.id,
+    };
+  }
+  const title = observation.level === "out" ? "Out"
+    : observation.level === "low" ? "Low" : "Enough";
+  return {
+    itemID,
+    decision: observation.level === "enough" ? "skip" : "buy",
+    reason: `Recent Stock evidence says ${title}.`,
+    requestIDs: [],
+    observationID: observation.id,
+  };
+}
+
+function isTripDecision(value: unknown): value is ShoppingTripDecision {
+  return value === "buy" || value === "check_at_home" || value === "skip";
+}
+
+function validDateOnly(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
 function requireParent(account: Account): void {

@@ -276,6 +276,20 @@ const stockObservationSchema = z.object({
   quantity: z.number().min(0).max(1_000_000).nullable().default(null),
   note: z.string().trim().min(1).max(500).nullable().default(null),
 }).strict();
+const shoppingTripPreparationSchema = z.object({
+  routineID: shoppingResourceIDSchema,
+  plannedFor: dayBriefDateSchema,
+}).strict();
+const shoppingTripReviewSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  entries: z.array(z.object({
+    itemID: shoppingResourceIDSchema,
+    decision: z.enum(["buy", "check_at_home", "skip"]),
+  }).strict()).max(500),
+}).strict();
+const shoppingTripFinalizationSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+}).strict();
 const shoppingRequestStatusSchema = z.object({
   status: z.enum(["resolved", "cancelled"]),
 }).strict();
@@ -577,6 +591,49 @@ export function buildApp({
   app.get("/v1/shopping/evidence", async (request, reply) => {
     if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
     return shopping.evidence(requiredAccount(request));
+  });
+
+  app.get("/v1/shopping/trips", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    return shopping.trips(requiredAccount(request));
+  });
+
+  app.put("/v1/shopping/trips/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const input = shoppingTripPreparationSchema.safeParse(request.body);
+    if (!id.success || !input.success) return reply.code(400).send({ error: "invalid_shopping_trip" });
+    try {
+      return await shopping.prepareTrip(
+        requiredAccount(request), id.data, input.data.routineID, input.data.plannedFor,
+      );
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.patch("/v1/shopping/trips/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const input = shoppingTripReviewSchema.safeParse(request.body);
+    if (!id.success || !input.success) return reply.code(400).send({ error: "invalid_shopping_trip" });
+    try {
+      return await shopping.reviewTrip(requiredAccount(request), id.data, input.data);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.post("/v1/shopping/trips/:id/finalize", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const input = shoppingTripFinalizationSchema.safeParse(request.body);
+    if (!id.success || !input.success) return reply.code(400).send({ error: "invalid_shopping_trip" });
+    try {
+      return await shopping.finalizeTrip(requiredAccount(request), id.data, input.data.expectedVersion);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
   });
 
   app.put("/v1/shopping/requests/:id", async (request, reply) => {
@@ -1716,6 +1773,14 @@ function sendShoppingError(error: unknown, reply: FastifyReply) {
     return reply.code(403).send({ error: "shopping_item_request_forbidden" });
   case "invalid_stock_observation":
     return reply.code(400).send({ error: "invalid_stock_observation" });
+  case "invalid_shopping_trip":
+    return reply.code(400).send({ error: "invalid_shopping_trip" });
+  case "shopping_trip_not_found":
+    return reply.code(404).send({ error: "shopping_trip_not_found" });
+  case "shopping_trip_conflict":
+    return reply.code(409).send({ error: "shopping_trip_conflict" });
+  case "shopping_trip_catalog_in_use":
+    return reply.code(409).send({ error: "shopping_trip_catalog_in_use" });
   }
 }
 

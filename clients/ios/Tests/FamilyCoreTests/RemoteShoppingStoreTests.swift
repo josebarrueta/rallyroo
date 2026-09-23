@@ -177,6 +177,42 @@ final class RemoteShoppingStoreTests: XCTestCase {
     XCTAssertEqual(try bodyObject(requests[2])["status"] as? String, "resolved")
   }
 
+  func testPreparesReviewsFinalizesAndListsShoppingTrips() async throws {
+    let tripID = UUID(uuidString: "50000000-0000-4000-8000-000000000001")!
+    let routineID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+    let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
+    func tripJSON(status: String, version: Int) -> Data {
+      Data("""
+      {"id":"\(tripID)","familyID":"family-1","routineID":"\(routineID)","plannedFor":"2026-10-11","status":"\(status)","version":\(version),"entries":[{"itemID":"\(itemID)","decision":"buy","reason":"Parent decision.","requestIDs":[],"observationID":null}],"createdByMemberID":"parent-1","createdAt":"2026-10-10T12:00:00.000Z","updatedAt":"2026-10-10T12:00:00.000Z","finalizedAt":null,"finalizedByMemberID":null}
+      """.utf8)
+    }
+    let transport = ShoppingRecordingTransport(responses: [
+      HTTPResponse(statusCode: 200, body: tripJSON(status: "draft", version: 1)),
+      HTTPResponse(statusCode: 200, body: tripJSON(status: "draft", version: 2)),
+      HTTPResponse(statusCode: 200, body: tripJSON(status: "finalized", version: 3)),
+      HTTPResponse(statusCode: 200, body: Data("[\(String(decoding: tripJSON(status: "finalized", version: 3), as: UTF8.self))]".utf8)),
+    ])
+    let store = RemoteShoppingStore(baseURL: URL(string: "https://api.example.com")!, transport: transport)
+    let draft = try await store.prepareTrip(id: tripID, routineID: routineID, plannedFor: "2026-10-11")
+    XCTAssertEqual(draft.entries.first?.decision, .buy)
+    _ = try await store.reviewTrip(id: tripID, expectedVersion: 1,
+      entries: [ShoppingTripDecisionInput(itemID: itemID, decision: .checkAtHome)])
+    _ = try await store.finalizeTrip(id: tripID, expectedVersion: 2)
+    let trips = try await store.trips()
+    XCTAssertEqual(trips.first?.status, .finalized)
+    let requests = await transport.recordedRequests()
+    XCTAssertEqual(requests.map(\.method), [.put, .patch, .post, .get])
+    XCTAssertEqual(requests.map(\.url.path), [
+      "/v1/shopping/trips/\(tripID.uuidString.lowercased())",
+      "/v1/shopping/trips/\(tripID.uuidString.lowercased())",
+      "/v1/shopping/trips/\(tripID.uuidString.lowercased())/finalize",
+      "/v1/shopping/trips",
+    ])
+    XCTAssertEqual(try bodyObject(requests[0])["plannedFor"] as? String, "2026-10-11")
+    XCTAssertEqual(try bodyObject(requests[1])["expectedVersion"] as? Int, 1)
+    XCTAssertEqual(try bodyObject(requests[2])["expectedVersion"] as? Int, 2)
+  }
+
   func testDeletesRoutineAndPantryItemAtResourcePaths() async throws {
     let routineID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
     let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
