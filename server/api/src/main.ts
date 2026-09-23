@@ -48,6 +48,7 @@ import {
 import { SF511Client } from "./sf511-client.js";
 import { StytchIdentityProvider } from "./stytch-identity-provider.js";
 import { TravelPlanningModule } from "./travel-planning.js";
+import { ShoppingModule } from "./shopping-module.js";
 import { UnavailableRoutingProvider } from "./travel-preview.js";
 
 const databaseConfiguration = await databasePoolConfiguration();
@@ -153,6 +154,7 @@ const travelPlanning = new TravelPlanningModule(
     ? new GoogleRoutingProvider(googleRoutesAPIKey)
     : new UnavailableRoutingProvider(),
 );
+const shopping = new ShoppingModule(repository);
 const leaveAlertDispatcher = googleRoutesAPIKey
   ? new LeaveAlertDispatcher(
     repository,
@@ -198,6 +200,7 @@ const app = buildApp({
   notificationCenter,
   travelPlanning,
   dayBriefs: dayBriefRepository,
+  shopping,
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),

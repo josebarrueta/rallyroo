@@ -11,6 +11,7 @@ import type { IdentityProvider } from "../src/identity-provider.js";
 import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
 import type { FamilyEvent } from "../src/domain.js";
+import { ShoppingModule } from "../src/shopping-module.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -105,6 +106,84 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
     await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await adminPool.end();
+  });
+
+  it("persists Shopping catalog details encrypted and preserves idempotent resource updates", async () => {
+    const repository = repositoryForTest();
+    const account = await repository.provisionParentAccount("shopping-parent", "Shopping Parent");
+    const shopping = new ShoppingModule(repository, () => new Date("2026-10-01T12:00:00.000Z"));
+    const routineID = "10000000-0000-4000-8000-000000000001";
+    const itemID = "20000000-0000-4000-8000-000000000001";
+
+    await shopping.saveRoutine(account, routineID, {
+      storeName: "Private Market",
+      intervalWeeks: 2,
+      preferredWeekday: 6,
+    });
+    await shopping.saveRoutine(account, routineID, {
+      storeName: "Private Market",
+      intervalWeeks: 3,
+      preferredWeekday: 7,
+    });
+    await shopping.savePantryItem(account, itemID, {
+      name: "Secret cereal",
+      category: "Breakfast",
+      unit: "boxes",
+      critical: false,
+      expectedDurationDays: 14,
+      minimumQuantity: 1,
+      targetQuantity: 3,
+      routineIDs: [routineID],
+    });
+
+    expect(await shopping.catalog(account)).toMatchObject({
+      routines: [{ id: routineID, storeName: "Private Market", intervalWeeks: 3 }],
+      items: [{ id: itemID, name: "Secret cereal", routineIDs: [routineID] }],
+    });
+
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const stored = await inspection.query<{ details_ciphertext: string }>(
+        `SELECT details_ciphertext FROM shopping_routines WHERE family_id = $1
+         UNION ALL
+         SELECT details_ciphertext FROM pantry_items WHERE family_id = $1`,
+        [account.familyID],
+      );
+      expect(stored.rows).toHaveLength(2);
+      for (const row of stored.rows) expect(row.details_ciphertext).toMatch(/^rr1\./);
+      expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Private Market");
+      expect(stored.rows.map((row) => row.details_ciphertext).join(" ")).not.toContain("Secret cereal");
+    } finally {
+      await inspection.end();
+    }
+  });
+
+  it("serializes concurrent normalized Shopping names inside protected persistence", async () => {
+    const firstRepository = repositoryForTest();
+    const secondRepository = repositoryForTest();
+    const account = await firstRepository.provisionParentAccount(
+      "shopping-concurrency-parent",
+      "Shopping Parent",
+    );
+    const first = new ShoppingModule(firstRepository);
+    const second = new ShoppingModule(secondRepository);
+
+    const outcomes = await Promise.allSettled([
+      first.saveRoutine(account, "10000000-0000-4000-8000-000000000011", {
+        storeName: "Costco",
+        intervalWeeks: 2,
+        preferredWeekday: null,
+      }),
+      second.saveRoutine(account, "10000000-0000-4000-8000-000000000012", {
+        storeName: "  COSTCO  ",
+        intervalWeeks: 2,
+        preferredWeekday: null,
+      }),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect((await first.catalog(account)).routines).toHaveLength(1);
   });
 
   it("persists private Day brief preferences and encrypted idempotent briefs", async () => {
@@ -1383,6 +1462,17 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       alertKinds: ["delay"],
       minimumDelayMinutes: 15,
     });
+    const shopping = new ShoppingModule(data);
+    await shopping.saveRoutine(account, "10000000-0000-4000-8000-000000000199", {
+      storeName: "Delete this store",
+      intervalWeeks: 1,
+      preferredWeekday: null,
+    });
+    await shopping.savePantryItem(account, "20000000-0000-4000-8000-000000000199", {
+      name: "Delete this item",
+      critical: false,
+      routineIDs: ["10000000-0000-4000-8000-000000000199"],
+    });
     await data.saveEvent({
       id: "00000000-0000-4000-8000-000000000199",
       familyID: account.familyID,
@@ -1402,6 +1492,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     expect(await data.accountForIdentity("deletion-subject")).toBeNull();
     expect(await data.membersForFamily(account.familyID)).toEqual([]);
     expect(await data.eventsForFamily(account.familyID)).toEqual([]);
+    expect(await shopping.catalog(account)).toEqual({ routines: [], items: [] });
     expect(await commuter.state(account)).toMatchObject({ installation: null, subscriptions: [] });
   });
 

@@ -19,6 +19,8 @@ import type {
   DayBriefPreferences,
   DayBriefRecord,
 } from "../src/day-brief.js";
+import { InMemoryShoppingRepository } from "../src/in-memory-shopping-repository.js";
+import { ShoppingModule } from "../src/shopping-module.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -132,6 +134,71 @@ function repository() {
 }
 
 describe("Rallyroo API", () => {
+  it("provides authenticated parent-managed Shopping routines and Pantry items", async () => {
+    const shopping = new ShoppingModule(new InMemoryShoppingRepository());
+    const app = buildApp({ identityProvider, repository: repository(), shopping });
+    const authorization = { authorization: "Bearer parent-token" };
+    const routineID = "10000000-0000-4000-8000-000000000001";
+    const itemID = "20000000-0000-4000-8000-000000000001";
+
+    const routine = await app.inject({
+      method: "PUT",
+      url: `/v1/shopping/routines/${routineID}`,
+      headers: authorization,
+      payload: { storeName: "Neighborhood Market", intervalWeeks: 1, preferredWeekday: 6 },
+    });
+    expect(routine.statusCode).toBe(200);
+
+    const item = await app.inject({
+      method: "PUT",
+      url: `/v1/shopping/pantry-items/${itemID}`,
+      headers: authorization,
+      payload: {
+        name: "Oat milk",
+        category: "Dairy alternatives",
+        unit: "cartons",
+        critical: true,
+        expectedDurationDays: 7,
+        minimumQuantity: 1,
+        targetQuantity: 2,
+        routineIDs: [routineID],
+      },
+    });
+    expect(item.statusCode).toBe(200);
+
+    const catalog = await app.inject({
+      method: "GET",
+      url: "/v1/shopping/catalog",
+      headers: { authorization: "Bearer kid-token" },
+    });
+    expect(catalog.statusCode).toBe(200);
+    expect(catalog.json()).toMatchObject({
+      routines: [{ id: routineID, storeName: "Neighborhood Market" }],
+      items: [{ id: itemID, name: "Oat milk", routineIDs: [routineID] }],
+    });
+
+    const forbidden = await app.inject({
+      method: "PUT",
+      url: "/v1/shopping/routines/10000000-0000-4000-8000-000000000002",
+      headers: { authorization: "Bearer kid-token" },
+      payload: { storeName: "Other", intervalWeeks: 1, preferredWeekday: null },
+    });
+    expect(forbidden.statusCode).toBe(403);
+    expect(forbidden.json()).toEqual({ error: "parent_role_required" });
+
+    expect((await app.inject({
+      method: "DELETE",
+      url: `/v1/shopping/pantry-items/${itemID}`,
+      headers: authorization,
+    })).statusCode).toBe(204);
+    expect((await app.inject({
+      method: "DELETE",
+      url: `/v1/shopping/routines/${routineID}`,
+      headers: authorization,
+    })).statusCode).toBe(204);
+    await app.close();
+  });
+
   it("lets a parent configure and retrieve only their private Day brief", async () => {
     let preferences: DayBriefPreferences | null = null;
     const brief: DayBriefRecord = {

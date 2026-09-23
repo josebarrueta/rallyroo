@@ -75,6 +75,63 @@ private actor OccurrenceLifecycleUITestStore: OccurrenceLifecycleStore {
     func delete(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
     func acknowledge(_ reference: OccurrenceReference) async throws {}
 }
+
+private actor ShoppingUITestStore: ShoppingStore {
+    private let routineID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+    private var routines: [ShoppingRoutine]
+    private var items: [PantryItem]
+
+    init() {
+        let timestamp = Date(timeIntervalSince1970: 1_791_187_200)
+        routines = [ShoppingRoutine(
+            id: routineID, familyID: "ui-test-family", storeName: "Neighborhood Market",
+            intervalWeeks: 1, preferredWeekday: 6, createdByMemberID: "parent",
+            createdAt: timestamp, updatedAt: timestamp
+        )]
+        items = [PantryItem(
+            id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+            familyID: "ui-test-family", name: "Oat milk", category: "Dairy alternatives",
+            unit: "cartons", critical: true, expectedDurationDays: 7,
+            minimumQuantity: 1, targetQuantity: 2, routineIDs: [routineID],
+            createdByMemberID: "parent", createdAt: timestamp, updatedAt: timestamp
+        )]
+    }
+
+    func catalog() async throws -> ShoppingCatalog {
+        ShoppingCatalog(routines: routines, items: items)
+    }
+
+    func saveRoutine(id: UUID, draft: ShoppingRoutineDraft) async throws -> ShoppingRoutine {
+        let timestamp = Date()
+        let saved = ShoppingRoutine(
+            id: id, familyID: "ui-test-family", storeName: draft.storeName,
+            intervalWeeks: draft.intervalWeeks, preferredWeekday: draft.preferredWeekday,
+            createdByMemberID: "parent", createdAt: timestamp, updatedAt: timestamp
+        )
+        routines.removeAll { $0.id == id }
+        routines.append(saved)
+        return saved
+    }
+
+    func deleteRoutine(id: UUID) async throws { routines.removeAll { $0.id == id } }
+
+    func savePantryItem(id: UUID, draft: PantryItemDraft) async throws -> PantryItem {
+        let timestamp = Date()
+        let saved = PantryItem(
+            id: id, familyID: "ui-test-family", name: draft.name, category: draft.category,
+            unit: draft.unit, critical: draft.critical,
+            expectedDurationDays: draft.expectedDurationDays,
+            minimumQuantity: draft.minimumQuantity, targetQuantity: draft.targetQuantity,
+            routineIDs: draft.routineIDs, createdByMemberID: "parent",
+            createdAt: timestamp, updatedAt: timestamp
+        )
+        items.removeAll { $0.id == id }
+        items.append(saved)
+        return saved
+    }
+
+    func deletePantryItem(id: UUID) async throws { items.removeAll { $0.id == id } }
+}
 #endif
 
 @main
@@ -102,6 +159,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let dayBriefStore: (any DayBriefStore)?
+    private let shoppingStore: (any ShoppingStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -154,11 +212,15 @@ struct FamilyActivityCoordinatorApp: App {
             #if DEBUG
             let usesDayBriefUITest = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DAY_BRIEF"] == "1"
             dayBriefStore = usesDayBriefUITest ? DayBriefUITestStore() : nil
+            shoppingStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SHOPPING"] == "1"
+                ? ShoppingUITestStore()
+                : nil
             inboxStore = usesDayBriefUITest
                 ? DayBriefUITestInboxStore()
                 : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
             #else
             dayBriefStore = nil
+            shoppingStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
             #endif
         case .remote:
@@ -219,6 +281,10 @@ struct FamilyActivityCoordinatorApp: App {
                 transport: authenticatedTransport
               )
             dayBriefStore = RemoteDayBriefStore(
+                baseURL: baseURL,
+                transport: authenticatedTransport
+            )
+            shoppingStore = RemoteShoppingStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
@@ -294,6 +360,8 @@ struct FamilyActivityCoordinatorApp: App {
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
                         dayBriefStore: session.role == .parent ? dayBriefStore : nil,
+                        shoppingStore: shoppingStore,
+                        canManageShoppingCatalog: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
                     )

@@ -47,6 +47,7 @@ import {
 } from "./travel-planning.js";
 import { GoogleRoutingError } from "./google-routing-provider.js";
 import { RoutingUnavailableError, TravelPreviewError } from "./travel-preview.js";
+import { ShoppingModuleError, type ShoppingModule } from "./shopping-module.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -258,6 +259,26 @@ const dayBriefDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value
   return Number.isFinite(date.getTime()) && date.toISOString().startsWith(value);
 });
 
+const shoppingResourceIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
+const shoppingRoutineSchema = z.object({
+  storeName: z.string().trim().min(1).max(120),
+  intervalWeeks: z.number().int().min(1).max(52),
+  preferredWeekday: z.number().int().min(1).max(7).nullable(),
+}).strict();
+const pantryItemSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  category: z.string().trim().min(1).max(100).nullable().default(null),
+  unit: z.string().trim().min(1).max(60).nullable().default(null),
+  critical: z.boolean(),
+  expectedDurationDays: z.number().int().min(1).max(3_650).nullable().default(null),
+  minimumQuantity: z.number().min(0).max(1_000_000).nullable().default(null),
+  targetQuantity: z.number().min(0).max(1_000_000).nullable().default(null),
+  routineIDs: z.array(shoppingResourceIDSchema).max(100).transform((ids) => [...new Set(ids)]),
+}).strict().refine((item) => item.minimumQuantity == null || item.targetQuantity == null
+  || item.targetQuantity >= item.minimumQuantity, {
+  message: "targetQuantity must be at least minimumQuantity",
+});
+
 const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
   url: z.string()
@@ -288,6 +309,7 @@ interface Dependencies {
   notificationCenter?: NotificationCenterModule;
   travelPlanning?: TravelPlanningModule;
   dayBriefs?: DayBriefPersistence;
+  shopping?: ShoppingModule;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -308,6 +330,7 @@ export function buildApp({
   notificationCenter,
   travelPlanning,
   dayBriefs,
+  shopping,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -530,6 +553,67 @@ export function buildApp({
     if (!parsed.success) return reply.code(400).send({ error: "invalid_day_brief_date" });
     const brief = await dayBriefs.dayBrief(account.familyID, account.memberID, parsed.data);
     return brief ?? reply.code(404).send({ error: "day_brief_not_found" });
+  });
+
+  app.get("/v1/shopping/catalog", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    return shopping.catalog(requiredAccount(request));
+  });
+
+  app.put("/v1/shopping/routines/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const draft = shoppingRoutineSchema.safeParse(request.body);
+    if (!id.success || !draft.success) {
+      return reply.code(400).send({ error: "invalid_shopping_routine" });
+    }
+    try {
+      return await shopping.saveRoutine(requiredAccount(request), id.data, draft.data);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.delete("/v1/shopping/routines/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    if (!id.success) return reply.code(400).send({ error: "invalid_shopping_routine_id" });
+    try {
+      const deleted = await shopping.deleteRoutine(requiredAccount(request), id.data);
+      return deleted
+        ? reply.code(204).send()
+        : reply.code(404).send({ error: "shopping_routine_not_found" });
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.put("/v1/shopping/pantry-items/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const draft = pantryItemSchema.safeParse(request.body);
+    if (!id.success || !draft.success) {
+      return reply.code(400).send({ error: "invalid_pantry_item" });
+    }
+    try {
+      return await shopping.savePantryItem(requiredAccount(request), id.data, draft.data);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.delete("/v1/shopping/pantry-items/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    if (!id.success) return reply.code(400).send({ error: "invalid_pantry_item_id" });
+    try {
+      const deleted = await shopping.deletePantryItem(requiredAccount(request), id.data);
+      return deleted
+        ? reply.code(204).send()
+        : reply.code(404).send({ error: "pantry_item_not_found" });
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
   });
 
   app.post("/v1/invitations", {
@@ -1540,6 +1624,24 @@ function sendTravelPlanningError(error: unknown, reply: FastifyReply) {
   case "invalid_travel_plan":
   case "invalid_recipients":
     return reply.code(400).send({ error: "invalid_travel_plan" });
+  }
+}
+
+function sendShoppingError(error: unknown, reply: FastifyReply) {
+  if (!(error instanceof ShoppingModuleError)) throw error;
+  switch (error.reason) {
+  case "parent_required":
+    return reply.code(403).send({ error: "parent_role_required" });
+  case "routine_not_found":
+    return reply.code(404).send({ error: "shopping_routine_not_found" });
+  case "routine_name_conflict":
+    return reply.code(409).send({ error: "shopping_routine_name_conflict" });
+  case "pantry_item_name_conflict":
+    return reply.code(409).send({ error: "pantry_item_name_conflict" });
+  case "invalid_routine":
+    return reply.code(400).send({ error: "invalid_shopping_routine" });
+  case "invalid_pantry_item":
+    return reply.code(400).send({ error: "invalid_pantry_item" });
   }
 }
 
