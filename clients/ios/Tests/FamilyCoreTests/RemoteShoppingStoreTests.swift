@@ -86,6 +86,97 @@ final class RemoteShoppingStoreTests: XCTestCase {
     ])
   }
 
+  func testLoadsRequestsAndLatestStockObservations() async throws {
+    let transport = ShoppingRecordingTransport(responses: [
+      HTTPResponse(statusCode: 200, body: Data(
+        """
+        {
+          "openRequests":[{
+            "id":"30000000-0000-4000-8000-000000000001",
+            "familyID":"family-1",
+            "itemID":"20000000-0000-4000-8000-000000000001",
+            "requestedByMemberID":"kid-1",
+            "quantity":2,
+            "note":"For breakfast",
+            "status":"open",
+            "requestedAt":"2026-10-02T12:00:00.000Z",
+            "resolvedAt":null,
+            "resolvedByMemberID":null
+          }],
+          "latestObservations":[{
+            "id":"40000000-0000-4000-8000-000000000001",
+            "familyID":"family-1",
+            "itemID":"20000000-0000-4000-8000-000000000001",
+            "observedByMemberID":"kid-1",
+            "level":"low",
+            "quantity":0.5,
+            "note":null,
+            "observedAt":"2026-10-02T12:00:00.000Z"
+          }]
+        }
+        """.utf8))
+    ])
+    let store = RemoteShoppingStore(
+      baseURL: URL(string: "https://api.example.com")!, transport: transport
+    )
+
+    let evidence = try await store.evidence()
+
+    XCTAssertEqual(evidence.openRequests.first?.note, "For breakfast")
+    XCTAssertEqual(evidence.latestObservations.first?.level, StockLevel.low)
+    let requests = await transport.recordedRequests()
+    XCTAssertEqual(requests.first?.url.path, "/v1/shopping/evidence")
+  }
+
+  func testRequestsItemsObservesStockAndClosesRequestsWithResourceIDs() async throws {
+    let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
+    let requestID = UUID(uuidString: "30000000-0000-4000-8000-000000000001")!
+    let observationID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
+    let requestBody = Data(
+      """
+      {"id":"\(requestID)","familyID":"family-1","itemID":"\(itemID)","requestedByMemberID":"kid-1","quantity":2,"note":null,"status":"open","requestedAt":"2026-10-02T12:00:00.000Z","resolvedAt":null,"resolvedByMemberID":null}
+      """.utf8)
+    let observationBody = Data(
+      """
+      {"id":"\(observationID)","familyID":"family-1","itemID":"\(itemID)","observedByMemberID":"kid-1","level":"out","quantity":0,"note":null,"observedAt":"2026-10-02T12:00:00.000Z"}
+      """.utf8)
+    let resolvedBody = Data(
+      """
+      {"id":"\(requestID)","familyID":"family-1","itemID":"\(itemID)","requestedByMemberID":"kid-1","quantity":2,"note":null,"status":"resolved","requestedAt":"2026-10-02T12:00:00.000Z","resolvedAt":"2026-10-02T13:00:00.000Z","resolvedByMemberID":"parent-1"}
+      """.utf8)
+    let transport = ShoppingRecordingTransport(responses: [
+      HTTPResponse(statusCode: 200, body: requestBody),
+      HTTPResponse(statusCode: 200, body: observationBody),
+      HTTPResponse(statusCode: 200, body: resolvedBody),
+    ])
+    let store = RemoteShoppingStore(
+      baseURL: URL(string: "https://api.example.com")!, transport: transport
+    )
+
+    _ = try await store.requestItem(
+      id: requestID,
+      draft: ShoppingItemRequestDraft(itemID: itemID, quantity: 2, note: nil)
+    )
+    _ = try await store.observeStock(
+      id: observationID,
+      itemID: itemID,
+      input: StockObservationInput(level: .out, quantity: 0, note: nil)
+    )
+    _ = try await store.closeRequest(id: requestID, status: .resolved)
+
+    let requests = await transport.recordedRequests()
+    XCTAssertEqual(requests.map(\.method), [.put, .put, .patch])
+    XCTAssertEqual(requests.map(\.url.path), [
+      "/v1/shopping/requests/\(requestID.uuidString.lowercased())",
+      "/v1/shopping/stock-observations/\(observationID.uuidString.lowercased())",
+      "/v1/shopping/requests/\(requestID.uuidString.lowercased())",
+    ])
+    XCTAssertEqual(try bodyObject(requests[0])["itemID"] as? String, itemID.uuidString)
+    XCTAssertEqual(try bodyObject(requests[0])["quantity"] as? Double, 2)
+    XCTAssertEqual(try bodyObject(requests[1])["level"] as? String, "out")
+    XCTAssertEqual(try bodyObject(requests[2])["status"] as? String, "resolved")
+  }
+
   func testDeletesRoutineAndPantryItemAtResourcePaths() async throws {
     let routineID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
     let itemID = UUID(uuidString: "20000000-0000-4000-8000-000000000001")!
@@ -107,6 +198,11 @@ final class RemoteShoppingStoreTests: XCTestCase {
       "/v1/shopping/routines/\(routineID.uuidString.lowercased())",
       "/v1/shopping/pantry-items/\(itemID.uuidString.lowercased())",
     ])
+  }
+
+  private func bodyObject(_ request: HTTPRequest) throws -> [String: Any] {
+    let body = try XCTUnwrap(request.body)
+    return try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
   }
 
   private func routineJSON(id: UUID) -> Data {

@@ -55,6 +55,20 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Shopping and Pantry"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Neighborhood Market"].exists)
         XCTAssertTrue(app.staticTexts["Oat milk"].exists)
+        XCTAssertTrue(app.staticTexts["Low"].exists)
+        XCTAssertTrue(app.staticTexts["1 open request"].exists)
+        let requestButton = app.buttons["Request Oat milk"]
+        XCTAssertTrue(requestButton.exists)
+        requestButton.tap()
+        let requestNavigation = app.navigationBars["Request Item"]
+        XCTAssertTrue(requestNavigation.waitForExistence(timeout: 1))
+        requestNavigation.buttons["Cancel"].tap()
+        let stockButton = app.buttons["Update Oat milk stock"]
+        XCTAssertTrue(stockButton.waitForExistence(timeout: 1))
+        stockButton.tap()
+        let stockNavigation = app.navigationBars["Update Stock"]
+        XCTAssertTrue(stockNavigation.waitForExistence(timeout: 1))
+        stockNavigation.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["Add shopping routine"].exists)
         XCTAssertTrue(app.buttons["Add pantry item"].exists)
     }

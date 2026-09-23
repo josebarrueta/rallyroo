@@ -4,13 +4,19 @@ import {
   ShoppingRoutineReferenceError,
   type PantryItem,
   type ShoppingCatalog,
+  type ShoppingEvidence,
+  type ShoppingItemRequest,
+  type ShoppingItemRequestStatus,
   type ShoppingRepository,
   type ShoppingRoutine,
+  type StockObservation,
 } from "./shopping-module.js";
 
 export class InMemoryShoppingRepository implements ShoppingRepository {
   private readonly routines: ShoppingRoutine[] = [];
   private readonly items: PantryItem[] = [];
+  private readonly requests: ShoppingItemRequest[] = [];
+  private readonly observations: StockObservation[] = [];
 
   async catalog(familyID: string): Promise<ShoppingCatalog> {
     return {
@@ -74,6 +80,90 @@ export class InMemoryShoppingRepository implements ShoppingRepository {
     const index = this.items.findIndex((item) => item.familyID === familyID && item.id === itemID);
     if (index < 0) return false;
     this.items.splice(index, 1);
+    for (let requestIndex = this.requests.length - 1; requestIndex >= 0; requestIndex -= 1) {
+      if (this.requests[requestIndex]!.familyID === familyID
+        && this.requests[requestIndex]!.itemID === itemID) this.requests.splice(requestIndex, 1);
+    }
+    for (let observationIndex = this.observations.length - 1;
+      observationIndex >= 0; observationIndex -= 1) {
+      if (this.observations[observationIndex]!.familyID === familyID
+        && this.observations[observationIndex]!.itemID === itemID) {
+        this.observations.splice(observationIndex, 1);
+      }
+    }
     return true;
+  }
+
+  async evidence(familyID: string): Promise<ShoppingEvidence> {
+    const openRequests = this.requests.filter((request) =>
+      request.familyID === familyID && request.status === "open")
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt)
+        || right.id.localeCompare(left.id))
+      .map((request) => ({ ...request }));
+    const latest = new Map<string, StockObservation>();
+    for (const observation of this.observations.filter((candidate) =>
+      candidate.familyID === familyID)) {
+      const current = latest.get(observation.itemID);
+      if (!current || observation.observedAt > current.observedAt
+        || (observation.observedAt === current.observedAt && observation.id > current.id)) {
+        latest.set(observation.itemID, observation);
+      }
+    }
+    return {
+      openRequests,
+      latestObservations: [...latest.values()]
+        .sort((left, right) => left.itemID.localeCompare(right.itemID))
+        .map((observation) => ({ ...observation })),
+    };
+  }
+
+  async itemRequest(familyID: string, requestID: string): Promise<ShoppingItemRequest | null> {
+    const request = this.requests.find((candidate) =>
+      candidate.familyID === familyID && candidate.id === requestID);
+    return request ? { ...request } : null;
+  }
+
+  async saveItemRequestIfAbsent(request: ShoppingItemRequest): Promise<ShoppingItemRequest> {
+    const existing = await this.itemRequest(request.familyID, request.id);
+    if (existing) return existing;
+    this.requests.push({ ...request });
+    return { ...request };
+  }
+
+  async closeItemRequest(
+    familyID: string,
+    requestID: string,
+    status: Exclude<ShoppingItemRequestStatus, "open">,
+    resolvedAt: string,
+    resolvedByMemberID: string,
+  ): Promise<ShoppingItemRequest | null> {
+    const index = this.requests.findIndex((request) =>
+      request.familyID === familyID && request.id === requestID);
+    if (index < 0) return null;
+    const current = this.requests[index]!;
+    if (current.status === "open") {
+      this.requests[index] = {
+        ...current, status, resolvedAt, resolvedByMemberID,
+      };
+    }
+    return { ...this.requests[index]! };
+  }
+
+  async stockObservation(
+    familyID: string,
+    observationID: string,
+  ): Promise<StockObservation | null> {
+    const observation = this.observations.find((candidate) =>
+      candidate.familyID === familyID && candidate.id === observationID);
+    return observation ? { ...observation } : null;
+  }
+
+  async saveStockObservationIfAbsent(
+    observation: StockObservation,
+  ): Promise<StockObservation> {
+    const existing = await this.stockObservation(observation.familyID, observation.id);
+    if (existing) return existing;
+    this.observations.push({ ...observation });
+    return { ...observation };
   }
 }

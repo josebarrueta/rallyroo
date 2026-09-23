@@ -1,6 +1,6 @@
 # Day Brief and Shopping Design
 
-Status: Day Brief v1 and Shopping v1 catalog slice implemented; Shopping requests, observations, recommendations, shared trips, and outcomes remain planned.
+Status: Day Brief v1 and Shopping v1 catalog/evidence slices implemented; Shopping recommendations, shared trips, and outcomes remain planned.
 
 ## Goals
 
@@ -185,7 +185,7 @@ The implementation hides recurrence calculation, evidence ordering, stock stalen
 ### Shopping v1
 
 1. Shopping routines and Pantry catalog. **Implemented.**
-2. Family item requests and Stock observations.
+2. Family item requests and Stock observations. **Implemented.**
 3. Deterministic Buy / Check at home / Skip preparation.
 4. Parent review and shared shopping experience.
 5. Trip outcomes and Purchase history.

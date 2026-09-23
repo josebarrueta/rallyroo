@@ -265,6 +265,20 @@ const shoppingRoutineSchema = z.object({
   intervalWeeks: z.number().int().min(1).max(52),
   preferredWeekday: z.number().int().min(1).max(7).nullable(),
 }).strict();
+const shoppingItemRequestSchema = z.object({
+  itemID: shoppingResourceIDSchema,
+  quantity: z.number().positive().max(1_000_000).nullable().default(null),
+  note: z.string().trim().min(1).max(500).nullable().default(null),
+}).strict();
+const stockObservationSchema = z.object({
+  itemID: shoppingResourceIDSchema,
+  level: z.enum(["enough", "low", "out"]),
+  quantity: z.number().min(0).max(1_000_000).nullable().default(null),
+  note: z.string().trim().min(1).max(500).nullable().default(null),
+}).strict();
+const shoppingRequestStatusSchema = z.object({
+  status: z.enum(["resolved", "cancelled"]),
+}).strict();
 const pantryItemSchema = z.object({
   name: z.string().trim().min(1).max(120),
   category: z.string().trim().min(1).max(100).nullable().default(null),
@@ -558,6 +572,56 @@ export function buildApp({
   app.get("/v1/shopping/catalog", async (request, reply) => {
     if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
     return shopping.catalog(requiredAccount(request));
+  });
+
+  app.get("/v1/shopping/evidence", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    return shopping.evidence(requiredAccount(request));
+  });
+
+  app.put("/v1/shopping/requests/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const draft = shoppingItemRequestSchema.safeParse(request.body);
+    if (!id.success || !draft.success) {
+      return reply.code(400).send({ error: "invalid_shopping_item_request" });
+    }
+    try {
+      return await shopping.requestItem(requiredAccount(request), id.data, draft.data);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.patch("/v1/shopping/requests/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const update = shoppingRequestStatusSchema.safeParse(request.body);
+    if (!id.success || !update.success) {
+      return reply.code(400).send({ error: "invalid_shopping_item_request_status" });
+    }
+    try {
+      return await shopping.closeRequest(requiredAccount(request), id.data, update.data.status);
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
+  });
+
+  app.put("/v1/shopping/stock-observations/:id", async (request, reply) => {
+    if (!shopping) return reply.code(503).send({ error: "shopping_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const input = stockObservationSchema.safeParse(request.body);
+    if (!id.success || !input.success) {
+      return reply.code(400).send({ error: "invalid_stock_observation" });
+    }
+    try {
+      const { itemID, ...observation } = input.data;
+      return await shopping.observeStock(
+        requiredAccount(request), id.data, itemID, observation,
+      );
+    } catch (error) {
+      return sendShoppingError(error, reply);
+    }
   });
 
   app.put("/v1/shopping/routines/:id", async (request, reply) => {
@@ -1642,6 +1706,16 @@ function sendShoppingError(error: unknown, reply: FastifyReply) {
     return reply.code(400).send({ error: "invalid_shopping_routine" });
   case "invalid_pantry_item":
     return reply.code(400).send({ error: "invalid_pantry_item" });
+  case "pantry_item_not_found":
+    return reply.code(404).send({ error: "pantry_item_not_found" });
+  case "invalid_item_request":
+    return reply.code(400).send({ error: "invalid_shopping_item_request" });
+  case "item_request_not_found":
+    return reply.code(404).send({ error: "shopping_item_request_not_found" });
+  case "item_request_forbidden":
+    return reply.code(403).send({ error: "shopping_item_request_forbidden" });
+  case "invalid_stock_observation":
+    return reply.code(400).send({ error: "invalid_stock_observation" });
   }
 }
 

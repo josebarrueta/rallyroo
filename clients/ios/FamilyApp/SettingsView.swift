@@ -83,7 +83,8 @@ struct SettingsView: View {
                         NavigationLink("Shopping and Pantry") {
                             ShoppingCatalogView(
                                 store: shoppingStore,
-                                canManage: canManageShoppingCatalog
+                                canManage: canManageShoppingCatalog,
+                                currentMemberID: currentMemberID
                             )
                         }
                         Text("Manage store routines and the Family Pantry catalog.")
@@ -872,11 +873,15 @@ private struct DayBriefSettingsView: View {
 private struct ShoppingCatalogView: View {
     let store: any ShoppingStore
     let canManage: Bool
+    let currentMemberID: String?
     @State private var catalog = ShoppingCatalog(routines: [], items: [])
+    @State private var evidence = ShoppingEvidence(openRequests: [], latestObservations: [])
     @State private var isAddingRoutine = false
     @State private var isAddingItem = false
     @State private var editingRoutine: ShoppingRoutine?
     @State private var editingItem: PantryItem?
+    @State private var requestingItem: PantryItem?
+    @State private var observingItem: PantryItem?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -900,21 +905,39 @@ private struct ShoppingCatalogView: View {
                 }
             }
 
+            if !evidence.openRequests.isEmpty {
+                Section("Family requests") {
+                    Text("\(evidence.openRequests.count) open \(evidence.openRequests.count == 1 ? "request" : "requests")")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(evidence.openRequests) { request in
+                        requestRow(request)
+                    }
+                }
+            }
+
             Section("Pantry catalog") {
                 if catalog.items.isEmpty {
                     Text("No Pantry items yet")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(catalog.items) { item in
-                    if canManage {
-                        Button { editingItem = item } label: {
-                            itemRow(item)
+                    VStack(alignment: .leading, spacing: 10) {
+                        itemRow(item)
+                        HStack {
+                            Button("Request") { requestingItem = item }
+                                .accessibilityLabel("Request \(item.name)")
+                            Button("Update stock") { observingItem = item }
+                                .accessibilityLabel("Update \(item.name) stock")
+                            if canManage {
+                                Button("Edit") { editingItem = item }
+                            }
                         }
-                        .swipeActions {
+                        .buttonStyle(.borderless)
+                    }
+                    .swipeActions {
+                        if canManage {
                             Button("Delete", role: .destructive) { deleteItem(item) }
                         }
-                    } else {
-                        itemRow(item)
                     }
                 }
             }
@@ -945,6 +968,12 @@ private struct ShoppingCatalogView: View {
         }
         .sheet(item: $editingItem) { item in
             PantryItemEditor(store: store, item: item, routines: catalog.routines) { await load() }
+        }
+        .sheet(item: $requestingItem) { item in
+            ShoppingRequestEditor(store: store, item: item) { await load() }
+        }
+        .sheet(item: $observingItem) { item in
+            StockObservationEditor(store: store, item: item) { await load() }
         }
         .alert("Shopping Catalog Unavailable", isPresented: Binding(
             get: { errorMessage != nil },
@@ -978,10 +1007,44 @@ private struct ShoppingCatalogView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if item.critical {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundStyle(.orange)
-                    .accessibilityLabel("Critical item")
+            VStack(alignment: .trailing, spacing: 4) {
+                if let observation = evidence.latestObservations.first(where: { $0.itemID == item.id }) {
+                    Text(stockLevelTitle(observation.level))
+                        .font(.caption.bold())
+                        .foregroundStyle(stockLevelColor(observation.level))
+                } else {
+                    Text("No stock check")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if item.critical {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Critical item")
+                }
+            }
+        }
+    }
+
+    private func requestRow(_ request: ShoppingItemRequest) -> some View {
+        let itemName = catalog.items.first(where: { $0.id == request.itemID })?.name ?? "Pantry item"
+        return HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(itemName).font(.headline)
+                Text(requestSummary(request))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if canManage {
+                VStack(alignment: .trailing) {
+                    Button("Resolve") { closeRequest(request, status: .resolved) }
+                    Button("Cancel") { closeRequest(request, status: .cancelled) }
+                }
+                .buttonStyle(.borderless)
+            } else if request.requestedByMemberID == currentMemberID {
+                Button("Cancel") { closeRequest(request, status: .cancelled) }
+                    .buttonStyle(.borderless)
             }
         }
     }
@@ -989,10 +1052,27 @@ private struct ShoppingCatalogView: View {
     @MainActor
     private func load() async {
         do {
-            catalog = try await store.catalog()
+            async let loadedCatalog = store.catalog()
+            async let loadedEvidence = store.evidence()
+            catalog = try await loadedCatalog
+            evidence = try await loadedEvidence
             errorMessage = nil
         } catch {
             errorMessage = "We couldn't load the Shopping catalog."
+        }
+    }
+
+    private func closeRequest(
+        _ request: ShoppingItemRequest,
+        status: ShoppingItemRequestStatus
+    ) {
+        Task {
+            do {
+                _ = try await store.closeRequest(id: request.id, status: status)
+                await load()
+            } catch {
+                errorMessage = "We couldn't update that Family request."
+            }
         }
     }
 
@@ -1030,6 +1110,32 @@ private struct ShoppingCatalogView: View {
         }
         let detail = [item.category, item.unit].compactMap { $0 }.joined(separator: " · ")
         return [detail, routineNames.joined(separator: ", ")].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private func requestSummary(_ request: ShoppingItemRequest) -> String {
+        let quantity = request.quantity.map { "Quantity \(Self.quantityText($0))" }
+        let details = [quantity, request.note].compactMap { $0 }.joined(separator: " · ")
+        return details.isEmpty ? "Requested for the Family" : details
+    }
+
+    private func stockLevelTitle(_ level: StockLevel) -> String {
+        switch level {
+        case .enough: "Enough"
+        case .low: "Low"
+        case .out: "Out"
+        }
+    }
+
+    private func stockLevelColor(_ level: StockLevel) -> Color {
+        switch level {
+        case .enough: .green
+        case .low: .orange
+        case .out: .red
+        }
+    }
+
+    static func quantityText(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(value)
     }
 
     static func weekdayName(_ weekday: Int) -> String {
@@ -1253,5 +1359,159 @@ private struct PantryItemEditor: View {
 
     private static func quantityText(_ value: Double) -> String {
         value.rounded() == value ? String(Int(value)) : String(value)
+    }
+}
+
+private struct ShoppingRequestEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let item: PantryItem
+    let onSaved: @MainActor () async -> Void
+    @State private var quantity = ""
+    @State private var note = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(item.name) {
+                    TextField("Quantity (optional)", text: $quantity)
+                        .keyboardType(.decimalPad)
+                    TextField("Note (optional)", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+                Text("A request asks the Family to consider this item. A parent still finalizes the Shopping trip.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .navigationTitle("Request Item")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Request") { save() }
+                        .disabled(!isValid || isSaving)
+                }
+            }
+            .alert("Request Not Saved", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        quantity.isEmpty || Double(quantity).map { $0 > 0 } == true
+    }
+
+    private func save() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                _ = try await store.requestItem(
+                    id: UUID(),
+                    draft: ShoppingItemRequestDraft(
+                        itemID: item.id,
+                        quantity: Double(quantity),
+                        note: optional(note)
+                    )
+                )
+                await onSaved()
+                dismiss()
+            } catch {
+                errorMessage = "We couldn't save that Family request."
+            }
+        }
+    }
+
+    private func optional(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct StockObservationEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    let store: any ShoppingStore
+    let item: PantryItem
+    let onSaved: @MainActor () async -> Void
+    @State private var level: StockLevel = .enough
+    @State private var quantity = ""
+    @State private var note = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section(item.name) {
+                    Picker("Stock", selection: $level) {
+                        Text("Enough").tag(StockLevel.enough)
+                        Text("Low").tag(StockLevel.low)
+                        Text("Out").tag(StockLevel.out)
+                    }
+                    .pickerStyle(.segmented)
+                    TextField("Exact quantity (optional)", text: $quantity)
+                        .keyboardType(.decimalPad)
+                    TextField("Note (optional)", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+                Text("This is timestamped evidence, not a permanent inventory count.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .navigationTitle("Update Stock")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .disabled(!isValid || isSaving)
+                }
+            }
+            .alert("Stock Not Updated", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) { Button("OK", role: .cancel) {} } message: {
+                Text(errorMessage ?? "Please try again.")
+            }
+        }
+    }
+
+    private var isValid: Bool {
+        quantity.isEmpty || Double(quantity).map { $0 >= 0 } == true
+    }
+
+    private func save() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                _ = try await store.observeStock(
+                    id: UUID(),
+                    itemID: item.id,
+                    input: StockObservationInput(
+                        level: level,
+                        quantity: Double(quantity),
+                        note: optional(note)
+                    )
+                )
+                await onSaved()
+                dismiss()
+            } catch {
+                errorMessage = "We couldn't update that Stock observation."
+            }
+        }
+    }
+
+    private func optional(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
