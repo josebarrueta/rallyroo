@@ -278,6 +278,12 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Month"].tap()
 
         XCTAssertTrue(app.otherElements["schedule-month-grid"].waitForExistence(timeout: 5))
+        for weekdayIndex in 0..<7 {
+            XCTAssertTrue(
+                app.staticTexts["schedule-month-weekday-\(weekdayIndex)"].exists,
+                "Expected all seven weekday headers"
+            )
+        }
     }
 
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
