@@ -444,10 +444,11 @@ struct WeeklyScheduleView: View {
                         columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7),
                         spacing: 8
                     ) {
-                        ForEach(weekdaySymbols, id: \.self) { symbol in
+                        ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
                             Text(symbol)
                                 .font(.caption2.bold())
                                 .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("schedule-month-weekday-\(index)")
                         }
                         ForEach(viewport.visibleDates, id: \.self) { day in
                             monthDayButton(day)
