@@ -20,7 +20,7 @@ Treat those internal dates and versions as authoritative. The public portal was 
 - Every documented transit request requires an Open511 key. The specifications require the token in an `api_key` query parameter (Transit PDF, §§2.1–2.20; Overview PDF, §3.2, p. 14).
 - Query-oriented 511 resources use HTTP GET. JSON is generally the default for query resources; XML is also supported. GTFS-Realtime Trip Updates and Vehicle Positions use Protocol Buffers unless a supported format is explicitly requested (Transit PDF, §§2.1–2.20, pp. 9–40).
 - The Overview distinguishes mostly-static **configuration data** (such as routes, stops, and roadway networks) from short-lived **real-time data** (such as departure predictions, incidents, and roadway travel times). It recommends downloading/storing configuration data and requesting real-time data as needed (Overview PDF, §2.1, pp. 4–6).
-- The current Transit and Traffic portal pages state a default quota of **60 requests per 3,600 seconds per API token**. Higher limits may be requested based on need and use case. This is too low for independent per-Family polling and reinforces shared agency-level polling.
+- The current Transit and Traffic portal pages state a default quota of **60 requests per 3,600 seconds per API token**. Higher limits may be requested based on need and use case. Rallyroo received an approved project-specific increase to **150 requests per hour**; shared agency-level polling remains required and is budgeted against that approved limit.
 - The current portal asks rate-limit requests to be sent to `511sfbaydeveloperresources@googlegroups.com` **without the API key**. The FAQ conflicts with this by naming another address and requesting the key; follow the safer current portal instruction and never email a credential unless 511 confirms the process through a trusted channel.
 - Transit sections document common 401, 404, and 500 responses (Transit PDF, §§2.1–2.20, pp. 9–40).
 - A single requested token accesses transit, traffic, and toll endpoints. The portal describes the data as free, but access is conditioned on accepting the Data Disseminator Agreement.
@@ -158,10 +158,9 @@ Share only the small installation lifecycle across optional modules: available, 
 
 1. Authenticated live responses, supported resource versions, and production behavior for every endpoint Rallyroo will consume.
 2. Caltrain feed reliability over time; operator ID `CT`, current Trip Updates, and current Stop Monitoring were confirmed only by a point-in-time sample.
-3. A quota approved for Rallyroo's proposed shared polling intervals; the default 60 requests/hour cannot support frequent polling of multiple feeds.
-4. Provider timestamp/expiry behavior over time, payload-size bounds, cancellations, ID stability, and outage/recovery behavior under a bounded Caltrain soak probe.
-5. Written confirmation that the registered account and requested quota cover backend fan-out to all Rallyroo families.
-6. Final legal/product review of the Data Disseminator Agreement, in-app attribution placement, 30-day post-launch documentation, and shutdown behavior if the license ends.
+3. Provider timestamp/expiry behavior over time, payload-size bounds, cancellations, ID stability, and outage/recovery behavior under a bounded Caltrain soak probe.
+4. Written confirmation that the registered account and approved 150 requests/hour quota cover backend fan-out to all Rallyroo families.
+5. Final legal/product review of the Data Disseminator Agreement, in-app attribution placement, 30-day post-launch documentation, and shutdown behavior if the license ends.
 
 ## Primary sources
 

@@ -3,7 +3,7 @@ export interface CaltrainPositionPollingPlan {
   nextDelayMilliseconds: number;
 }
 
-const activeDelayMilliseconds = 5 * 60 * 1_000;
+const activeDelayMilliseconds = 2 * 60 * 1_000;
 const backgroundDelayMilliseconds = 30 * 60 * 1_000;
 const serviceStartsAtMinutes = 4 * 60 + 30;
 const serviceEndsAtMinutes = 1 * 60 + 30;

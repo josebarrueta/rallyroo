@@ -43,6 +43,7 @@ final class ScheduleEventDisplayTests: XCTestCase {
         let display = ScheduleEventDisplay(event: event, members: [alex, emma])
 
         XCTAssertEqual(display.participantNames, ["Alex", "Emma"])
+        XCTAssertEqual(display.participantColorTags, ["blue", "purple"])
     }
 
     func testKeepsKidDetailsEmptyWhenNoKidIsAssigned() {
@@ -58,6 +59,7 @@ final class ScheduleEventDisplayTests: XCTestCase {
         let display = ScheduleEventDisplay(event: event, members: [])
 
         XCTAssertEqual(display.participantNames, [])
+        XCTAssertEqual(display.participantColorTags, [])
         XCTAssertNil(display.primaryColorTag)
     }
 }
