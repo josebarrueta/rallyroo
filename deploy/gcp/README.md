@@ -116,10 +116,45 @@ with the repository deployment tooling after credential setup.
 
 The data disk mounts at `/var/local/rallyroo`, matching the chart's production
 PostgreSQL and Redis host paths. The bootstrap assigns the PostgreSQL host path
-to the image's UID/GID `70` before k3s starts. The VM service account can manage objects only in
-the emitted backup bucket. Creating the bucket is not a backup system by itself;
-backup scheduling, encryption, restore validation, and alerts must be configured
-before cutover.
+to the image's UID/GID `70` before k3s starts. The VM service account can manage
+objects only in the emitted backup bucket.
+
+### Scheduled database backups
+
+From the repository root, run `./deploy/gcp/install-backups.sh` on an operator
+machine with IAP / OS Login access. This interactive installer does **not** rerun
+the VM startup script or transfer a kubeconfig. It tests the scripts locally,
+transfers only the reviewed job files, asks for confirmation before pruning, then
+runs one backup and an isolated restore before enabling the timers. If direct SSH
+fails, have an authorized operator run the wizard; CI must not have production
+kubeconfig or VM credentials. New hosts receive the same files through Terraform
+metadata at bootstrap; do not apply Terraform just to install these jobs on the
+existing host.
+
+`rallyroo-backup.timer` runs daily at **04:00 UTC**. Its oneshot service reads the
+PostgreSQL password only inside the container from
+`/run/secrets/postgres/password`, writes a PostgreSQL custom archive to a
+root-only temporary directory on the mounted disk, validates its table of
+contents, uploads it to GCS, downloads and byte-compares it, and **only then**
+prunes to the **three newest live backup objects across the dedicated bucket**.
+This includes older one-off archives outside `dumps/` with `.dump`, `.backup`, or
+`.sql.gz` extensions. Unknown objects or listing failures abort pruning instead
+of silently deleting them. An incomplete/unverified upload is removed when
+possible; if GCS operations fail, alert on the failed service and reconcile the
+live object count. The upload may briefly create a fourth live object while it
+is verified. The bucket remains versioned and has a separate age-based lifecycle:
+noncurrent and soft-deleted generations may exist beyond the three live objects.
+
+`rallyroo-backup-verify.timer` runs monthly on the first at **06:00 UTC**, downloads
+the newest archive, restores it into a disposable database on the PostgreSQL
+server, checks for application tables, and drops the database. It never restores
+over the production database. Check `systemctl list-timers --all
+rallyroo-backup.timer rallyroo-backup-verify.timer`, `systemctl --failed`, and
+`journalctl -u rallyroo-backup.service -u rallyroo-backup-verify.service --since
+today` on the VM. Do not paste raw journal contents or archives into tickets.
+Investigate failed jobs promptly: systemd timer activation is not an alerting
+system. Before migrations or promotions, independently verify a recent backup;
+a timer being active does not prove the backup or restore succeeded.
 
 The data disk has Terraform `prevent_destroy`, the bucket has `force_destroy =
 false`, and the VM defaults to GCP deletion protection. For an intentional teardown:

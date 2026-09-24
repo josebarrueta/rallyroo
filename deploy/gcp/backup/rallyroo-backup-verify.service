@@ -1,0 +1,10 @@
+[Unit]
+Description=Rallyroo isolated database restore verification
+After=k3s.service
+Wants=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rallyroo/backups/verify-restore.sh
+StandardOutput=journal
+StandardError=journal
