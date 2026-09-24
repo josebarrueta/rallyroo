@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Account, FamilyEvent, ScheduleOccurrenceState } from "../src/domain.js";
 import {
   OccurrenceLifecycleError,
@@ -90,6 +90,14 @@ class MemoryOccurrenceRepository implements OccurrenceLifecycleRepository {
 }
 
 describe("OccurrenceLifecycleModule", () => {
+  // The future-scope fixtures are dated September 2026, so pin the clock
+  // before their last occurrence instead of depending on the CI run date.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-17T00:00:00.000Z"));
+  });
+  afterEach(() => vi.useRealTimers());
+
   it("lets a parent skip one Event occurrence without deleting its history", async () => {
     const repo = new MemoryOccurrenceRepository();
     const lifecycle = new OccurrenceLifecycleModule(repo);
