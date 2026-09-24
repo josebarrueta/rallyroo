@@ -6,7 +6,7 @@ struct CommuterSettingsView: View {
     @StateObject private var model: CommuterSettingsModel
     @State private var subscriptionEditor: CommuteSubscriptionEditor?
     @State private var isConfirmingRemoval = false
-    @State private var trainNumberFilter = ""
+    @State private var selectedTrainNumber: String?
     private let initialSubscriptionID: String?
     private let canManageFamilySettings: Bool
 
@@ -21,30 +21,7 @@ struct CommuterSettingsView: View {
     }
 
     var body: some View {
-        Group {
-            if model.isLoading, model.state == nil {
-                ProgressView("Loading Commuter…")
-            } else if let state = model.state {
-                List {
-                    installationSection(state.installation)
-                    providerSection(state.providerStatus)
-                    liveTrainsSection()
-                    subscriptionsSection(state)
-                }
-            } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "train.side")
-                        .font(.largeTitle)
-                    Text("Commuter unavailable")
-                        .font(.headline)
-                    Text("Check your connection and try again.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Retry") { Task { await model.load() } }
-                }
-                .padding()
-            }
-        }
+        mainContent
         .navigationTitle("Commuter")
         .task {
             await model.load()
@@ -56,6 +33,11 @@ struct CommuterSettingsView: View {
             }
         }
         .refreshable { await model.load() }
+        .onChange(of: model.liveTrains?.availableTrainNumbers) { availableNumbers in
+            if let selected = selectedTrainNumber, !(availableNumbers ?? []).contains(selected) {
+                selectedTrainNumber = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
             Task { await model.load() }
         }
@@ -106,6 +88,33 @@ struct CommuterSettingsView: View {
         }
     }
 
+    private var mainContent: some View {
+        Group {
+            if model.isLoading, model.state == nil {
+                ProgressView("Loading Commuter…")
+            } else if let state = model.state {
+                List {
+                    installationSection(state.installation)
+                    providerSection(state.providerStatus)
+                    liveTrainsSection()
+                    subscriptionsSection(state)
+                }
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "train.side")
+                        .font(.largeTitle)
+                    Text("Commuter unavailable")
+                        .font(.headline)
+                    Text("Check your connection and try again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Retry") { Task { await model.load() } }
+                }
+                .padding()
+            }
+        }
+    }
+
     @ViewBuilder
     private func installationSection(_ installation: CommuterInstallation?) -> some View {
         Section("Installation") {
@@ -138,7 +147,10 @@ struct CommuterSettingsView: View {
     private func liveTrainsSection() -> some View {
         Section("Live trains") {
             if let response = model.liveTrains {
-                let visiblePositions = response.positions(matchingTrainNumber: trainNumberFilter)
+                let availableNumbers = response.availableTrainNumbers
+                let effectiveSelection = availableNumbers.contains(selectedTrainNumber ?? "")
+                    ? selectedTrainNumber : nil
+                let visiblePositions = response.positions(forTrainNumber: effectiveSelection)
                 Label(
                     liveTrainCountLabel(total: response.positions.count, visible: visiblePositions.count),
                     systemImage: "train.car.fill"
@@ -165,79 +177,18 @@ struct CommuterSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Filter by train number", text: $trainNumberFilter)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .accessibilityIdentifier("live-train-number-filter")
-                        if !trainNumberFilter.isEmpty {
-                            Button("Clear", systemImage: "xmark.circle.fill") {
-                                trainNumberFilter = ""
-                            }
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("clear-live-train-number-filter")
+                    Picker("Train", selection: $selectedTrainNumber) {
+                        Text("All trains").tag(nil as String?)
+                        ForEach(availableNumbers, id: \.self) { number in
+                            Text("Train \(number)").tag(Optional(number))
                         }
                     }
-                    if visiblePositions.isEmpty {
-                        Label("No trains match \(trainNumberFilter)", systemImage: "train.side.front.car")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Map(
-                            coordinateRegion: .constant(liveTrainRegion(for: visiblePositions)),
-                            annotationItems: visiblePositions
-                        ) { position in
-                            MapAnnotation(
-                                coordinate: CLLocationCoordinate2D(
-                                    latitude: position.latitude,
-                                    longitude: position.longitude
-                                )
-                            ) {
-                                VStack(spacing: 2) {
-                                    Image(systemName: "train.side.front.car")
-                                        .font(.caption.bold())
-                                        .foregroundStyle(.white)
-                                        .padding(7)
-                                        .background(
-                                            position.directionID == 1 ? Color.green : Color.orange,
-                                            in: Circle()
-                                        )
-                                    Text(position.tripID)
-                                        .font(.caption2.bold())
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 2)
-                                        .background(.regularMaterial, in: Capsule())
-                                }
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel("Train \(position.tripID)")
-                                .accessibilityValue(position.currentStopID ?? "En route")
-                            }
-                        }
-                        .frame(height: 240)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .accessibilityIdentifier("live-train-map")
-
-                        ForEach(visiblePositions) { position in
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(position.directionID == 1 ? .green : .orange)
-                                    .frame(width: 8, height: 8)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Train \(position.tripID)")
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                    Text(position.currentStopID ?? "En route")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(position.status)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                    .accessibilityIdentifier("live-train-picker")
+                    liveTrainMap(visiblePositions)
+                    liveTrainGroup("Northbound", direction: .northbound, positions: visiblePositions)
+                    liveTrainGroup("Southbound", direction: .southbound, positions: visiblePositions)
+                    if visiblePositions.contains(where: { $0.liveDirection == .unknown }) {
+                        liveTrainGroup("Direction unknown", direction: .unknown, positions: visiblePositions)
                     }
                 }
                 Text("Positions refresh every 30 minutes in the background and about every 2 minutes while viewed. Last-known trains remain visible as stale when updates pause.")
@@ -254,6 +205,84 @@ struct CommuterSettingsView: View {
              }
          }
      }
+
+    private func liveTrainMap(_ positions: [CaltrainVehiclePosition]) -> some View {
+        Map(
+            coordinateRegion: .constant(liveTrainRegion(for: positions)),
+            annotationItems: positions
+        ) { position in
+            MapAnnotation(
+                coordinate: CLLocationCoordinate2D(
+                    latitude: position.latitude,
+                    longitude: position.longitude
+                )
+            ) {
+                VStack(spacing: 2) {
+                    Image(systemName: "train.side.front.car")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(7)
+                        .background(liveTrainColor(for: position.liveDirection), in: Circle())
+                    Text(position.tripID)
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Train \(position.tripID), \(position.liveDirection.rawValue)")
+                .accessibilityValue(position.currentStopID ?? "En route")
+            }
+        }
+        .frame(height: 240)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("live-train-map")
+    }
+
+    @ViewBuilder
+    private func liveTrainGroup(
+        _ title: String,
+        direction: CaltrainDirection,
+        positions: [CaltrainVehiclePosition]
+    ) -> some View {
+        let trains = positions.filter { $0.liveDirection == direction }
+        Text("\(title) · \(trains.count)")
+            .font(.headline)
+            .accessibilityAddTraits(.isHeader)
+        if trains.isEmpty {
+            Text("No \(title.lowercased()) trains reported")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(trains) { position in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(liveTrainColor(for: direction))
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Train \(position.tripID)")
+                            .font(.body)
+                            .fontWeight(.medium)
+                        Text(position.currentStopID ?? "En route")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(position.status)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func liveTrainColor(for direction: CaltrainDirection) -> Color {
+        switch direction {
+        case .northbound: .green
+        case .southbound: .orange
+        case .unknown: .gray
+        }
+    }
 
     private func liveTrainCountLabel(total: Int, visible: Int) -> String {
         if total == 0 { return "Network positions · Unavailable" }

@@ -29,27 +29,39 @@ final class CommuterPresentationTests: XCTestCase {
         XCTAssertEqual(state.scheduleCardSubtitle, "1 active alert")
     }
 
-    func testFiltersLivePositionsByTrainNumber() {
+    func testPickerOffersUniqueAvailableTrainNumbersInNaturalOrder() {
         let response = CaltrainLiveTrainsResponse(
             status: feed(.healthy),
             observedAt: "2026-09-22T19:49:00Z",
-            positions: [position("156"), position("157"), position("428")]
+            positions: [position("170", directionID: 1), position("92", directionID: 0),
+                        position("170", directionID: 1), position("", directionID: nil)]
         )
 
-        XCTAssertEqual(response.positions(matchingTrainNumber: "15").map(\.tripID), ["156", "157"])
-        XCTAssertEqual(response.positions(matchingTrainNumber: " 428 ").map(\.tripID), ["428"])
-        XCTAssertEqual(response.positions(matchingTrainNumber: "").map(\.tripID), ["156", "157", "428"])
+        XCTAssertEqual(response.availableTrainNumbers, ["92", "170"])
+        XCTAssertEqual(response.positions(forTrainNumber: nil).count, 4)
+        XCTAssertEqual(response.positions(forTrainNumber: "170").map(\.tripID), ["170", "170"])
+        XCTAssertTrue(response.positions(forTrainNumber: "17").isEmpty)
+        XCTAssertTrue(CaltrainLiveTrainsResponse(status: feed(.healthy), observedAt: nil, positions: [])
+            .availableTrainNumbers.isEmpty)
+    }
+
+    func testVehicleDirectionsKeepUnknownFeedValuesSeparate() {
+        XCTAssertEqual(position("170", directionID: 1).liveDirection, .northbound)
+        XCTAssertEqual(position("171", directionID: 0).liveDirection, .southbound)
+        XCTAssertEqual(position("172", directionID: nil).liveDirection, .unknown)
+        XCTAssertEqual(position("173", directionID: 9).liveDirection, .unknown)
     }
 
     private func feed(_ state: CommuterProviderHealth) -> CommuterProviderFeedStatus {
         CommuterProviderFeedStatus(state: state, lastSuccessAt: nil, lastAttemptAt: nil)
     }
 
-    private func position(_ trainNumber: String) -> CaltrainVehiclePosition {
+    private func position(_ trainNumber: String, directionID: Int?) -> CaltrainVehiclePosition {
         CaltrainVehiclePosition(
             id: trainNumber,
             tripID: trainNumber,
             routeID: "CT",
+            directionID: directionID,
             latitude: 37.5,
             longitude: -122.3,
             timestamp: "2026-09-22T19:49:00Z"
