@@ -261,11 +261,28 @@ public struct CommuterState: Codable, Equatable, Sendable {
     }
 }
 
+public extension CaltrainVehiclePosition {
+    var liveDirection: CaltrainDirection {
+        // Caltrain's realtime feed uses 1 for northbound and 0 for southbound.
+        // Missing/unrecognized values must never be presented as southbound.
+        switch directionID {
+        case 1: .northbound
+        case 0: .southbound
+        default: .unknown
+        }
+    }
+}
+
 public extension CaltrainLiveTrainsResponse {
-    func positions(matchingTrainNumber query: String) -> [CaltrainVehiclePosition] {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return positions }
-        return positions.filter { $0.tripID.localizedCaseInsensitiveContains(normalized) }
+    var availableTrainNumbers: [String] {
+        Array(Set(positions.map(\.tripID).filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    func positions(forTrainNumber trainNumber: String?) -> [CaltrainVehiclePosition] {
+        guard let trainNumber else { return positions }
+        return positions.filter { $0.tripID == trainNumber }
     }
 }
 
