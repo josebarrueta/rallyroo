@@ -196,21 +196,27 @@ resource "google_compute_instance" "this" {
   }
 
   metadata = {
-    block-project-ssh-keys       = "TRUE"
-    enable-oslogin               = "TRUE"
-    enable-oslogin-2fa           = var.enable_os_login_2fa ? "TRUE" : "FALSE"
-    serial-port-enable           = "FALSE"
-    rallyroo-k3s-version         = var.k3s_version
-    rallyroo-k3s-cluster-cidr    = var.k3s_cluster_cidr
-    rallyroo-k3s-service-cidr    = var.k3s_service_cidr
-    rallyroo-k3s-cluster-dns     = var.k3s_cluster_dns
-    rallyroo-helm-version        = var.helm_version
-    rallyroo-flux-version        = var.flux_version
-    rallyroo-cloudflared-version = var.cloudflared_version
-    rallyroo-cloudflared-sha256  = var.cloudflared_sha256
-    rallyroo-install-ops-agent   = tostring(var.install_ops_agent)
-    rallyroo-backup-bucket       = google_storage_bucket.backups.name
-    startup-script               = file("${path.module}/startup.sh")
+    block-project-ssh-keys         = "TRUE"
+    enable-oslogin                 = "TRUE"
+    enable-oslogin-2fa             = var.enable_os_login_2fa ? "TRUE" : "FALSE"
+    serial-port-enable             = "FALSE"
+    rallyroo-k3s-version           = var.k3s_version
+    rallyroo-k3s-cluster-cidr      = var.k3s_cluster_cidr
+    rallyroo-k3s-service-cidr      = var.k3s_service_cidr
+    rallyroo-k3s-cluster-dns       = var.k3s_cluster_dns
+    rallyroo-helm-version          = var.helm_version
+    rallyroo-flux-version          = var.flux_version
+    rallyroo-cloudflared-version   = var.cloudflared_version
+    rallyroo-cloudflared-sha256    = var.cloudflared_sha256
+    rallyroo-install-ops-agent     = tostring(var.install_ops_agent)
+    rallyroo-backup-bucket         = google_storage_bucket.backups.name
+    rallyroo-backup-run-script     = file("${path.module}/backup/run-backup.sh")
+    rallyroo-backup-verify-script  = file("${path.module}/backup/verify-restore.sh")
+    rallyroo-backup-service        = file("${path.module}/backup/rallyroo-backup.service")
+    rallyroo-backup-timer          = file("${path.module}/backup/rallyroo-backup.timer")
+    rallyroo-backup-verify-service = file("${path.module}/backup/rallyroo-backup-verify.service")
+    rallyroo-backup-verify-timer   = file("${path.module}/backup/rallyroo-backup-verify.timer")
+    startup-script                 = file("${path.module}/startup.sh")
   }
 
   shielded_instance_config {
