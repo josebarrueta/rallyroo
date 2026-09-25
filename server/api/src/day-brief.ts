@@ -221,9 +221,13 @@ export class DayBriefModule {
         const preliminaryBrief = existing ?? await this.buildBrief(
           account, localDate, preference.timeZone, false,
         );
-        const firstEventMinute = preliminaryBrief.facts.events.length > 0
-          ? minuteForInstant(preliminaryBrief.facts.events[0]!.startTime, preference.timeZone)
+        const firstEvent = preliminaryBrief.facts.events[0];
+        const firstEventMinute = firstEvent
+          ? minuteForInstant(firstEvent.startTime, preference.timeZone)
           : Number.POSITIVE_INFINITY;
+        // The repeated hour at DST fall-back can have an earlier-looking local
+        // clock reading after a commitment that has already happened.
+        if (firstEvent && Date.parse(firstEvent.startTime) <= now.getTime()) continue;
         let firstActionableMinute = firstEventMinute;
         let verifiedLeave = existing?.verifiedLeaveTime
           ? new Date(existing.verifiedLeaveTime) : null;
@@ -239,6 +243,7 @@ export class DayBriefModule {
           } catch { /* Keep saved guidance, or fall back to the Event time. */ }
         }
         if (verifiedLeave && Number.isFinite(verifiedLeave.getTime())) {
+          if (verifiedLeave <= now) continue;
           const leaveLocalDate = localDateFor(verifiedLeave.toISOString(), preference.timeZone);
           if (leaveLocalDate < localDate) continue;
           if (leaveLocalDate === localDate) {

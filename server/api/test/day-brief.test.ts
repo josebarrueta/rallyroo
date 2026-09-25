@@ -585,6 +585,27 @@ describe("DayBriefModule.dispatchDue", () => {
     }]);
   });
 
+  it("does not catch up after an Event in the first repeated DST hour", async () => {
+    const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
+    const module = new DayBriefModule(repository({
+      familyEvents: [event({
+        id: "first-fold-event", title: "First 1:30 a.m.", driverMemberID: "parent",
+        startTime: "2026-11-01T08:30:00.000Z", endTime: "2026-11-01T08:50:00.000Z",
+      })],
+      importedEvents: [], reminders: [],
+      preferences: [{
+        familyID: "family", memberID: "parent", enabled: true,
+        timeZone: "America/Los_Angeles", weekdayTime: "01:00",
+        weekendHolidayTime: "01:00", earlyEventLeadMinutes: 30, holidayRegion: "US",
+      }],
+    }), notifications);
+
+    // 09:10 UTC is the second 1:10 a.m., after the 08:30 UTC Event.
+    expect(await module.dispatchDue(new Date("2026-11-01T09:10:00.000Z")))
+      .toEqual({ evaluated: 0, recorded: 0, failed: 0 });
+    expect(await notifications.list(account)).toEqual([]);
+  });
+
   it("uses the Member's local clock across the daylight-saving transition", async () => {
     const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
     const module = new DayBriefModule(repository({
