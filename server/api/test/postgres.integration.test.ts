@@ -383,6 +383,7 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       facts: { events: [], reminders: [] },
       title: "Private Day title",
       body: "Private Day details",
+      verifiedLeaveTime: "2026-10-05T13:00:00.000Z",
       generatedAt: "2026-10-05T14:00:00.000Z",
     };
     const insertions = await Promise.all([
@@ -402,9 +403,44 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       );
       expect(stored.rows[0]!.details_ciphertext).toMatch(/^rr1\./);
       expect(stored.rows[0]!.details_ciphertext).not.toContain("Private Day");
+      expect(stored.rows[0]!.details_ciphertext).not.toContain(record.verifiedLeaveTime);
     } finally {
       await inspection.end();
     }
+  });
+
+  it("pages enabled Day brief preferences across Families without repeating a Member", async () => {
+    const repository = repositoryForTest();
+    const familyIDs: string[] = [];
+    for (const index of [1, 2, 3]) {
+      const account = await repository.provisionParentAccount(
+        `day-brief-page-parent-${index}`, `Day Brief Page ${index}`,
+      );
+      familyIDs.push(account.familyID);
+      await repository.savePreferences({
+        familyID: account.familyID,
+        memberID: account.memberID,
+        enabled: true,
+        timeZone: "America/Los_Angeles",
+        weekdayTime: "07:00",
+        weekendHolidayTime: "08:30",
+        earlyEventLeadMinutes: 60,
+        holidayRegion: "US",
+      });
+    }
+
+    const seen: string[] = [];
+    let after: { familyID: string; memberID: string } | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const batch = await repository.enabledPreferences(2, after);
+      expect(batch.length).toBeLessThanOrEqual(2);
+      if (batch.length === 0) break;
+      seen.push(...batch.map((preference) => `${preference.familyID}:${preference.memberID}`));
+      const last = batch.at(-1)!;
+      after = { familyID: last.familyID, memberID: last.memberID };
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(familyIDs.every((id) => seen.some((key) => key.startsWith(`${id}:`)))).toBe(true);
   });
 
   it("atomically persists the last-good static Caltrain schedule", async () => {

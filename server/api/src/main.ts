@@ -4,6 +4,7 @@ import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
 import { DayBriefModule } from "./day-brief.js";
+import { DayBriefTravelTiming } from "./day-brief-travel-timing.js";
 import { RallyrooDayBriefRepository } from "./day-brief-repository.js";
 import { runCaltrainFeedCycle } from "./caltrain-feed-cycle.js";
 import { CaltrainLiveRefresh } from "./caltrain-live-refresh.js";
@@ -136,10 +137,15 @@ const dayBriefRepository = new RallyrooDayBriefRepository(
   repository,
   calendarSources,
 );
+const googleRoutesAPIKey = configuredSecret("GOOGLE_ROUTES_API_KEY");
+const routingProvider = googleRoutesAPIKey
+  ? new GoogleRoutingProvider(googleRoutesAPIKey)
+  : new UnavailableRoutingProvider();
 const dayBriefs = new DayBriefModule(
   dayBriefRepository,
   notificationCenter,
   ollamaConfiguration ? new OllamaDayBriefNarrator(ollamaConfiguration) : undefined,
+  googleRoutesAPIKey ? new DayBriefTravelTiming(repository, routingProvider) : undefined,
 );
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM
   ? new ResendInvitationEmailSender({
@@ -147,20 +153,10 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
     from: process.env.INVITATION_EMAIL_FROM,
   })
   : new UnavailableInvitationEmailSender();
-const googleRoutesAPIKey = configuredSecret("GOOGLE_ROUTES_API_KEY");
-const travelPlanning = new TravelPlanningModule(
-  repository,
-  googleRoutesAPIKey
-    ? new GoogleRoutingProvider(googleRoutesAPIKey)
-    : new UnavailableRoutingProvider(),
-);
+const travelPlanning = new TravelPlanningModule(repository, routingProvider);
 const shopping = new ShoppingModule(repository);
 const leaveAlertDispatcher = googleRoutesAPIKey
-  ? new LeaveAlertDispatcher(
-    repository,
-    new GoogleRoutingProvider(googleRoutesAPIKey),
-    notificationCenter,
-  )
+  ? new LeaveAlertDispatcher(repository, routingProvider, notificationCenter)
   : undefined;
 const vehiclePositionStore = new CachedCaltrainVehiclePositionStore(cache);
 const commuter = new CommuterModule(repository, vehiclePositionStore);

@@ -22,12 +22,16 @@ export interface DayBriefRecord extends DayBrief {
   familyID: string;
   memberID: string;
   generatedAt: string;
+  /** Previously provider-verified guidance, retained for safe inbox retries. */
+  verifiedLeaveTime?: string;
 }
+
+export type DayBriefPreferenceCursor = Pick<DayBriefPreferences, "familyID" | "memberID">;
 
 export interface DayBriefPersistence {
   preferences(familyID: string, memberID: string): Promise<DayBriefPreferences | null>;
   savePreferences(preferences: DayBriefPreferences): Promise<void>;
-  enabledPreferences(limit: number): Promise<DayBriefPreferences[]>;
+  enabledPreferences(limit: number, after?: DayBriefPreferenceCursor): Promise<DayBriefPreferences[]>;
   saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean>;
   dayBrief(familyID: string, memberID: string, localDate: string): Promise<DayBriefRecord | null>;
 }
@@ -37,7 +41,7 @@ export interface DayBriefRepository {
   importedEventsForMember(familyID: string, memberID: string): Promise<FamilyEvent[]>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]>;
-  enabledPreferences(limit: number): Promise<DayBriefPreferences[]>;
+  enabledPreferences(limit: number, after?: DayBriefPreferenceCursor): Promise<DayBriefPreferences[]>;
   saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean>;
   dayBrief(familyID: string, memberID: string, localDate: string): Promise<DayBriefRecord | null>;
 }
@@ -50,6 +54,7 @@ export interface DayBriefEventFact {
   scheduledAt: string;
   startTime: string;
   endTime: string;
+  arrivalTime?: string;
   location: string | null;
   roles: DayBriefEventRole[];
 }
@@ -83,6 +88,15 @@ export interface DayBriefNarrator {
   narrate(input: DayBriefNarratorInput): Promise<{ title: string; body: string }>;
 }
 
+export interface DayBriefVerifiedLeaveTimeProvider {
+  earliestVerifiedLeaveTime(
+    familyID: string,
+    memberID: string,
+    events: readonly DayBriefEventFact[],
+    now: Date,
+  ): Promise<Date | null>;
+}
+
 export interface DayBriefDispatchResult {
   evaluated: number;
   recorded: number;
@@ -90,10 +104,13 @@ export interface DayBriefDispatchResult {
 }
 
 export class DayBriefModule {
+  private lastPreference: DayBriefPreferenceCursor | undefined;
+
   constructor(
     private readonly repository: DayBriefRepository,
     private readonly notificationCenter?: NotificationCenterModule,
     private readonly narrator?: DayBriefNarrator,
+    private readonly travelTiming?: DayBriefVerifiedLeaveTimeProvider,
   ) {}
 
   async generate(account: Account, localDate: string, timeZone: string): Promise<DayBrief> {
@@ -167,7 +184,16 @@ export class DayBriefModule {
     if (!this.notificationCenter) throw new Error("day_brief_notifications_unavailable");
     if (!Number.isFinite(now.getTime())) throw new Error("invalid_day_brief_dispatch_time");
     const result: DayBriefDispatchResult = { evaluated: 0, recorded: 0, failed: 0 };
-    const preferences = await this.repository.enabledPreferences(Math.min(Math.max(limit, 1), 200));
+    const pageSize = Math.min(Math.max(limit, 1), 200);
+    let preferences = await this.repository.enabledPreferences(pageSize, this.lastPreference);
+    if (preferences.length === 0 && this.lastPreference) {
+      this.lastPreference = undefined;
+      preferences = await this.repository.enabledPreferences(pageSize);
+    }
+    if (preferences.length > 0) {
+      const last = preferences.at(-1)!;
+      this.lastPreference = { familyID: last.familyID, memberID: last.memberID };
+    }
 
     for (const preference of preferences) {
       if (!preference.enabled) continue;
@@ -185,22 +211,52 @@ export class DayBriefModule {
         role: "parent",
       };
       try {
-        const preliminaryBrief = await this.buildBrief(
-          account, localDate, preference.timeZone, false,
-        );
         const baselineMinute = minuteOfDay(baseline);
-        const firstEventMinute = preliminaryBrief.facts.events.length > 0
-          ? minuteForInstant(preliminaryBrief.facts.events[0]!.startTime, preference.timeZone)
-          : Number.POSITIVE_INFINITY;
-        const triggerMinute = Math.min(
-          baselineMinute,
-          Math.max(0, firstEventMinute - preference.earlyEventLeadMinutes),
-        );
-        if (local.hour * 60 + local.minute < triggerMinute) continue;
-        result.evaluated += 1;
+        // An early Event can move the trigger *before* the baseline, never
+        // past it; nothing after this bound needs a full schedule read.
+        if (local.hour * 60 + local.minute > baselineMinute + 30) continue;
         const existing = await this.repository.dayBrief(
           preference.familyID, preference.memberID, localDate,
         );
+        const preliminaryBrief = existing ?? await this.buildBrief(
+          account, localDate, preference.timeZone, false,
+        );
+        const firstEventMinute = preliminaryBrief.facts.events.length > 0
+          ? minuteForInstant(preliminaryBrief.facts.events[0]!.startTime, preference.timeZone)
+          : Number.POSITIVE_INFINITY;
+        let firstActionableMinute = firstEventMinute;
+        let verifiedLeave = existing?.verifiedLeaveTime
+          ? new Date(existing.verifiedLeaveTime) : null;
+        if (this.travelTiming) {
+          // Route estimates are optional guidance. Retain any previously
+          // verified earlier leave time when routing becomes unavailable.
+          try {
+            const currentLeave = await this.travelTiming.earliestVerifiedLeaveTime(
+              preference.familyID, preference.memberID, preliminaryBrief.facts.events, now,
+            );
+            if (currentLeave && Number.isFinite(currentLeave.getTime())
+              && (!verifiedLeave || currentLeave < verifiedLeave)) verifiedLeave = currentLeave;
+          } catch { /* Keep saved guidance, or fall back to the Event time. */ }
+        }
+        if (verifiedLeave && Number.isFinite(verifiedLeave.getTime())) {
+          const leaveLocalDate = localDateFor(verifiedLeave.toISOString(), preference.timeZone);
+          if (leaveLocalDate < localDate) continue;
+          if (leaveLocalDate === localDate) {
+            firstActionableMinute = Math.min(
+              firstActionableMinute, minuteForInstant(verifiedLeave.toISOString(), preference.timeZone),
+            );
+          }
+        }
+        const triggerMinute = Math.min(
+          baselineMinute,
+          Math.max(0, firstActionableMinute - preference.earlyEventLeadMinutes),
+        );
+        const currentMinute = local.hour * 60 + local.minute;
+        // Permit brief scheduling jitter, but never catch up after the morning
+        // window or after the commitment the brief was meant to precede.
+        if (currentMinute < triggerMinute
+          || currentMinute > Math.min(triggerMinute + 30, firstActionableMinute - 1)) continue;
+        result.evaluated += 1;
         let brief: DayBrief = existing ?? (this.narrator
           ? await this.narrate(preliminaryBrief)
           : preliminaryBrief);
@@ -210,6 +266,7 @@ export class DayBriefModule {
             familyID: preference.familyID,
             memberID: preference.memberID,
             generatedAt: now.toISOString(),
+            ...(verifiedLeave ? { verifiedLeaveTime: verifiedLeave.toISOString() } : {}),
           });
           if (!inserted) {
             brief = await this.repository.dayBrief(
@@ -307,6 +364,11 @@ function eventFact(
     scheduledAt: start.toISOString(),
     startTime: start.toISOString(),
     endTime: new Date(start.getTime() + duration).toISOString(),
+    ...(event.arrivalTime && Number.isFinite(Date.parse(event.arrivalTime))
+      ? { arrivalTime: new Date(
+        start.getTime() - (Date.parse(event.startTime) - Date.parse(event.arrivalTime)),
+      ).toISOString() }
+      : {}),
     location: event.location,
     roles,
   };
