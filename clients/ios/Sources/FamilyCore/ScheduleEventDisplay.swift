@@ -14,4 +14,8 @@ public struct ScheduleEventDisplay: Equatable, Sendable {
         participantColorTags = participants.map(\.colorTag)
         primaryColorTag = participantColorTags.first
     }
+
+    public func hasEnded(at date: Date) -> Bool {
+        event.endTime <= date
+    }
 }

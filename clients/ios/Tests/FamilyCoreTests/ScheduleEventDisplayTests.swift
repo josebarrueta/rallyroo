@@ -3,6 +3,21 @@ import XCTest
 @testable import FamilyCore
 
 final class ScheduleEventDisplayTests: XCTestCase {
+    func testPastPresentationBeginsAtTheEventEndNotAtItsStart() {
+        let event = FamilyEvent(
+            title: "Example activity", kidID: nil,
+            startTime: Date(timeIntervalSince1970: 1_000),
+            endTime: Date(timeIntervalSince1970: 2_000),
+            source: .manual, status: .confirmed
+        )
+        let display = ScheduleEventDisplay(event: event, members: [])
+
+        XCTAssertFalse(display.hasEnded(at: Date(timeIntervalSince1970: 999)))
+        XCTAssertFalse(display.hasEnded(at: Date(timeIntervalSince1970: 1_500)))
+        XCTAssertTrue(display.hasEnded(at: Date(timeIntervalSince1970: 2_000)))
+        XCTAssertTrue(display.hasEnded(at: Date(timeIntervalSince1970: 2_001)))
+    }
+
     func testResolvesTheKidNameAndColorForAnEvent() {
         let kid = FamilyMember(
             id: KidID(rawValue: "emma"),

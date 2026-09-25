@@ -469,7 +469,10 @@ struct WeeklyScheduleView: View {
                             eventRow(for: occurrence)
                         } else {
                             OverlapTimeline(cluster: cluster) { occurrence in
-                                eventRow(for: occurrence, compact: true)
+                                eventRow(
+                                    for: occurrence, compact: true,
+                                    minimumHeight: cluster.minimumHeight(for: occurrence)
+                                )
                             }
                         }
                     }
@@ -491,7 +494,10 @@ struct WeeklyScheduleView: View {
                         eventRow(for: occurrence)
                     } else {
                         OverlapTimeline(cluster: cluster) { occurrence in
-                            eventRow(for: occurrence, compact: true)
+                            eventRow(
+                                for: occurrence, compact: true,
+                                minimumHeight: cluster.minimumHeight(for: occurrence)
+                            )
                         }
                     }
                 }
@@ -544,18 +550,25 @@ struct WeeklyScheduleView: View {
     }
 
     @ViewBuilder
-    private func eventRow(for occurrence: EventOccurrence, compact: Bool = false) -> some View {
-        EventRow(
-            display: ScheduleEventDisplay(
-                event: occurrence.event,
-                members: viewModel.members
-             ),
-            disposition: occurrence.disposition,
-            isModified: occurrence.isModified,
-            compact: compact
-         )
+    private func eventRow(
+        for occurrence: EventOccurrence,
+        compact: Bool = false,
+        minimumHeight: CGFloat? = nil
+    ) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let display = ScheduleEventDisplay(event: occurrence.event, members: viewModel.members)
+            let isPast = display.hasEnded(at: context.date)
+            EventRow(
+                display: display,
+                disposition: occurrence.disposition,
+                isModified: occurrence.isModified,
+                compact: compact,
+                minimumHeight: minimumHeight,
+                isPast: isPast
+            )
+            .opacity(occurrence.disposition == .skipped ? 0.5 : isPast ? 0.6 : 1.0)
+        }
          .contentShape(Rectangle())
-         .opacity(occurrence.disposition == .skipped ? 0.5 : 1.0)
          .onTapGesture {
             if allowsEditing && !viewModel.isShowingCachedEvents {
                 if occurrence.sourceEvent.isReadOnly, calendarSourceStore != nil {
@@ -829,6 +842,11 @@ private struct ScheduleOverlapCluster: Identifiable {
         max(78, CGFloat(end.timeIntervalSince(start) / 60) * pointsPerMinute)
          }
 
+    func minimumHeight(for occurrence: EventOccurrence) -> CGFloat {
+        max(78, CGFloat(occurrence.event.endTime.timeIntervalSince(occurrence.event.startTime) / 60)
+            * pointsPerMinute)
+    }
+
     static func make(from occurrences: [EventOccurrence]) -> [Self] {
         let sorted = occurrences.sorted { $0.event.startTime < $1.event.startTime }
         var groups: [[EventOccurrence]] = []
@@ -917,6 +935,8 @@ private struct EventRow: View {
     var disposition: ScheduleOccurrenceDisposition = .scheduled
     var isModified = false
     var compact = false
+    var minimumHeight: CGFloat? = nil
+    var isPast = false
 
     var body: some View {
         HStack(alignment: .top, spacing: compact ? 7 : 12) {
@@ -927,6 +947,7 @@ private struct EventRow: View {
                 HStack(spacing: 6) {
                     Text(display.event.title)
                         .font(compact ? .subheadline.bold() : .headline)
+                        .strikethrough(isPast)
                         .lineLimit(compact ? 1 : nil)
                     if disposition == .skipped {
                         statusBadge("Skipped")
@@ -973,8 +994,10 @@ private struct EventRow: View {
             }
         }
             .padding(8)
+            .frame(minHeight: minimumHeight, alignment: .topLeading)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier(lifecycleAccessibilityID)
+            .accessibilityValue(isPast ? "Past event" : "")
     }
 
     private var participantNamesText: Text {
