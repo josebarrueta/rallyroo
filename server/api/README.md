@@ -1,10 +1,10 @@
 # Rallyroo TypeScript API
 
-Fastify reference backend for `../http-api.md`. It uses PostgreSQL for scalable,
-shared persistence, Redis 8.10 for shared caching and vector-search readiness, and Stytch B2C for Apple and Google
-identity verification. Rallyroo
-roles and family membership remain in PostgreSQL, so identity providers stay
-replaceable.
+Fastify backend for the hosted Rallyroo beta, implementing the
+[HTTP API contract](../http-api.md). It uses PostgreSQL for shared persistence,
+Redis 8.10 for caching, and Stytch B2C for Apple and Google identity
+verification. Rallyroo roles and Family membership remain in PostgreSQL, so
+identity providers stay replaceable.
 
 ## Development
 
@@ -81,7 +81,7 @@ on the Mac, use `http://127.0.0.1:11435`; containers can use the appropriate hos
 gateway address. Production uses `https://ollama.rallyroo.dev` and reads the paired
 `OLLAMA_CF_ACCESS_CLIENT_ID` and `OLLAMA_CF_ACCESS_CLIENT_SECRET` from secret files.
 Both credentials must be configured together and are refused for plaintext HTTP
-endpoints. See `docs/secure-ollama-tunnel.md`. Rallyroo sends bounded transcript, OCR, or typed text plus family
+endpoints. See the [secure Ollama tunnel guide](../../docs/secure-ollama-tunnel.md). Rallyroo sends bounded transcript, OCR, or typed text plus family
 member context. The adapter uses deterministic generation and strict validation;
 unsupported structured-output runtimes fall back to JSON-only generation before the
 same validation. Draft extraction never writes events or reminders and request bodies

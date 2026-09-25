@@ -1,4 +1,6 @@
-# Family Activity Coordinator — Architecture & Build Plan
+# Family Activity Coordinator — Architecture & Build Plan (historical)
+
+> **Archived planning document.** This captures early ideas, not the current product or deployment. In particular, Supabase hosting, Gmail polling, and Claude-based extraction below are **not** the shipped architecture. See the [repository README](README.md), [domain language](CONTEXT.md), [architecture decisions](docs/adr/), [API guide](server/api/README.md), and [GCP operations guide](deploy/gcp/README.md) for current behavior. Do not use the commands below as a deployment runbook.
 
 ## 1. Overview
 

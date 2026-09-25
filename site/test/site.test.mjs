@@ -5,18 +5,31 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDirectory = join(root, "public");
-const requiredPages = ["index.html", "privacy.html", "terms.html", "support.html", "invite.html", "404.html"];
+const developerDocsURL = "https://github.com/josebarrueta/rallyroo/blob/main/docs/README.md";
+const requiredPages = ["index.html", "docs.html", "privacy.html", "terms.html", "support.html", "invite.html", "404.html"];
 
 for (const page of requiredPages) {
   const html = await readFile(join(publicDirectory, page), "utf8");
   assert.match(html, /<html lang="en">/, `${page} must declare its language`);
-  assert.doesNotMatch(html, /https?:\/\/(?!api\.rallyroo\.dev)/i, `${page} must remain tracker-free`);
+  assert.match(html, /href="\/docs"/, `${page} must link to the docs`);
+  for (const [url] of html.matchAll(/https?:\/\/[^"<>\s]+/g)) {
+    assert.ok(
+      url === "https://api.rallyroo.dev" || url.startsWith("https://api.rallyroo.dev/")
+        || url === developerDocsURL,
+      `${page} must remain tracker-free: unexpected external URL`
+    );
+  }
   if (page !== "invite.html") {
     assert.doesNotMatch(html, /<script\b/i, `${page} must remain script-free`);
   }
 
   for (const [, href] of html.matchAll(/href="([^"]+)"/g)) {
-    if (href.startsWith("mailto:") || href.startsWith("https://api.rallyroo.dev")) continue;
+    if (href === developerDocsURL) {
+      assert.ok(html.includes(`href="${developerDocsURL}" rel="noopener noreferrer"`));
+      continue;
+    }
+    if (href.startsWith("mailto:") || href === "https://api.rallyroo.dev"
+      || href.startsWith("https://api.rallyroo.dev/")) continue;
     const path = href.split(/[?#]/, 1)[0];
     if (path === "/") {
       await stat(join(publicDirectory, "index.html"));
@@ -27,6 +40,17 @@ for (const page of requiredPages) {
     }
   }
 }
+
+const homepage = await readFile(join(publicDirectory, "index.html"), "utf8");
+assert.match(homepage, /href="\/docs"/);
+const documentation = await readFile(join(publicDirectory, "docs.html"), "utf8");
+assert.match(documentation, /<h1>Rallyroo Docs<\/h1>/);
+assert.match(documentation, /id="getting-started"/);
+assert.match(documentation, /id="schedule"/);
+assert.match(documentation, /id="day-brief"/);
+assert.match(documentation, /id="shopping"/);
+assert.match(documentation, /id="commuter"/);
+assert.match(documentation, /rel="noopener noreferrer"/);
 
 const invitation = await readFile(join(publicDirectory, "invite.html"), "utf8");
 assert.match(invitation, /<script type="module" src="\/invite\.js"><\/script>/);
