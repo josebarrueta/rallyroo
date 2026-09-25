@@ -280,6 +280,28 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Reopen reminder"].firstMatch.waitForExistence(timeout: 5))
     }
 
+    func testOverlappingEventsOccupyTheSameVerticalTimeWindow() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SCHEDULE_OVERLAP"] = "1"
+        app.launch()
+
+        let first = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Overlap A")
+        ).firstMatch
+        let second = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Overlap B")
+        ).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertTrue(second.waitForExistence(timeout: 10))
+        XCTAssertEqual(first.identifier, "event-row-scheduled")
+        XCTAssertEqual(second.identifier, "event-row-scheduled")
+        XCTAssertGreaterThan(second.frame.minX, first.frame.minX)
+        XCTAssertGreaterThan(
+            first.frame.maxY - second.frame.minY, 5,
+            "Events sharing 10 minutes should visibly intersect; first=\(first.frame), second=\(second.frame)"
+        )
+    }
+
     // Issue #3 regression: today must be the first visible schedule day, even
     // when it falls near the end of the calendar week.
     func testScheduleStartsAtToday() {

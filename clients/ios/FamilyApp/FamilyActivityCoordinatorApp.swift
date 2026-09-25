@@ -69,6 +69,38 @@ private actor OccurrenceLifecycleUITestEventStore: EventStore {
     func clearCache() async throws {}
 }
 
+private actor ScheduleOverlapUITestEventStore: EventStore {
+    private let events: [FamilyEvent]
+
+    init(now: Date = .now, calendar: Calendar = .autoupdatingCurrent) {
+        let day = calendar.startOfDay(for: now)
+        let firstStart = calendar.date(byAdding: .minute, value: 8 * 60 + 30, to: day)!
+        let secondStart = calendar.date(byAdding: .minute, value: 10 * 60 + 20, to: day)!
+        events = [
+            FamilyEvent(
+                title: "Overlap A", kidID: nil, startTime: firstStart,
+                endTime: firstStart.addingTimeInterval(2 * 3_600),
+                source: .manual, status: .confirmed
+            ),
+            FamilyEvent(
+                title: "Overlap B", kidID: nil, startTime: secondStart,
+                endTime: secondStart.addingTimeInterval(3_600),
+                source: .manual, status: .confirmed
+            ),
+        ]
+    }
+
+    func loadEvents() async throws -> EventSnapshot { EventSnapshot(events: events, freshness: .fresh) }
+    func save(_ event: FamilyEvent, notifyParticipants: Bool, idempotencyKey: UUID) async throws -> EventMutationResult {
+        throw CocoaError(.featureUnsupported)
+    }
+    func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws { throw CocoaError(.featureUnsupported) }
+    func updateRecurringEvent(
+        _ edit: RecurringEventEdit, notifyParticipants: Bool, idempotencyKey: UUID
+    ) async throws -> EventMutationResult { throw CocoaError(.featureUnsupported) }
+    func clearCache() async throws {}
+}
+
 private actor OccurrenceLifecycleUITestStore: OccurrenceLifecycleStore {
     func skip(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
     func restore(_ reference: OccurrenceReference, scope: OccurrenceScope) async throws {}
@@ -325,9 +357,13 @@ struct FamilyActivityCoordinatorApp: App {
             let testsOccurrenceLifecycle = ProcessInfo.processInfo.environment[
                 "RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"
             ] == "1"
-            eventStore = testsOccurrenceLifecycle
-                ? OccurrenceLifecycleUITestEventStore()
-                : LocalEventStore(storageURL: AppStorage.eventsURL)
+            if testsOccurrenceLifecycle {
+                eventStore = OccurrenceLifecycleUITestEventStore()
+            } else if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SCHEDULE_OVERLAP"] == "1" {
+                eventStore = ScheduleOverlapUITestEventStore()
+            } else {
+                eventStore = LocalEventStore(storageURL: AppStorage.eventsURL)
+            }
             #else
             eventStore = LocalEventStore(storageURL: AppStorage.eventsURL)
             #endif
