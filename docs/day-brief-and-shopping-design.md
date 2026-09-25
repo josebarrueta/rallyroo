@@ -40,7 +40,9 @@ Confirmed defaults:
 - Personal calendars contribute only to their owner's brief.
 - An ordinary Day brief uses the normal active notification level and does not bypass Sleep Focus.
 
-The first actionable commitment is the earliest known leave time when a Travel plan exists, otherwise the earliest relevant Event start. Reminder due times do not move the morning brief earlier unless a later product decision explicitly enables that behavior.
+The first actionable commitment is the earliest provider-verified leave time for a Travel plan addressed to the Member, otherwise the earliest relevant Event start. A missing plan or unavailable route does not create an invented leave time. Reminder due times do not move the morning brief earlier unless a later product decision explicitly enables that behavior.
+
+Delivery can catch up for at most 30 minutes after its computed local trigger, but never at or after the first actionable commitment. A preference enabled after that window waits until the next local day; a leave time on the previous local day cannot produce a late push. Enabled preferences are visited in bounded, ordered pages that rotate across dispatches rather than repeatedly selecting the first page. Verified leave guidance saved with a brief is encrypted and continues to bound inbox retries if routing later becomes unavailable.
 
 The default preparation margin is 60 minutes and can be changed by the Member.
 

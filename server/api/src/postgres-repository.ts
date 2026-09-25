@@ -2814,16 +2814,19 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
-  async enabledPreferences(limit: number): Promise<DayBriefPreferences[]> {
+  async enabledPreferences(
+    limit: number,
+    after?: { familyID: string; memberID: string },
+  ): Promise<DayBriefPreferences[]> {
     const result = await this.pool.query<DayBriefPreferencesRow>(
       `SELECT family_id, member_id, enabled, time_zone,
               weekday_time::text, weekend_holiday_time::text,
               early_event_lead_minutes, holiday_region
        FROM day_brief_preferences
-       WHERE enabled
+       WHERE enabled AND ($2::text IS NULL OR (family_id, member_id) > ($2::text, $3::text))
        ORDER BY family_id, member_id
        LIMIT $1`,
-      [limit],
+      [limit, after?.familyID ?? null, after?.memberID ?? null],
     );
     return result.rows.map(dayBriefPreferencesFromRow);
   }
@@ -2838,7 +2841,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         facts: record.facts,
         title: record.title,
         body: record.body,
-      } satisfies DayBrief),
+        ...(record.verifiedLeaveTime ? { verifiedLeaveTime: record.verifiedLeaveTime } : {}),
+      } satisfies DayBrief & { verifiedLeaveTime?: string }),
     );
     const result = await this.pool.query(
       `INSERT INTO day_briefs (
@@ -3672,20 +3676,24 @@ function dayBriefPreferencesFromRow(row: DayBriefPreferencesRow): DayBriefPrefer
   };
 }
 
-function parseDayBrief(value: string): DayBrief {
+function parseDayBrief(value: string): DayBrief & { verifiedLeaveTime?: string } {
   const parsed: unknown = JSON.parse(value);
   if (!parsed || typeof parsed !== "object") throw new Error("Invalid protected Day brief");
-  const brief = parsed as Partial<DayBrief>;
+  const brief = parsed as Partial<DayBrief> & { verifiedLeaveTime?: unknown };
   if (typeof brief.localDate !== "string"
     || typeof brief.timeZone !== "string"
     || typeof brief.title !== "string"
     || typeof brief.body !== "string"
     || !brief.facts
     || !Array.isArray(brief.facts.events)
-    || !Array.isArray(brief.facts.reminders)) {
+    || !Array.isArray(brief.facts.reminders)
+    || (brief.verifiedLeaveTime !== undefined
+      && (typeof brief.verifiedLeaveTime !== "string"
+        || !Number.isFinite(Date.parse(brief.verifiedLeaveTime))
+        || new Date(brief.verifiedLeaveTime).toISOString() !== brief.verifiedLeaveTime))) {
     throw new Error("Invalid protected Day brief");
   }
-  return brief as DayBrief;
+  return brief as DayBrief & { verifiedLeaveTime?: string };
 }
 
 function shoppingTripCatalogReference(error: unknown): boolean {

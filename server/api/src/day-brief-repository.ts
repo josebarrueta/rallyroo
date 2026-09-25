@@ -1,6 +1,7 @@
 import type { CalendarSourceModule } from "./calendar-source-module.js";
 import type {
   DayBriefPersistence,
+  DayBriefPreferenceCursor,
   DayBriefPreferences,
   DayBriefRecord,
   DayBriefRepository,
@@ -38,8 +39,8 @@ export class RallyrooDayBriefRepository implements DayBriefRepository, DayBriefP
     return this.persistence.savePreferences(preferences);
   }
 
-  enabledPreferences(limit: number) {
-    return this.persistence.enabledPreferences(limit);
+  enabledPreferences(limit: number, after?: DayBriefPreferenceCursor) {
+    return this.persistence.enabledPreferences(limit, after);
   }
 
   saveDayBriefIfAbsent(record: DayBriefRecord) {
