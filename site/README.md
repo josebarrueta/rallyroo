@@ -1,8 +1,10 @@
 # Rallyroo public site
 
-Cloudflare Workers Static Assets serves the tracker-free Rallyroo homepage,
-Privacy Policy, Terms of Service, support page, and branded `404` independently
-of the home-hosted API.
+Cloudflare Workers Static Assets serves the tracker-free [Rallyroo homepage](https://rallyroo.dev),
+[branded beta docs](https://rallyroo.dev/docs), Privacy Policy, Terms of Service,
+support page, and branded `404` independently of the GCP-hosted API.
+The public docs explain how to use the beta; the [maintainer docs](../docs/README.md)
+cover architecture, development, and operations.
 
 ## Local verification
 

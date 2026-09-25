@@ -1,27 +1,28 @@
 # Rallyroo
 
-Rallyroo is a colorful native iOS planner for keeping the whole home team in sync. The app is being built local-first: event data
-and images stay on the device during Phase 1. The iOS client depends only on
-backend-neutral storage contracts; Supabase is one optional implementation for later
-sign-in and realtime sync.
+**One colorful schedule for the whole crew.** Rallyroo is a native iPhone app for coordinating Family Events, Reminders, connected calendars, and the plans that go with them. It is currently an invitation-only TestFlight beta.
 
-## Repository layout
+[Website](https://rallyroo.dev) · [Public beta docs](https://rallyroo.dev/docs) · [Maintainer docs](docs/README.md) · [Support](https://rallyroo.dev/support)
 
-- `clients/ios/` — iOS app and its testable Swift domain module.
-- `server/api/` — scalable TypeScript/Fastify API with PostgreSQL and Stytch.
-- `server/supabase/` — optional Supabase-specific infrastructure, not an iOS dependency.
-- `.github/workflows/` — CI workflows.
-- `deploy/helm/rallyroo/` — Helm chart for the API, PostgreSQL, Redis, and NGINX.
-- `deploy/local/` — isolated kind-based local deployment scripts.
-- `deploy/flux/rallyroo/` — Flux OCI release reconciliation manifests.
-- `deploy/alerts/` — HMAC-verified Cloudflare Worker and Resend alert setup wizard.
-- `site/` — tracker-free public and legal site deployed as Cloudflare Workers Static Assets.
-- `family-app-architecture.md` — product architecture and delivery phases.
-- `docs/deployment-architecture-journal.md` — deployment decisions, trade-offs, and reusable guidance.
+## What Rallyroo does
 
-## Local development
+- **Schedule:** Coordinate Event participants, drivers, locations, recurrence, and conflicts. Past Events are visually de-emphasized; imported calendars are read-only, with Personal calendars visible only to their owner.
+- **Reminders and alerts:** Track responsibilities with due times, assignees, and shared completion, without blocking Schedule time. The Notification Center keeps Member inbox records separate from push delivery.
+- **Travel and Commuter:** Add optional arrival targets and Travel plans to Events; see Caltrain trains and configure commute alerts when the Family enables Commuter. Live provider data can be delayed or unavailable.
+- **Day Brief:** Opt into a Member-specific morning summary built from visible facts. Verified leave guidance can move it earlier, but an unavailable route does not become a guess. A missed brief does not turn into a late-night push.
+- **Shopping and Pantry:** Manage routines and Pantry items, collect Family requests and Stock observations, then review trip decisions and record Purchase history. Evidence is not authoritative inventory.
 
-Requirements: Xcode 16+ with iOS 16 SDK support.
+Parents review AI-assisted Schedule drafts before anything is saved. AI cannot add Events or Reminders on its own or expand a Member's access to Family information.
+
+## How it is built
+
+The iOS app contains testable, backend-neutral domain code in `FamilyCore`. Development builds can run with local on-device storage; hosted beta builds use the Fastify API, PostgreSQL, and Redis. Apple and Google sign-in are verified by the server through Stytch. Protected Family details are encrypted per Family in PostgreSQL. The production stack runs on a GCP VM with k3s, Flux, a Cloudflare Tunnel for the API, and independently hosted Cloudflare Workers Static Assets for the [public site](https://rallyroo.dev).
+
+`server/supabase/` is an optional historical adapter, **not** the current production backend.
+
+## Get started developing
+
+Use Xcode with Swift 6 support and an iOS 16+ simulator or device. The local app mode requires no production credentials:
 
 ```bash
 cd clients/ios
@@ -29,68 +30,36 @@ swift build
 swift test
 ```
 
-Open `clients/ios/FamilyApp.xcodeproj` in Xcode to run the SwiftUI app on an iOS
-simulator or device. The app links the local `FamilyCore` package, which contains
-the event domain and persistence layer.
+Open `clients/ios/FamilyApp.xcodeproj` to run the SwiftUI app. `AppConfiguration` defaults to local mode in development; hosted beta builds use remote mode. For a local API stack or non-production remote configuration, see [API development](server/api/README.md) and [local Kubernetes deployment](deploy/README.md). Do not point development builds at production by accident or commit `.env` files.
 
-## Data modes
-
-Rallyroo defaults to local mode and requires no account or backend:
+To check the public site locally:
 
 ```bash
-RALLYROO_DATA_MODE=local
+cd site
+npm ci
+npm test
+npm run deploy:dry-run
 ```
 
-The built-in HTTP adapters can be selected without changing app features or domain code:
+## Documentation by theme
 
-```bash
-RALLYROO_DATA_MODE=remote
-RALLYROO_REMOTE_BASE_URL=https://api.example.com
-```
+- **For beta families:** [Branded docs](https://rallyroo.dev/docs), [Privacy](https://rallyroo.dev/privacy), and [Support](https://rallyroo.dev/support).
+- **Domain and interfaces:** [Domain language](CONTEXT.md), [historical architecture plan](family-app-architecture.md), [HTTP API contract](server/http-api.md), and [ADRs](docs/adr/).
+- **Feature design:** [Day Brief and Shopping](docs/day-brief-and-shopping-design.md), [Travel planning](docs/event-travel-planning-design.md), and [Commuter research](docs/511-open-data-module-research.md).
+- **Build and release:** [API](server/api/README.md), [TestFlight and App Store](docs/app-store-upload-guide.md), [site](site/README.md), and [deployments](deploy/README.md).
+- **Operations:** [GCP host and backups](deploy/gcp/README.md), [production configuration](docs/production-configuration-and-secret-bootstrap.md), and [deployment decisions](docs/deployment-architecture-journal.md).
 
-A complete backend stack can be hosted locally on Kubernetes without a registry:
+The [maintainer documentation index](docs/README.md) links the full set and distinguishes shipped behavior from design proposals and historical research.
 
-```bash
-brew install helm kind
-./deploy/local/deploy-local.sh
-```
+## Releases and safety
 
-See [`deploy/README.md`](deploy/README.md) for persistence, credentials, inspection,
-and the later domain/TLS path.
+A semantic tag publishes an API image and OCI Helm chart; publication alone does **not** verify or promote the live cluster. Before production migrations or promotion, independently verify a recent backup and restore path, then check the exact chart, image, rollout, and migrations. TestFlight acceptance requires an uploaded build tied to the intended commit and on-device verification. Production kubeconfig and credentials stay off GitHub-hosted runners.
 
-Remote mode configuration is validated by `AppConfiguration`. Authentication,
-events, reminders, family members, and calendar subscriptions use vendor-neutral interfaces;
-a custom server or another provider can implement `server/http-api.md`. Parents can
-add HTTPS iCalendar feeds for TeamSnap, schools, and sports calendars from Settings.
-Imported events remain read-only, participate in conflict detection, and consolidate
-exact duplicates across family members' subscriptions while preserving combined
-participants and provenance. Native events support participant-only alerts at their
-start or a selected lead time, including recurring occurrences. Family reminders have
-one due instant, shared completion, multiple assignees, and optional alerts without
-blocking schedule time or creating conflicts. Local mode schedules on-device alerts;
-remote mode delivers participant- or assignee-scoped APNs notifications from the API.
-Remote schedules keep an account-scoped last-good cache for read-only offline viewing.
-Conflict alerts remain local to each device for now.
-
-## Secret scanning
-
-Install the repository's pre-commit guard once per clone:
+Install the repository's secret-scanning hook before committing:
 
 ```bash
 brew install pre-commit
 pre-commit install
 ```
 
-The pinned Gitleaks hook scans staged changes with the rules in `.gitleaks.toml`.
-The Security workflow independently scans Git history on every pull request and
-push to `main`, so CI still blocks leaks when a local hook is skipped. Findings are
-redacted; a real credential finding requires immediate revocation or rotation.
-
-## Continuous integration
-
-The API workflow runs unit tests, typechecking, production builds, and isolated
-integration tests against PostgreSQL 17 and Redis 8.10.1. The iOS workflow builds
-the complete simulator app, runs the Swift package suite against a live Fastify
-contract server, and drives a local-mode parent smoke path with XCUITest. Neither
-workflow requires production credentials; Stytch, Google Places, and APNs live
-smoke tests remain opt-in.
+CI also checks for secrets and runs the API, iOS, chart, and site contracts without production credentials. Never put Family data, credentials, or raw production diagnostics in issues or logs.

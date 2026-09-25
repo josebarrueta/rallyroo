@@ -103,13 +103,18 @@ by the 1Password Operator; it does not reference the catch-all Secret. The API
 image and chart packages must be public for anonymous Kubernetes pulls;
 package visibility is configured once from their GHCR package settings.
 
-## Automatic patch releases with Flux
+## Patch releases with Flux
 
-Flux polls the public OCI chart and upgrades to patch releases in the configured
-minor series. It uses outbound HTTPS only; no deployment webhook is exposed.
-Before enabling production reconciliation, create the isolated Kind cluster and
-persistent data paths, install the 1Password Operator, and confirm every production
-item exists. Then install the Flux CLI and run:
+Flux polls the public OCI chart and can upgrade patch releases within the **live**
+source selector's configured minor series. Publishing a tag or changing the Git
+manifest does not itself prove a production promotion: the current GCP cluster
+is not automatically syncing these Flux manifests from Git. An operator must
+verify the live selector, chart revision, image, Helm test, and rollout. Before
+any production migration or promotion, independently verify a recent backup.
+Flux uses outbound HTTPS only; no deployment webhook is exposed.
+
+For the **isolated local Kind environment**, create its cluster and persistent
+data paths, configure its runtime secrets, then install the Flux CLI and run:
 
 ```bash
 brew install fluxcd/tap/flux
@@ -133,11 +138,15 @@ signed Rallyroo HelmRelease errors and converts them into Resend's
 run history, and delivery. Production bootstrap blocks until the Operator has
 synchronized the alert webhook Secret with its exact `address,token` key contract.
 
-The script installs Flux's source, Helm, and notification controllers, applies the
-namespace-scoped reconciler in `deploy/flux/rallyroo/`, adopts the existing
-`rallyroo` Helm release, waits for its Helm test, and runs the public HTTP
-contract. Change the semver range in `deploy/flux/rallyroo/source.yaml` to
-promote a new minor series. Inspect or pause reconciliation with:
+The local script installs Flux's source, Helm, and notification controllers,
+applies the namespace-scoped reconciler in `deploy/flux/rallyroo/`, adopts the
+existing `rallyroo` Helm release, waits for its Helm test, and runs the public
+HTTP contract. Do **not** run it against production. On the GCP VM, bootstrap
+installs Flux controllers separately; follow [GCP operations](gcp/README.md)
+for application and secret setup. Changing the semver range in Git's
+`deploy/flux/rallyroo/source.yaml` does not change the existing live selector
+until an operator applies and verifies it. Inspect or pause the **local Kind**
+release with:
 
 ```bash
 export KUBECONFIG=~/.rallyroo/kubeconfig
@@ -155,16 +164,17 @@ and destructive PostgreSQL password reset are documented in
 
 ## Domain hosting
 
-The home-hosted deployment uses a Cloudflare Tunnel terminating public TLS and
-forwarding `api.rallyroo.dev` to NGINX at `127.0.0.1:8080`. No router ports are
-opened. Never expose PostgreSQL, Redis, Kubernetes, or the Docker socket—only
-NGINX through the tunnel.
+The GCP production VM uses a Cloudflare Tunnel terminating public TLS and
+forwarding `api.rallyroo.dev` to its local NGINX ingress. No public HTTP firewall
+port is opened. Never expose PostgreSQL, Redis, Kubernetes, or the container
+runtime through the tunnel.
 
-Cloudflare Workers Static Assets independently hosts the tracker-free product
-and legal site from [`site/public/`](../site/public/). The `Rallyroo Site`
-workflow validates pull requests and deploys changes from `main` to
-`rallyroo.dev` and `www.rallyroo.dev`. Those hostnames must not be attached to
-the home tunnel; only `api.rallyroo.dev` reaches NGINX. The API root and unknown
+Cloudflare Workers Static Assets independently hosts the tracker-free product,
+documentation, and legal site from [`site/public/`](../site/public/). The `Rallyroo Site`
+workflow validates pull requests and, when site deployment is enabled,
+deploys changes from `main` to `rallyroo.dev` and `www.rallyroo.dev`. Those
+hostnames must not be attached to the API tunnel; only `api.rallyroo.dev`
+reaches NGINX. The API root and unknown
 API paths retain their branded HTML `404` response.
 
 Website deployment uses a narrowly scoped `CLOUDFLARE_SITE_API_TOKEN` GitHub
