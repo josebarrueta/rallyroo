@@ -49,6 +49,7 @@ describe("server-side calendar feed fetch", () => {
     const feed = await fetchPublicCalendarFeed("https://feeds.example.test/schedule.ics");
     expect(feed.body).toContain("BEGIN:VCALENDAR");
     expect(mock.requests).toHaveLength(1);
+    expect(mock.requests[0]!.options.agent).toBe(false);
   });
 
   it("rejects private DNS answers before making an HTTP request", async () => {

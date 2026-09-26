@@ -140,8 +140,9 @@ change cursors. Imported events remain read-only. The parent-only create/sync
 routes have tighter request limits. Before storing a source the API rejects
 malformed links, embedded credentials, fragments, non-HTTPS URLs and nonstandard
 ports. The fetch adapter resolves and checks *every* DNS answer, pins a checked
-address for TLS/HTTP (including Node's multiple-address lookup mode), rechecks
-each redirect, and never forwards cache validators across origins. It bounds
+address for TLS/HTTP (including Node's multiple-address lookup mode), avoids
+shared-agent socket reuse, rechecks each redirect, and never forwards cache
+validators across origins. It bounds
 DNS resolution, transfers and response size; only calendar-compatible media
 types and a `VCALENDAR` payload can replace the last good snapshot. Raw network
 or parser exception text is never stored, logged or sent to clients. Legacy

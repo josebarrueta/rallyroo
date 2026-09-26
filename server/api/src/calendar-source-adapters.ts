@@ -114,6 +114,9 @@ async function fetchWithRedirects(
 
   return new Promise((resolve, reject) => {
     const request = https.request(url, {
+      // Never reuse a socket opened by another client through the global agent;
+      // each connection must go through this request's pinned DNS lookup.
+      agent: false,
       headers: {
         accept: "text/calendar, application/ics, text/plain;q=0.5",
         "user-agent": "Rallyroo-Calendar-Sync/1.0",
