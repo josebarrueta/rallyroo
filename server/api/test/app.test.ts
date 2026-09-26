@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app.js";
 import { InMemoryRallyrooRepository } from "../src/in-memory-repository.js";
 import type { IdentityProvider } from "../src/identity-provider.js";
@@ -1697,6 +1697,112 @@ describe("Rallyroo API", () => {
 
     expect(connected.statusCode).toBe(201);
     expect(connected.json()).toMatchObject({ status: "error", lastError: expect.any(String) });
+    await app.close();
+  });
+
+  it("rejects unsafe calendar URLs before storing a source", async () => {
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url,
+      revealURL: (url) => url,
+      fetchFeed: async () => { throw new Error("must not fetch"); },
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    const response = await app.inject({
+      method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        name: "Unsafe", url: "https://name:secret@feeds.example.test/feed.ics",
+        participantIDs: ["kid-1"],
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" } })).json()).toEqual([]);
+    await app.close();
+  });
+
+  it("bounds parent-initiated calendar sync requests", async () => {
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url, revealURL: (url) => url,
+      fetchFeed: async () => ({ body: "BEGIN:VCALENDAR\r\nEND:VCALENDAR" }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const response = await app.inject({
+        method: "POST", url: "/v1/calendar-sources/missing/sync",
+        headers: { authorization: "Bearer parent-token" },
+      });
+      statuses.push(response.statusCode);
+    }
+    expect(statuses).toEqual([404, 404, 404, 404, 404, 429]);
+    await app.close();
+  });
+
+  it("never exposes fetch exceptions containing subscription credentials", async () => {
+    const protectedToken = "fake-calendar-bearer-token";
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const calendarSources = new CalendarSourceModule({
+        repository: new InMemoryCalendarSourceRepository(),
+        protectURL: (url) => url,
+        revealURL: (url) => url,
+        fetchFeed: async () => { throw new Error(`network failed for https://feeds.example.test/${protectedToken}.ics`); },
+      });
+      const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+      const connected = await app.inject({
+        method: "POST", url: "/v1/calendar-sources",
+        headers: { authorization: "Bearer parent-token" },
+        payload: { name: "Failure", url: `https://feeds.example.test/${protectedToken}.ics`, participantIDs: ["kid-1"] },
+      });
+      const retried = await app.inject({
+        method: "POST", url: `/v1/calendar-sources/${connected.json().id}/sync`,
+        headers: { authorization: "Bearer parent-token" },
+      });
+      const logged = log.mock.calls.flat().join(" ");
+      expect(connected.statusCode).toBe(201);
+      expect(connected.json().lastError).not.toContain(protectedToken);
+      expect(retried.body).not.toContain(protectedToken);
+      expect(logged).not.toContain(protectedToken);
+      await app.close();
+    } finally { log.mockRestore(); }
+  });
+
+  it("preserves imported Events if a feed changes into an HTML page", async () => {
+    let feedBody = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT",
+      "UID:existing@example", "SUMMARY:Previously imported",
+      "DTSTART:20260912T180000Z", "DTEND:20260912T190000Z",
+      "END:VEVENT", "END:VCALENDAR",
+    ].join("\r\n");
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url, revealURL: (url) => url,
+      fetchFeed: async () => ({ body: feedBody }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    const connected = await app.inject({
+      method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { name: "Previous events", url: "https://feeds.example.test/schedule.ics", participantIDs: ["kid-1"] },
+    });
+    expect(connected.json().status).toBe("ready");
+    feedBody = "<html><body>Access denied</body></html>";
+    const sync = await app.inject({
+      method: "POST", url: `/v1/calendar-sources/${connected.json().id}/sync`,
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const sources = await app.inject({
+      method: "GET", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const events = await app.inject({ method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" } });
+    expect(sync.statusCode).toBe(502);
+    expect(sources.json()[0].lastError).toBe("Calendar feed is not an iCalendar file");
+    expect(events.body).toContain("Previously imported");
     await app.close();
   });
 
