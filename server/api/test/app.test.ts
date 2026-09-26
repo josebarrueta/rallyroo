@@ -1722,6 +1722,29 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("does not return historic raw sync errors from stored sources", async () => {
+    const repositoryForSources = new InMemoryCalendarSourceRepository();
+    await repositoryForSources.saveCalendarSource({
+      id: "legacy-source", familyID: "family-1", ownerMemberID: "parent-1",
+      name: "Legacy", visibility: "family", participantIDs: ["kid-1"],
+      protectedURL: "protected", status: "error", lastSyncedAt: null,
+      lastError: "network exception for https://feeds.example.test/fake-historic-token.ics",
+      etag: null, lastModified: null,
+    });
+    const calendarSources = new CalendarSourceModule({
+      repository: repositoryForSources,
+      protectURL: (url) => url, revealURL: (url) => url,
+      fetchFeed: async () => ({ body: "" }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    const response = await app.inject({ method: "GET", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()[0].lastError).toBe("Calendar feed could not be synchronized");
+    expect(response.body).not.toContain("fake-historic-token");
+    await app.close();
+  });
+
   it("bounds parent-initiated calendar sync requests", async () => {
     const calendarSources = new CalendarSourceModule({
       repository: new InMemoryCalendarSourceRepository(),

@@ -144,7 +144,8 @@ address for TLS/HTTP (including Node's multiple-address lookup mode), rechecks
 each redirect, and never forwards cache validators across origins. It bounds
 DNS resolution, transfers and response size; only calendar-compatible media
 types and a `VCALENDAR` payload can replace the last good snapshot. Raw network
-or parser exception text is never stored, logged or sent to clients.
+or parser exception text is never stored, logged or sent to clients. Legacy
+stored error strings are filtered before API responses as well.
 
 ## API security seams
 

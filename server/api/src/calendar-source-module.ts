@@ -386,6 +386,26 @@ function publicCalendarSource(source: CalendarSource): PublicCalendarSource {
     participantIDs: source.participantIDs,
     status: source.status,
     lastSyncedAt: source.lastSyncedAt,
-    lastError: source.lastError,
+    lastError: safeCalendarError(source.lastError),
   };
+}
+
+// Older versions persisted raw network exceptions. Never echo those historical
+// strings (which may contain bearer-style subscription URLs) back to clients.
+const knownCalendarErrors = new Set([
+    "Calendar feed must use a valid HTTPS link",
+    "Calendar feed redirected too many times",
+    "Calendar feed host must resolve only to public addresses",
+    "Calendar feed redirect omitted its location",
+    "Calendar feed redirect has an invalid location",
+    "Calendar feed returned HTTP 304 without a cached snapshot",
+    "Calendar feed is not an iCalendar file",
+    "Calendar feed exceeds the size limit",
+    "Calendar feed request timed out",
+    "Calendar feed could not be synchronized",
+]);
+function safeCalendarError(message: string | null): string | null {
+  if (message === null) return null;
+  return knownCalendarErrors.has(message) || /^Calendar feed returned HTTP [1-5][0-9]{2}$/.test(message)
+    ? message : "Calendar feed could not be synchronized";
 }
