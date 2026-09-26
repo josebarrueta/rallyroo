@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import ICAL from "ical.js";
+import { CalendarFeedError } from "./calendar-source-adapters.js";
 import type { FamilyEvent } from "./domain.js";
 
 const MAX_IMPORTED_EVENTS = 5_000;
@@ -188,7 +189,10 @@ export class CalendarSourceModule {
       await this.dependencies.repository.replaceCalendarEvents(synchronized, events);
       return publicCalendarSource(synchronized);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      // Network and parser exceptions can contain subscription URLs or Family data.
+      // Only our own fixed, safe feed errors may reach logs, persistence or clients.
+      const message = error instanceof CalendarFeedError
+        ? error.message : "Calendar feed could not be synchronized";
       console.error("[CalendarSync] Failed to sync source %s: %s", source.id, message);
       await this.dependencies.repository.saveCalendarSource({
         ...source,
@@ -217,7 +221,12 @@ function parseCalendar(body: string): Array<Pick<
   ImportedCalendarEvent,
   "externalUID" | "title" | "startTime" | "endTime" | "location"
 >> {
-  const calendar = new ICAL.Component(ICAL.parse(body));
+  const text = body.replace(/^\uFEFF/, "").trim();
+  if (!/^BEGIN:VCALENDAR\r?\n/.test(text) || !/\r?\nEND:VCALENDAR$/.test(text)) {
+    throw new CalendarFeedError("Calendar feed is not an iCalendar file");
+  }
+  const calendar = new ICAL.Component(ICAL.parse(text));
+  if (calendar.name !== "vcalendar") throw new CalendarFeedError("Calendar feed is not an iCalendar file");
   const components = calendar.getAllSubcomponents("vevent");
   const events = components
     .map((component) => new ICAL.Event(component))
@@ -377,6 +386,26 @@ function publicCalendarSource(source: CalendarSource): PublicCalendarSource {
     participantIDs: source.participantIDs,
     status: source.status,
     lastSyncedAt: source.lastSyncedAt,
-    lastError: source.lastError,
+    lastError: safeCalendarError(source.lastError),
   };
+}
+
+// Older versions persisted raw network exceptions. Never echo those historical
+// strings (which may contain bearer-style subscription URLs) back to clients.
+const knownCalendarErrors = new Set([
+    "Calendar feed must use a valid HTTPS link",
+    "Calendar feed redirected too many times",
+    "Calendar feed host must resolve only to public addresses",
+    "Calendar feed redirect omitted its location",
+    "Calendar feed redirect has an invalid location",
+    "Calendar feed returned HTTP 304 without a cached snapshot",
+    "Calendar feed is not an iCalendar file",
+    "Calendar feed exceeds the size limit",
+    "Calendar feed request timed out",
+    "Calendar feed could not be synchronized",
+]);
+function safeCalendarError(message: string | null): string | null {
+  if (message === null) return null;
+  return knownCalendarErrors.has(message) || /^Calendar feed returned HTTP [1-5][0-9]{2}$/.test(message)
+    ? message : "Calendar feed could not be synchronized";
 }

@@ -124,8 +124,10 @@ activate parent-managed iCalendar imports. Store this key in the runtime secret,
 not Helm values or Git, and retain it across deployments: losing it makes existing
 feed URLs unreadable. Rotation requires decrypting and re-encrypting stored URLs.
 
-The iCalendar adapter supports TeamSnap and other HTTPS subscription feeds. A
-new connection immediately attempts its complete initial snapshot import. It
+The iCalendar adapter supports TeamSnap-style and other HTTPS subscription
+feeds. The URL is a bearer-style secret: do not paste it into logs, tickets or
+support messages. Sync runs on the **server**, never from iOS. A new connection
+immediately attempts its complete initial snapshot import. It
 expands recurrences from one year before synchronization through two years after
 it, caps snapshots at 5,000 events and recurrence scans at 50,000 candidates,
 atomically replaces each source snapshot, and preserves the last good snapshot
@@ -134,9 +136,31 @@ on failure.
 Each source is either Personal to its owning parent or Shared with family. Access
 is filtered before exact cross-source deduplication and conflict detection, so a
 personal event cannot leak through provenance, conflicts, notifications, or family
-change cursors. Imported events remain read-only. User-supplied URLs are protected
-against private-network access, redirects to private hosts, oversized responses,
-and slow requests.
+change cursors. Imported events remain read-only. The parent-only create/sync
+routes have tighter request limits. Before storing a source the API rejects
+malformed links, embedded credentials, fragments, non-HTTPS URLs and nonstandard
+ports. The fetch adapter resolves and checks *every* DNS answer, pins a checked
+address for TLS/HTTP (including Node's multiple-address lookup mode), avoids
+shared-agent socket reuse, rechecks each redirect, and never forwards cache
+validators across origins. It bounds
+DNS resolution, transfers and response size; only calendar-compatible media
+types and a `VCALENDAR` payload can replace the last good snapshot. Raw network
+or parser exception text is never stored, logged or sent to clients. Legacy
+stored error strings are filtered before API responses as well.
+
+## API security seams
+
+The Fastify app authenticates protected routes, applies a global rate limit,
+uses route-level Zod request schemas and checks Family/role authorization
+before domain operations. This is **not** a universal substitute for validation
+at each trust seam: outbound network adapters must prevent SSRF and bound work;
+modules enforce ownership and data invariants; PostgreSQL encrypts protected
+Family details and applies transactional writes. Calendar URLs are treated as
+secrets even though feed hosts are public. Keep request bodies and raw external
+errors out of diagnostics. Deployments also require TLS, restricted secrets,
+network controls and monitoring. Per-process/IP rate limits are not a global
+abuse quota; review deployment-level limits and outbound egress policy separately
+rather than assuming the application hook alone stops all attacks.
 
 ## Production operations
 

@@ -8,6 +8,7 @@ import Fastify, {
 import { z } from "zod";
 import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
 import type { CalendarSourceModule } from "./calendar-source-module.js";
+import { validateCalendarFeedURL } from "./calendar-source-adapters.js";
 import type { DayBriefPersistence } from "./day-brief.js";
 import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
 import type { CaltrainLiveRefreshOperations } from "./caltrain-live-refresh.js";
@@ -321,7 +322,7 @@ const calendarSourceSchema = z.object({
   name: z.string().trim().min(1).max(100),
   url: z.string()
     .transform((url) => url.replace(/^webcal:/i, "https:"))
-    .pipe(z.url().refine((url) => new URL(url).protocol === "https:", "HTTPS is required")),
+    .pipe(z.string().refine(validateCalendarFeedURL, "A valid HTTPS calendar link is required")),
   participantIDs: z.array(z.string().min(1)).min(1),
   visibility: z.enum(["personal", "family"]).default("family"),
 });
@@ -890,7 +891,7 @@ export function buildApp({
     };
   });
 
-  app.post("/v1/calendar-sources", async (request, reply) => {
+  app.post("/v1/calendar-sources", { config: { rateLimit: { max: 5, timeWindow: 60_000 } } }, async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
     if (!calendarSources) return reply.code(503).send({ error: "calendar_sources_unavailable" });
@@ -948,7 +949,7 @@ export function buildApp({
     return reply.code(204).send();
   });
 
-  app.post("/v1/calendar-sources/:id/sync", async (request, reply) => {
+  app.post("/v1/calendar-sources/:id/sync", { config: { rateLimit: { max: 5, timeWindow: 60_000 } } }, async (request, reply) => {
     const account = await requireParent(request, reply);
     if (!account) return;
     if (!calendarSources) return reply.code(503).send({ error: "calendar_sources_unavailable" });
