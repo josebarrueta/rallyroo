@@ -1422,9 +1422,9 @@ private struct ShoppingCatalogView: View {
                     Text("No Pantry items yet").foregroundStyle(.secondary)
                 }
             }
-            ForEach(pantryCategories, id: \.self) { category in
+            ForEach(PantryItemPresets.orderedCategories(in: catalog.items.map(\.category)), id: \.self) { category in
                 Section("Pantry · \(category)") {
-                    ForEach(catalog.items.filter { ($0.category ?? "Uncategorized") == category }) { item in
+                    ForEach(catalog.items.filter { PantryItemPresets.displayCategory($0.category) == category }) { item in
                         VStack(alignment: .leading, spacing: 10) {
                             itemRow(item)
                             HStack {
@@ -1504,12 +1504,6 @@ private struct ShoppingCatalogView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    private var pantryCategories: [String] {
-        let present = Set(catalog.items.map { $0.category ?? "Uncategorized" })
-        let usual = PantryItemPresets.categories.filter { present.contains($0) }
-        return usual + present.subtracting(PantryItemPresets.categories).sorted()
     }
 
     private func itemRow(_ item: PantryItem) -> some View {

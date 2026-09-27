@@ -3,6 +3,15 @@
 public enum PantryItemPresets {
     public static let categories = ["Food", "Cleaning supplies", "Personal care", "Household supplies", "Other"]
 
+    public static func displayCategory(_ stored: String?) -> String {
+        stored ?? "Uncategorized"
+    }
+
+    public static func orderedCategories(in stored: [String?]) -> [String] {
+        let present = Set(stored.map(displayCategory))
+        return categories.filter { present.contains($0) } + present.subtracting(categories).sorted()
+    }
+
     public static func names(for category: String) -> [String] {
         switch category {
         case "Food":

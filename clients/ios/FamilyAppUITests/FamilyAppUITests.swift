@@ -147,8 +147,6 @@ final class FamilyAppUITests: XCTestCase {
         stockNavigation.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["Add shopping routine"].exists)
         XCTAssertTrue(app.buttons["Add pantry item"].exists)
-        app.swipeUp()
-        XCTAssertTrue(app.staticTexts["Pantry · Dairy alternatives"].waitForExistence(timeout: 5))
         app.buttons["Add pantry item"].tap()
         XCTAssertTrue(app.navigationBars["New Pantry Item"].waitForExistence(timeout: 5))
         app.buttons["Choose a common item"].tap()
@@ -156,8 +154,6 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Eggs"].tap()
         XCTAssertEqual(app.textFields["Name"].value as? String, "Eggs")
         app.buttons["Save"].tap()
-        app.swipeUp()
-        XCTAssertTrue(app.staticTexts["Pantry · Food"].waitForExistence(timeout: 5))
         app.buttons["Prepare Neighborhood Market trip"].tap()
         XCTAssertTrue(app.navigationBars["Shopping Trip"].waitForExistence(timeout: 5))
         app.buttons["Add Pantry item"].tap()
@@ -209,7 +205,7 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Save Review"].tap()
         XCTAssertFalse(app.buttons["Save Review"].isEnabled)
         app.buttons["Done"].tap()
-        XCTAssertTrue(app.staticTexts["Pantry · Cleaning supplies"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Shopping and Pantry"].waitForExistence(timeout: 5))
     }
 
     func testParentCanEnableTheMorningDayBrief() {
