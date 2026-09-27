@@ -1092,6 +1092,7 @@ private struct ExpenseEditorView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             ForEach(suggestedItems.indices, id: \.self) { index in
+                                // Separate button styles prevent Form from dispatching one row tap to both choices.
                                 VStack(alignment: .leading) {
                                     Button {
                                         suggestedItems[index].isSelected.toggle()
@@ -1099,21 +1100,22 @@ private struct ExpenseEditorView: View {
                                         Label("Add \(suggestedItems[index].name) to Pantry",
                                             systemImage: suggestedItems[index].isSelected ? "checkmark.circle.fill" : "circle")
                                     }
+                                    .buttonStyle(.borderless)
                                     .accessibilityValue(suggestedItems[index].isSelected ? "Selected" : "Not selected")
                                     if let price = suggestedItems[index].amountMinor {
                                         Text("Suggested item price: $\(price / 100).\(String(format: "%02d", price % 100))")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
-                                    if suggestedItems[index].isSelected {
-                                        Button {
-                                            suggestedItems[index].requestNextTrip.toggle()
-                                        } label: {
-                                            Label("Request \(suggestedItems[index].name) for future Shopping",
-                                                systemImage: suggestedItems[index].requestNextTrip ? "checkmark.circle.fill" : "circle")
-                                        }
-                                        .accessibilityValue(suggestedItems[index].requestNextTrip ? "Selected" : "Not selected")
-                                        .font(.caption)
+                                    Button {
+                                        suggestedItems[index].requestNextTrip.toggle()
+                                    } label: {
+                                        Label("Request \(suggestedItems[index].name) for future Shopping",
+                                            systemImage: suggestedItems[index].requestNextTrip ? "checkmark.circle.fill" : "circle")
                                     }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityValue(suggestedItems[index].requestNextTrip ? "Selected" : "Not selected")
+                                    .disabled(!suggestedItems[index].isSelected)
+                                    .font(.caption)
                                 }
                             }
                         }
