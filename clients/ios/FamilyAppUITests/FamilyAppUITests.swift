@@ -147,6 +147,14 @@ final class FamilyAppUITests: XCTestCase {
         stockNavigation.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["Add shopping routine"].exists)
         XCTAssertTrue(app.buttons["Add pantry item"].exists)
+        XCTAssertTrue(app.staticTexts["Pantry · Dairy alternatives"].exists)
+        app.buttons["Add pantry item"].tap()
+        XCTAssertTrue(app.navigationBars["New Pantry Item"].waitForExistence(timeout: 5))
+        app.buttons["Choose a common item"].tap()
+        app.buttons["Eggs"].tap()
+        XCTAssertEqual(app.textFields["Name"].value as? String, "Eggs")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Pantry · Food"].waitForExistence(timeout: 5))
         app.buttons["Prepare Neighborhood Market trip"].tap()
         XCTAssertTrue(app.navigationBars["Shopping Trip"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Recent Stock evidence says Low."].exists)
@@ -164,6 +172,33 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["Complete Trip"].tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Completed")).firstMatch
             .waitForExistence(timeout: 5))
+    }
+
+    func testAddPantryItemFromTripOffersCreationWhenAllCatalogItemsAreIncluded() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Household"].tap()
+        app.buttons["Shopping and Pantry"].tap()
+        app.buttons["Prepare Neighborhood Market trip"].tap()
+        XCTAssertTrue(app.navigationBars["Shopping Trip"].waitForExistence(timeout: 5))
+        app.buttons["Add Pantry item"].tap()
+        XCTAssertTrue(app.navigationBars["New Pantry Item"].waitForExistence(timeout: 5))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Category,")).firstMatch.tap()
+        app.buttons["Cleaning supplies"].tap()
+        app.buttons["Choose a common item"].tap()
+        app.buttons["Dish soap"].tap()
+        XCTAssertEqual(app.textFields["Name"].value as? String, "Dish soap")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Shopping Trip"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Dish soap"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Save Review"].isEnabled)
+        app.buttons["Save Review"].tap()
+        XCTAssertFalse(app.buttons["Save Review"].isEnabled)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["Pantry · Cleaning supplies"].waitForExistence(timeout: 5))
     }
 
     func testParentCanEnableTheMorningDayBrief() {
