@@ -160,6 +160,25 @@ function savedPlaceDraft(overrides: Partial<SavedPlaceDraft> = {}): SavedPlaceDr
   };
 }
 
+describe("Imported calendar travel planning", () => {
+  it("plans travel for a visible imported event without making source fields editable", async () => {
+    const repo = new InMemoryTravelPlanningRepository({ events: [], members: members() });
+    const imported = event({ source: "calendar", readOnly: true });
+    const module = new TravelPlanningModule(
+      repo,
+      { async estimate() { return { durationSeconds: 1_800, distanceMeters: 9_000 }; } },
+      clock,
+      { async events() { return [imported]; } },
+    );
+
+    const plan = await module.saveTravelPlan(parent(), imported.id, oneTimeDraft());
+    const preview = await module.preview(parent(), imported.id);
+
+    expect(plan.eventID).toBe(imported.id);
+    expect(preview.durationSeconds).toBe(1_800);
+  });
+});
+
 describe("InMemoryTravelPlanningRepository", () => {
   it("returns independent copies so callers cannot mutate storage", async () => {
     const repo = new InMemoryTravelPlanningRepository({

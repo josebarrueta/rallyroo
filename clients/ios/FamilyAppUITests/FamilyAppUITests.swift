@@ -545,6 +545,33 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Delete skipped"].exists)
     }
 
+    func testImportedEventOpensReadOnlyDetailsAndSavesRallyrooSettings() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_IMPORTED_EVENT"] = "1"
+        app.launch()
+
+        let event = app.staticTexts["Imported championship"]
+        XCTAssertTrue(event.waitForExistence(timeout: 5))
+        event.tap()
+
+        XCTAssertTrue(app.navigationBars["Event details"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["37.7749, -122.4194"].exists)
+        XCTAssertTrue(app.buttons["open-imported-event-directions"].exists)
+        app.swipeUp()
+        let details = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Bring the blue uniform.")
+        ).firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["Title"].exists)
+
+        app.switches["imported-event-arrive-by"].tap()
+        app.buttons["Alert, None"].tap()
+        app.buttons["30 minutes before"].tap()
+        app.buttons["save-imported-event-settings"].tap()
+        XCTAssertTrue(app.alerts["Event settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts["Event settings"].staticTexts["Rallyroo settings saved."].exists)
+    }
+
     private func addFamilyMember(named name: String, in app: XCUIApplication) {
         app.tabBars.buttons["Family"].tap()
         XCTAssertTrue(app.navigationBars["Family"].waitForExistence(timeout: 5))

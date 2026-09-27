@@ -80,6 +80,11 @@ public actor RemoteEventStore: EventStore {
         let events: [FamilyEvent]
     }
 
+    private struct ImportedEventSettingsRequest: Codable {
+        let arrivalTime: Date?
+        let alertLeadTimeMinutes: Int?
+    }
+
     private struct RecurringEditRequest: Codable {
         let event: FamilyEvent
         let scope: EventEditScope
@@ -241,6 +246,29 @@ public actor RemoteEventStore: EventStore {
             conflicts: payload.conflicts.compactMap(\.eventConflict),
             notificationOutcome: payload.notificationOutcome ?? .notRequested
         )
+    }
+
+    public func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+    ) async throws -> FamilyEvent {
+        let url = eventsURL
+            .deletingLastPathComponent()
+            .appending(path: "imported-events")
+            .appending(path: event.id.uuidString)
+            .appending(path: "settings")
+        let response = try await transport.send(HTTPRequest(
+            method: .patch,
+            url: url,
+            headers: ["Content-Type": "application/json"],
+            body: try encoder.encode(ImportedEventSettingsRequest(
+                arrivalTime: arrivalTime,
+                alertLeadTimeMinutes: alertLeadTime?.rawValue
+            ))
+        ))
+        try response.requireSuccess()
+        return try decoder.decode(FamilyEvent.self, from: response.body)
     }
 
     public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {

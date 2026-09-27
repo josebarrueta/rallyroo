@@ -43,9 +43,18 @@ export interface ImportedCalendarEvent {
   title: string;
   startTime: string;
   endTime: string;
+  arrivalTime: string | null;
   location: string | null;
+  notes: string | null;
   participantIDs: string[];
   fingerprint: string;
+}
+
+export interface ImportedEventSettings {
+  familyID: string;
+  eventID: string;
+  arrivalTime: string | null;
+  alertLeadTimeMinutes: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
 }
 
 export interface CalendarSourceRepository {
@@ -55,6 +64,9 @@ export interface CalendarSourceRepository {
   deleteCalendarSource(familyID: string, sourceID: string): Promise<boolean>;
   replaceCalendarEvents(source: CalendarSource, events: ImportedCalendarEvent[]): Promise<void>;
   calendarEventsForFamily(familyID: string): Promise<ImportedCalendarEvent[]>;
+  importedEventSettingsForFamily(familyID: string): Promise<ImportedEventSettings[]>;
+  familyIDsWithImportedEventSettings(): Promise<string[]>;
+  saveImportedEventSettings(settings: ImportedEventSettings): Promise<void>;
 }
 
 export interface CalendarFeedResponse {
@@ -207,19 +219,74 @@ export class CalendarSourceModule {
     const visibleEvents = (await this.dependencies.repository.calendarEventsForFamily(familyID))
       .filter((event) => event.sourceVisibility === "family"
         || event.sourceOwnerMemberID === viewerMemberID);
-    return deduplicateEvents(familyID, visibleEvents);
+    return this.withSettings(familyID, deduplicateEvents(familyID, visibleEvents));
   }
 
   async sharedEvents(familyID: string): Promise<FamilyEvent[]> {
     const sharedEvents = (await this.dependencies.repository.calendarEventsForFamily(familyID))
       .filter((event) => event.sourceVisibility === "family");
-    return deduplicateEvents(familyID, sharedEvents);
+    return this.withSettings(familyID, deduplicateEvents(familyID, sharedEvents));
+  }
+
+  async allEvents(familyID: string): Promise<FamilyEvent[]> {
+    const events = await this.dependencies.repository.calendarEventsForFamily(familyID);
+    return this.withSettings(familyID, deduplicateEvents(familyID, events));
+  }
+
+  async alertEvents(): Promise<FamilyEvent[]> {
+    const familyIDs = await this.dependencies.repository.familyIDsWithImportedEventSettings();
+    return (await Promise.all(familyIDs.map((familyID) => this.allEvents(familyID))))
+      .flat()
+      .filter((event) => event.alertLeadTimeMinutes !== null
+        && event.alertLeadTimeMinutes !== undefined);
+  }
+
+  async updateEventSettings(
+    familyID: string,
+    viewerMemberID: string,
+    eventID: string,
+    settings: Pick<ImportedEventSettings, "arrivalTime" | "alertLeadTimeMinutes">,
+  ): Promise<FamilyEvent | null> {
+    const event = (await this.events(familyID, viewerMemberID))
+      .find((candidate) => candidate.id.toLowerCase() === eventID.toLowerCase());
+    if (!event) return null;
+    if (settings.arrivalTime !== null) {
+      const arrival = new Date(settings.arrivalTime);
+      if (!Number.isFinite(arrival.getTime()) || arrival > new Date(event.startTime)) {
+        throw new CalendarSourceSyncError("Imported event arrival time is invalid");
+      }
+    }
+    await this.dependencies.repository.saveImportedEventSettings({
+      familyID,
+      eventID: event.id,
+      ...settings,
+    });
+    return {
+      ...event,
+      arrivalTime: settings.arrivalTime,
+      alertLeadTimeMinutes: settings.alertLeadTimeMinutes,
+    };
+  }
+
+  private async withSettings(familyID: string, events: FamilyEvent[]): Promise<FamilyEvent[]> {
+    const settings = new Map(
+      (await this.dependencies.repository.importedEventSettingsForFamily(familyID))
+        .map((item) => [item.eventID.toLowerCase(), item]),
+    );
+    return events.map((event) => {
+      const customized = settings.get(event.id.toLowerCase());
+      return customized ? {
+        ...event,
+        arrivalTime: customized.arrivalTime,
+        alertLeadTimeMinutes: customized.alertLeadTimeMinutes,
+      } : event;
+    });
   }
 }
 
 function parseCalendar(body: string): Array<Pick<
   ImportedCalendarEvent,
-  "externalUID" | "title" | "startTime" | "endTime" | "location"
+  "externalUID" | "title" | "startTime" | "endTime" | "arrivalTime" | "location" | "notes"
 >> {
   const text = body.replace(/^\uFEFF/, "").trim();
   if (!/^BEGIN:VCALENDAR\r?\n/.test(text) || !/\r?\nEND:VCALENDAR$/.test(text)) {
@@ -237,7 +304,7 @@ function parseCalendar(body: string): Array<Pick<
   rangeEnd.setUTCFullYear(rangeEnd.getUTCFullYear() + 2);
   const result: Array<Pick<
     ImportedCalendarEvent,
-    "externalUID" | "title" | "startTime" | "endTime" | "location"
+    "externalUID" | "title" | "startTime" | "endTime" | "arrivalTime" | "location" | "notes"
   >> = [];
   let iterationCount = 0;
 
@@ -277,7 +344,7 @@ function parseCalendar(body: string): Array<Pick<
 function appendOccurrence(
   result: Array<Pick<
     ImportedCalendarEvent,
-    "externalUID" | "title" | "startTime" | "endTime" | "location"
+    "externalUID" | "title" | "startTime" | "endTime" | "arrivalTime" | "location" | "notes"
   >>,
   externalUID: string,
   event: InstanceType<typeof ICAL.Event>,
@@ -295,8 +362,35 @@ function appendOccurrence(
     title: event.summary.trim(),
     startTime: start.toISOString(),
     endTime: end.toISOString(),
+    arrivalTime: teamSnapArrivalTime(event, start),
     location: event.location?.trim() || null,
+    notes: importedEventDescription(event),
   });
+}
+
+function importedEventDescription(event: InstanceType<typeof ICAL.Event>): string | null {
+  const description = event.component.getFirstPropertyValue("description");
+  return typeof description === "string" && description.trim() ? description.trim() : null;
+}
+
+// RFC 5545 has DTSTART/DTEND but no event arrival-time property. TeamSnap places
+// this optional value in DESCRIPTION, so keep the adapter deliberately narrow.
+function teamSnapArrivalTime(event: InstanceType<typeof ICAL.Event>, start: Date): string | null {
+  const description = event.component.getFirstPropertyValue("description");
+  if (typeof description !== "string") return null;
+  const match = description.match(/\(Arrival Time:\s*(\d{1,2}):(\d{2})\s*(AM|PM)\b/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 1 || hour > 12 || minute > 59) return null;
+  hour %= 12;
+  if (match[3]!.toUpperCase() === "PM") hour += 12;
+  const local = event.startDate.clone();
+  local.hour = hour;
+  local.minute = minute;
+  local.second = 0;
+  const arrival = local.toJSDate();
+  return Number.isFinite(arrival.getTime()) && arrival <= start ? arrival.toISOString() : null;
 }
 
 function eventFingerprint(event: {
@@ -333,9 +427,11 @@ function deduplicateEvents(familyID: string, events: ImportedCalendarEvent[]): F
       || left.sourceID.localeCompare(right.sourceID)
     )[0]!;
     const allSameFingerprint = group.every((event) => event.fingerprint === selected.fingerprint);
-    const stableKey = allSameFingerprint
-      ? `fingerprint:${selected.fingerprint}`
-      : `uid:${[...group].map((event) => event.externalUID).sort()[0]}`;
+    const stableKey = group.length === 1
+      ? `uid:${selected.sourceID}:${selected.externalUID}`
+      : allSameFingerprint
+        ? `fingerprint:${selected.fingerprint}`
+        : `uid:${[...group].map((event) => `${event.sourceID}:${event.externalUID}`).sort()[0]}`;
     return {
       id: deterministicUUID(`${familyID}\u001f${stableKey}`),
       familyID,
@@ -344,7 +440,9 @@ function deduplicateEvents(familyID: string, events: ImportedCalendarEvent[]): F
       participantIDs: [...new Set(group.flatMap((event) => event.participantIDs))].sort(),
       startTime: selected.startTime,
       endTime: selected.endTime,
+      arrivalTime: selected.arrivalTime,
       location: selected.location,
+      notes: selected.notes,
       driver: null,
       source: "calendar",
       status: "confirmed",

@@ -58,6 +58,44 @@ final class RemoteEventStoreTests: XCTestCase {
         XCTAssertNil(event.alertLeadTime)
     }
 
+    func testSavesRallyrooSettingsWithoutMutatingAnImportedEventsSourceFields() async throws {
+        var updated = sampleEvent()
+        updated.arrivalTime = Date(timeIntervalSince1970: 1_735_838_000)
+        updated.alertLeadTime = .thirtyMinutes
+        updated.isReadOnly = true
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let transport = RecordingHTTPTransport(
+            responses: [HTTPResponse(statusCode: 200, body: try encoder.encode(updated))]
+        )
+        let store: any EventStore = RemoteEventStore(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: transport
+        )
+
+        let result = try await store.saveImportedEventSettings(
+            for: updated,
+            arrivalTime: updated.arrivalTime,
+            alertLeadTime: .thirtyMinutes
+        )
+
+        XCTAssertEqual(result.arrivalTime, updated.arrivalTime)
+        XCTAssertEqual(result.alertLeadTime, .thirtyMinutes)
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.method, .patch)
+        XCTAssertEqual(
+            request.url.path,
+            "/v1/imported-events/\(updated.id.uuidString)/settings"
+        )
+        let body = try XCTUnwrap(request.body)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["alertLeadTimeMinutes"] as? Int, 30)
+        XCTAssertEqual(json["arrivalTime"] as? String, "2025-01-02T17:13:20Z")
+        XCTAssertNil(json["title"])
+        XCTAssertNil(json["location"])
+    }
+
     func testReturnsTheLastSuccessfulAccountScopedScheduleWhenOffline() async throws {
         let cacheURL = temporaryCacheURL()
         let event = sampleEvent()

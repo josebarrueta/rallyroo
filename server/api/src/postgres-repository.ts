@@ -53,6 +53,7 @@ import type {
   CalendarSource,
   CalendarSourceRepository,
   ImportedCalendarEvent,
+  ImportedEventSettings,
 } from "./calendar-source-module.js";
 import { parseCommuteSubscriptionDetails } from "./commuter-module.js";
 import {
@@ -303,12 +304,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           `SELECT event.family_id, event.source_id::text,
                   ''::text AS source_name, ''::text AS source_owner_member_id,
                   'family'::text AS source_visibility, event.external_uid,
-                  event.title, event.start_time, event.end_time, event.location,
-                  event.participant_ids, event.fingerprint
+                  event.title, event.start_time, event.end_time, event.arrival_time,
+                  event.location, event.notes, event.participant_ids, event.fingerprint
            FROM imported_calendar_events event
            WHERE event.external_uid NOT LIKE 'rr1.%'
               OR event.title NOT LIKE 'rr1.%'
               OR (event.location IS NOT NULL AND event.location NOT LIKE 'rr1.%')
+              OR (event.notes IS NOT NULL AND event.notes NOT LIKE 'rr1.%')
            ORDER BY event.family_id, event.source_id, event.external_uid
            FOR UPDATE SKIP LOCKED LIMIT $1`,
           [remaining()],
@@ -317,6 +319,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           for (const [column, value] of [
             ["title", row.title],
             ["location", row.location],
+            ["notes", row.notes],
           ] as const) {
             if (value === null || this.familyDataProtector.isProtected(value) || remaining() < 1) {
               continue;
@@ -1090,6 +1093,11 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query("DELETE FROM saved_places WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM commuter_installations WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM calendar_sources WHERE family_id = $1", [row.family_id]);
+        await client.query("DELETE FROM imported_event_settings WHERE family_id = $1", [row.family_id]);
+        await client.query(
+          "DELETE FROM imported_event_notification_deliveries WHERE family_id = $1",
+          [row.family_id],
+        );
         await client.query("DELETE FROM device_tokens WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM family_invitations WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM events WHERE family_id = $1", [row.family_id]);
@@ -1959,19 +1967,45 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     }
   }
 
+  async claimImportedEventNotification(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `INSERT INTO imported_event_notification_deliveries (
+         family_id, event_id, occurrence_start, notification_claimed_at
+       ) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (family_id, event_id, occurrence_start) DO UPDATE
+       SET notification_claimed_at = EXCLUDED.notification_claimed_at
+       WHERE imported_event_notification_deliveries.notification_sent_at IS NULL
+         AND (
+           imported_event_notification_deliveries.notification_claimed_at IS NULL
+           OR imported_event_notification_deliveries.notification_claimed_at < $4::timestamptz - interval '5 minutes'
+         )
+       RETURNING occurrence_start`,
+      [familyID, eventID, occurrenceStart, claimedAt.toISOString()],
+    );
+    return Boolean(result.rows[0]);
+  }
+
   async markEventNotificationSent(
     familyID: string,
     eventID: string,
     occurrenceStart: string,
     claimedAt: Date,
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE event_notification_deliveries
+    await Promise.all([
+      "event_notification_deliveries",
+      "imported_event_notification_deliveries",
+    ].map((table) => this.pool.query(
+      `UPDATE ${table}
        SET notification_claimed_at = NULL, notification_sent_at = $4
        WHERE family_id = $1 AND event_id = $2 AND occurrence_start = $3
          AND notification_claimed_at = $4`,
       [familyID, eventID, occurrenceStart, claimedAt.toISOString()],
-    );
+    )));
   }
 
   async releaseEventNotificationClaim(
@@ -1980,12 +2014,15 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     occurrenceStart: string,
     claimedAt: Date,
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE event_notification_deliveries SET notification_claimed_at = NULL
+    await Promise.all([
+      "event_notification_deliveries",
+      "imported_event_notification_deliveries",
+    ].map((table) => this.pool.query(
+      `UPDATE ${table} SET notification_claimed_at = NULL
        WHERE family_id = $1 AND event_id = $2 AND occurrence_start = $3
          AND notification_sent_at IS NULL AND notification_claimed_at = $4`,
       [familyID, eventID, occurrenceStart, claimedAt.toISOString()],
-    );
+    )));
   }
 
   async saveCalendarSource(source: CalendarSource): Promise<void> {
@@ -2061,12 +2098,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query(
           `INSERT INTO imported_calendar_events (
              family_id, source_id, external_uid, title, start_time, end_time,
-             location, participant_ids, fingerprint
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+             arrival_time, location, notes, participant_ids, fingerprint
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [
             protectedEvent.familyID, protectedEvent.sourceID, protectedEvent.externalUID,
             protectedEvent.title, protectedEvent.startTime, protectedEvent.endTime,
-            protectedEvent.location, protectedEvent.participantIDs, protectedEvent.fingerprint,
+            protectedEvent.arrivalTime, protectedEvent.location, protectedEvent.notes,
+            protectedEvent.participantIDs, protectedEvent.fingerprint,
           ],
         );
       }
@@ -2099,7 +2137,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
               source.owner_member_id AS source_owner_member_id,
               source.visibility AS source_visibility,
               event.external_uid, event.title, event.start_time, event.end_time,
-              event.location, event.participant_ids, event.fingerprint
+              event.arrival_time, event.location, event.notes,
+              event.participant_ids, event.fingerprint
        FROM imported_calendar_events event
        JOIN calendar_sources source
          ON source.family_id = event.family_id AND source.id = event.source_id
@@ -2130,6 +2169,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         ),
         startTime: asISOString(row.start_time),
         endTime: asISOString(row.end_time),
+        arrivalTime: row.arrival_time === null ? null : asISOString(row.arrival_time),
         location: row.location === null
           ? null
           : await this.revealLegacyValue(
@@ -2137,10 +2177,58 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
             `imported_calendar_events/${row.source_id}/${externalUID}/location`,
             row.location,
           ),
+        notes: row.notes === null
+          ? null
+          : await this.revealLegacyValue(
+            row.family_id,
+            `imported_calendar_events/${row.source_id}/${externalUID}/notes`,
+            row.notes,
+          ),
         participantIDs: row.participant_ids,
         fingerprint: row.fingerprint,
       };
     }));
+  }
+
+  async importedEventSettingsForFamily(familyID: string): Promise<ImportedEventSettings[]> {
+    const result = await this.pool.query<{
+      family_id: string;
+      event_id: string;
+      arrival_time: Date | string | null;
+      alert_lead_time_minutes: ImportedEventSettings["alertLeadTimeMinutes"];
+    }>(
+      `SELECT family_id, event_id::text, arrival_time, alert_lead_time_minutes
+       FROM imported_event_settings WHERE family_id = $1`,
+      [familyID],
+    );
+    return result.rows.map((row) => ({
+      familyID: row.family_id,
+      eventID: row.event_id,
+      arrivalTime: row.arrival_time === null ? null : asISOString(row.arrival_time),
+      alertLeadTimeMinutes: row.alert_lead_time_minutes,
+    }));
+  }
+
+  async familyIDsWithImportedEventSettings(): Promise<string[]> {
+    const result = await this.pool.query<{ family_id: string }>(
+      "SELECT DISTINCT family_id FROM imported_event_settings ORDER BY family_id",
+    );
+    return result.rows.map((row) => row.family_id);
+  }
+
+  async saveImportedEventSettings(settings: ImportedEventSettings): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO imported_event_settings (
+         family_id, event_id, arrival_time, alert_lead_time_minutes
+       ) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (family_id, event_id) DO UPDATE SET
+         arrival_time=EXCLUDED.arrival_time,
+         alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes`,
+      [
+        settings.familyID, settings.eventID, settings.arrivalTime,
+        settings.alertLeadTimeMinutes,
+      ],
+    );
   }
 
   async remindersForFamily(familyID: string): Promise<FamilyReminder[]> {
@@ -2675,6 +2763,13 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           event.familyID,
           `imported_calendar_events/${event.sourceID}/${event.externalUID}/location`,
           event.location,
+        ),
+      notes: event.notes === null
+        ? null
+        : await this.familyDataProtector.protect(
+          event.familyID,
+          `imported_calendar_events/${event.sourceID}/${event.externalUID}/notes`,
+          event.notes,
         ),
     };
   }
@@ -4317,7 +4412,9 @@ interface ImportedCalendarEventRow {
   title: string;
   start_time: Date | string;
   end_time: Date | string;
+  arrival_time: Date | string | null;
   location: string | null;
+  notes: string | null;
   participant_ids: string[];
   fingerprint: string;
 }

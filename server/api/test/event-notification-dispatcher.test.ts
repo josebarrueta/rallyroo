@@ -57,6 +57,33 @@ describe("EventNotificationDispatcher", () => {
     expect(marked).toEqual([`${event.id}:${event.startTime}`]);
   });
 
+  it("dispatches a Rallyroo alert configured for an imported calendar event", async () => {
+    const imported = { ...event, source: "calendar" as const, readOnly: true };
+    const claimed: string[] = [];
+    const pushed: string[] = [];
+    const dispatcher = new EventNotificationDispatcher({
+      repository: {
+        claimDueEventNotifications: async () => [],
+        claimImportedEventNotification: async (_familyID, eventID) => {
+          claimed.push(eventID);
+          return true;
+        },
+        deviceTokensForMembers: async () => ["device"],
+        markEventNotificationSent: async () => undefined,
+        releaseEventNotificationClaim: async () => undefined,
+      },
+      importedEvents: { async alertEvents() { return [imported]; } },
+      pushNotificationProvider: {
+        async send(_tokens, notification) { pushed.push(notification.body); },
+      },
+    });
+
+    await dispatcher.dispatchDue(new Date("2026-09-06T17:45:00.000Z"));
+
+    expect(claimed).toEqual([imported.id]);
+    expect(pushed).toEqual(["Event starts in 15 minutes."]);
+  });
+
   it("claims each due recurring occurrence once", async () => {
     const repository = new InMemoryRallyrooRepository();
     await repository.saveEvent({

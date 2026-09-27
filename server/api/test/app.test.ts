@@ -1734,6 +1734,99 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("reads TeamSnap arrival times embedded in calendar descriptions", async () => {
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url,
+      revealURL: (url) => url,
+      fetchFeed: async () => ({ body: [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:teamsnap-game@example",
+        "SUMMARY:TeamSnap game",
+        "DTSTART;TZID=America/Los_Angeles:20260912T130000",
+        "DTEND;TZID=America/Los_Angeles:20260912T140000",
+        "DESCRIPTION:Game details\\n   (Arrival Time: 12:15 PM (Pacific Time (US & Canada))) ",
+        "LOCATION:Lincoln Field",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n") }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    await app.inject({
+      method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        name: "TeamSnap", url: "https://ical.example/team.ics",
+        participantIDs: ["kid-1"], visibility: "family",
+      },
+    });
+
+    const schedule = await app.inject({
+      method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+
+    expect(schedule.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "TeamSnap game",
+        notes: expect.stringContaining("Game details"),
+        arrivalTime: "2026-09-12T19:15:00.000Z",
+      }),
+    ]));
+    await app.close();
+  });
+
+  it("lets a parent customize only arrival and alert settings for an imported event", async () => {
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url,
+      revealURL: (url) => url,
+      fetchFeed: async () => ({ body: [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT",
+        "UID:customizable@example", "SUMMARY:Read-only practice",
+        "DTSTART:20260912T180000Z", "DTEND:20260912T190000Z",
+        "LOCATION:Lincoln Field", "END:VEVENT", "END:VCALENDAR",
+      ].join("\r\n") }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    await app.inject({
+      method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        name: "TeamSnap", url: "https://ical.example/team.ics",
+        participantIDs: ["kid-1"], visibility: "family",
+      },
+    });
+    const before = await app.inject({
+      method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const imported = before.json().find((event: { source: string }) => event.source === "calendar");
+
+    const updated = await app.inject({
+      method: "PATCH", url: `/v1/imported-events/${imported.id}/settings`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: { arrivalTime: "2026-09-12T17:30:00.000Z", alertLeadTimeMinutes: 30 },
+    });
+    const after = await app.inject({
+      method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+    const customized = after.json().find((event: { id: string }) => event.id === imported.id);
+
+    expect(updated.statusCode).toBe(200);
+    expect(customized).toMatchObject({
+      title: "Read-only practice",
+      location: "Lincoln Field",
+      readOnly: true,
+      arrivalTime: "2026-09-12T17:30:00.000Z",
+      alertLeadTimeMinutes: 30,
+    });
+    await app.close();
+  });
+
   it("rejects an initial calendar snapshot above the 5,000-event safety limit", async () => {
     const eventLines = Array.from({ length: 5_001 }, (_, index) => [
       "BEGIN:VEVENT",

@@ -108,10 +108,23 @@ Supported conflict kinds are `overlapping_participant` and
 `double_booked_driver`.
 
 Imported calendar events additionally use `source: "calendar"`, `readOnly: true`,
-and a `provenance` array containing `sourceID`, `sourceName`, and `externalUID`.
-They participate in conflict detection but cannot be edited as native Rallyroo events.
-Exact duplicates are consolidated by external identity or normalized title, time,
-and location; participant IDs and provenance are combined.
+optional source-owned `notes`, and a `provenance` array containing `sourceID`,
+`sourceName`, and `externalUID`. They participate in conflict detection, but their
+source-owned title, time, location, notes, participants, and provenance cannot be
+edited as native Rallyroo events. Exact duplicates are consolidated by external
+identity or normalized title, time, and location; participant IDs and provenance
+are combined.
+
+- `PATCH /v1/imported-events/{id}/settings` with `arrivalTime` and
+  `alertLeadTimeMinutes` lets a parent save Rallyroo-owned settings without
+  mutating the source event. Both fields are nullable; supported alert values
+  match native Events. The event must be visible to the authenticated parent,
+  and arrival cannot follow its source start time.
+
+RFC 5545 defines event start/end fields but no arrival-time field. Rallyroo imports
+`DESCRIPTION` as `notes` and recognizes TeamSnap's narrowly formatted
+`(Arrival Time: h:mm AM/PM ...)` description metadata as an initial arrival target.
+A saved Rallyroo arrival setting overrides the value imported from the feed.
 
 ## Reminders
 

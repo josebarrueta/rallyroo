@@ -61,6 +61,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var endTime: Date
     public var arrivalTime: Date?
     public var location: String?
+    public var notes: String?
     public var driver: String?
     public var driverMemberID: KidID?
     public var source: EventSource
@@ -73,7 +74,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var occurrenceStates: [ScheduleOccurrenceState]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, kidID, participantIDs, startTime, endTime, location
+        case id, title, kidID, participantIDs, startTime, endTime, location, notes
         case driver, driverMemberID, source, status, recurrence, recurrenceSeriesID, provenance
         case alertLeadTime = "alertLeadTimeMinutes"
         case arrivalTime
@@ -90,6 +91,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         endTime: Date,
         arrivalTime: Date? = nil,
         location: String? = nil,
+        notes: String? = nil,
         driver: String? = nil,
         driverMemberID: KidID? = nil,
         source: EventSource,
@@ -109,6 +111,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.endTime = endTime
         self.arrivalTime = arrivalTime
         self.location = location
+        self.notes = notes
         self.driver = driver
         self.driverMemberID = driverMemberID
         self.source = source
@@ -131,6 +134,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         endTime = try container.decode(Date.self, forKey: .endTime)
         arrivalTime = try container.decodeIfPresent(Date.self, forKey: .arrivalTime)
         location = try container.decodeIfPresent(String.self, forKey: .location)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
         driver = try container.decodeIfPresent(String.self, forKey: .driver)
         driverMemberID = try container.decodeIfPresent(KidID.self, forKey: .driverMemberID)
         source = try container.decode(EventSource.self, forKey: .source)
@@ -148,6 +152,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
 public enum EventValidationError: Error, Equatable, Sendable {
     case endTimeMustFollowStartTime
     case arrivalTimeMustNotFollowStartTime
+    case importedEventSettingsUnsupported
 }
 
 public struct EventConflict: Codable, Equatable, Sendable {
@@ -226,6 +231,11 @@ public protocol EventStore: Sendable {
         idempotencyKey: UUID
     ) async throws -> EventMutationResult
     func loadEvents() async throws -> EventSnapshot
+    func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+    ) async throws -> FamilyEvent
     func clearCache() async throws
 }
 
@@ -245,6 +255,14 @@ public extension EventStore {
 
     func events() async throws -> [FamilyEvent] {
         try await loadEvents().events
+    }
+
+    func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+    ) async throws -> FamilyEvent {
+        throw EventValidationError.importedEventSettingsUnsupported
     }
 
     func clearCache() async throws {}
@@ -291,6 +309,27 @@ public actor LocalEventStore: EventStore {
             conflicts: conflicts,
             notificationOutcome: notifyParticipants ? .noRecipients : .notRequested
         )
+    }
+
+    public func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+    ) async throws -> FamilyEvent {
+        guard event.isReadOnly else {
+            throw EventValidationError.importedEventSettingsUnsupported
+        }
+        if let arrivalTime, arrivalTime > event.startTime {
+            throw EventValidationError.arrivalTimeMustNotFollowStartTime
+        }
+        var updated = event
+        updated.arrivalTime = arrivalTime
+        updated.alertLeadTime = alertLeadTime
+        var savedEvents = try await events()
+        savedEvents.removeAll { $0.id == event.id }
+        savedEvents.append(updated)
+        try write(savedEvents)
+        return updated
     }
 
     public func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws {

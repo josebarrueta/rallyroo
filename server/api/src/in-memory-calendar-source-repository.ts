@@ -2,11 +2,13 @@ import type {
   CalendarSource,
   CalendarSourceRepository,
   ImportedCalendarEvent,
+  ImportedEventSettings,
 } from "./calendar-source-module.js";
 
 export class InMemoryCalendarSourceRepository implements CalendarSourceRepository {
   private readonly sources: CalendarSource[] = [];
   private readonly events: ImportedCalendarEvent[] = [];
+  private readonly eventSettings: ImportedEventSettings[] = [];
 
   async saveCalendarSource(source: CalendarSource): Promise<void> {
     const index = this.sources.findIndex((candidate) =>
@@ -60,5 +62,21 @@ export class InMemoryCalendarSourceRepository implements CalendarSourceRepositor
           sourceVisibility: source?.visibility ?? event.sourceVisibility,
         });
       });
+  }
+
+  async importedEventSettingsForFamily(familyID: string): Promise<ImportedEventSettings[]> {
+    return structuredClone(this.eventSettings.filter((settings) => settings.familyID === familyID));
+  }
+
+  async familyIDsWithImportedEventSettings(): Promise<string[]> {
+    return [...new Set(this.eventSettings.map((settings) => settings.familyID))];
+  }
+
+  async saveImportedEventSettings(settings: ImportedEventSettings): Promise<void> {
+    const index = this.eventSettings.findIndex((candidate) =>
+      candidate.familyID === settings.familyID && candidate.eventID === settings.eventID
+    );
+    if (index >= 0) this.eventSettings[index] = structuredClone(settings);
+    else this.eventSettings.push(structuredClone(settings));
   }
 }
