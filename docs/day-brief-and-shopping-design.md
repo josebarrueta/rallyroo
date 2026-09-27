@@ -197,3 +197,25 @@ The implementation hides evidence ordering, stock staleness, recommendation reas
 5. Trip outcomes and Purchase history. **Implemented.**
 
 The Day Brief and Shopping modules should ship independently. Neither should delay or share persistence with the other merely because both can use AI wording.
+
+## Household Expenses (planned, separate from Shopping)
+
+The Schedule's Household shortcut opens a hub for Shopping and Pantry; connected
+calendars remain in Settings. Expenses will join this hub in a separate release,
+not as an empty or nonfunctional destination.
+
+An Expense represents any Family spending, categorized for later summaries; it
+is **not** inferred from item-level Shopping Purchases. Initially only parents
+can create or view expenses. Manual entry should record an amount and currency,
+local spending date, category, and optional merchant and note. Store exact money
+as integer minor units and keep descriptive financial data encrypted per Family.
+Allow categories to expand without redefining the Expense model. A Shopping trip
+may eventually be linked to an Expense, but its item-level Purchase prices must
+not be summed into the ledger a second time.
+
+Receipt capture is a later, reviewed draft: extract candidate merchant, totals,
+line items, and categories from a photo, let a parent correct them, and only
+then save the Expense or explicitly select Pantry/list candidates. A prior
+purchase does not establish current Stock or imply that an item belongs on a
+future Buy list. Bound image and OCR payloads, avoid logging financial content,
+and decide retention of the original photo separately from the Expense record.

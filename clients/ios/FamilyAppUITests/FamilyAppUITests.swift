@@ -41,6 +41,22 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 5))
     }
 
+    func testHouseholdShortcutOpensShoppingAndPantry() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let household = app.buttons["schedule-household"]
+        XCTAssertTrue(household.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["schedule-connected-calendars"].exists)
+        household.tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["Shopping and Pantry"].tap()
+        XCTAssertTrue(app.navigationBars["Shopping and Pantry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Neighborhood Market"].exists)
+    }
+
     func testParentCanManageShoppingRoutinesAndPantryCatalog() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
@@ -48,6 +64,7 @@ final class FamilyAppUITests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Settings"].tap()
+        app.buttons["Household"].tap()
         let shopping = app.buttons["Shopping and Pantry"]
         XCTAssertTrue(shopping.waitForExistence(timeout: 5))
         shopping.tap()
