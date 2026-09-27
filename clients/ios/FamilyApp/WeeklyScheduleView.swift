@@ -12,6 +12,7 @@ struct WeeklyScheduleView: View {
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let shoppingStore: (any ShoppingStore)?
     private let expenseStore: (any ExpenseStore)?
+    private let receiptDraftStore: (any ReceiptDraftStore)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
@@ -73,6 +74,7 @@ struct WeeklyScheduleView: View {
         calendarSourceStore: (any CalendarSourceStore)? = nil,
         shoppingStore: (any ShoppingStore)? = nil,
         expenseStore: (any ExpenseStore)? = nil,
+        receiptDraftStore: (any ReceiptDraftStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
         occurrenceLifecycleStore: (any OccurrenceLifecycleStore)? = nil,
@@ -87,6 +89,7 @@ struct WeeklyScheduleView: View {
         self.calendarSourceStore = calendarSourceStore
         self.shoppingStore = shoppingStore
         self.expenseStore = expenseStore
+        self.receiptDraftStore = receiptDraftStore
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
         self.occurrenceLifecycleStore = occurrenceLifecycleStore
@@ -327,6 +330,7 @@ struct WeeklyScheduleView: View {
                     HouseholdView(
                         shoppingStore: shoppingStore,
                         expenseStore: expenseStore,
+                        receiptDraftStore: receiptDraftStore,
                         canManageShoppingCatalog: allowsEditing,
                         currentMemberID: currentMemberID
                     )

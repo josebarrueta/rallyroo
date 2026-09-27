@@ -51,6 +51,7 @@ import { StytchIdentityProvider } from "./stytch-identity-provider.js";
 import { TravelPlanningModule } from "./travel-planning.js";
 import { ShoppingModule } from "./shopping-module.js";
 import { ExpenseModule } from "./expense-module.js";
+import { OllamaReceiptDraftExtractor } from "./ollama-receipt-draft-extractor.js";
 import { UnavailableRoutingProvider } from "./travel-preview.js";
 
 const databaseConfiguration = await databasePoolConfiguration();
@@ -201,6 +202,7 @@ const app = buildApp({
   dayBriefs: dayBriefRepository,
   shopping,
   expenses,
+  ...(ollamaConfiguration ? { receiptDraftExtractor: new OllamaReceiptDraftExtractor(ollamaConfiguration) } : {}),
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),

@@ -57,6 +57,38 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Neighborhood Market"].exists)
     }
 
+    func testParentSeesReceiptReviewBeforeSavingExpense() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPENSES"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_RECEIPT"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-household"].tap()
+        app.buttons["Expenses"].tap()
+        app.buttons["Add expense"].tap()
+        XCTAssertTrue(app.buttons["Choose receipt photo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "review every field before saving")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Save"].isEnabled)
+        app.buttons["Preview test receipt"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Verify the receipt total")).firstMatch
+            .waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add Milk to Pantry"].waitForExistence(timeout: 5))
+        let request = app.buttons["Request Milk for future Shopping"]
+        XCTAssertTrue(request.exists)
+        XCTAssertFalse(request.isEnabled)
+        app.buttons["Add Milk to Pantry"].tap()
+        XCTAssertEqual(app.buttons["Add Milk to Pantry"].value as? String, "Selected")
+        XCTAssertTrue(request.isEnabled)
+        request.tap()
+        XCTAssertEqual(request.value as? String, "Selected")
+        XCTAssertEqual(app.buttons["Add Milk to Pantry"].value as? String, "Selected")
+        XCTAssertTrue(app.buttons["Save"].isEnabled)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Test Market"].waitForExistence(timeout: 5))
+    }
+
     func testParentRecordsAndDeletesManualExpenseFromHousehold() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"

@@ -247,7 +247,15 @@ calendar days. No amount or category is inferred from Shopping history.
 
 Only date, Family and opaque coordination metadata are queryable. Financial
 amount, currency, category, merchant and notes are encrypted at rest under
-per-Family keys. Receipt photo extraction is not part of these routes.
+per-Family keys.
+
+- `POST /v1/household/receipt-drafts` (parent-only, bounded/rate-limited) with
+  `{ "ocrText": "20–10,000 characters" }` returns an **unverified**, transient
+  proposal `{ "merchant", "spentOn", "totalMinor", "currency", "category",
+  "lineItems": [{ "name", "amountMinor" }] }`. Unknown values are null.
+  It performs no writes, never accepts a photo upload, and returns `503` if
+  extraction is unavailable. Only a separate reviewed Expense or explicit
+  Pantry write persists anything. Receipt image OCR runs on-device.
 
 ## Family invitations
 
