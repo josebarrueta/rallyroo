@@ -1086,6 +1086,11 @@ private struct ExpenseEditorView: View {
                         Section("Optional Pantry candidates") {
                             Text("These were purchased, not necessarily needed again. Nothing is added automatically.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            if suggestedItems.allSatisfy({ $0.amountMinor != nil }) {
+                                let subtotal = suggestedItems.compactMap(\.amountMinor).reduce(0, +)
+                                Text("Suggested item subtotal: $\(subtotal / 100).\(String(format: "%02d", subtotal % 100)). Tax, tips and discounts may differ from the charged total.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             ForEach(suggestedItems.indices, id: \.self) { index in
                                 VStack(alignment: .leading) {
                                     Button {
@@ -1093,6 +1098,10 @@ private struct ExpenseEditorView: View {
                                     } label: {
                                         Label("Add \(suggestedItems[index].name) to Pantry",
                                             systemImage: suggestedItems[index].isSelected ? "checkmark.circle.fill" : "circle")
+                                    }
+                                    if let price = suggestedItems[index].amountMinor {
+                                        Text("Suggested item price: $\(price / 100).\(String(format: "%02d", price % 100))")
+                                            .font(.caption).foregroundStyle(.secondary)
                                     }
                                     if suggestedItems[index].isSelected {
                                         Button {
@@ -1247,6 +1256,7 @@ private struct ExpenseEditorView: View {
             }
             suggestedItems = suggestion.lineItems.map {
                 ReceiptItemChoice(id: UUID(), requestID: UUID(), name: $0.name,
+                    amountMinor: $0.amountMinor,
                     isSelected: false, requestNextTrip: false, isSaved: false, isRequested: false)
             }
             receiptNotice = suggestion.currency == "USD"
@@ -1262,6 +1272,7 @@ private struct ReceiptItemChoice: Identifiable {
     let id: UUID
     let requestID: UUID
     let name: String
+    let amountMinor: Int?
     var isSelected: Bool
     var requestNextTrip: Bool
     var isSaved: Bool
