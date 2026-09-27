@@ -1,6 +1,6 @@
 # Household Expenses
 
-Status: manual, parent-only Expenses implemented; receipt capture remains planned.
+Status: manual, parent-only Expenses implemented; receipt capture and reviewed suggestions implemented in a follow-up slice. Neither merge is proof of on-device acceptance or production promotion.
 
 An Expense is a Family spending ledger entry, distinct from Shopping Purchase
 records (item-level replenishment evidence). Expenses cover all categories,
@@ -30,11 +30,32 @@ Migration `032_household_expenses.sql` requires a recent verified production
 backup before promotion. iOS availability and backend rollout are separate
 acceptance steps; a merged PR does not mean either was shipped.
 
-## Receipt follow-up
+## Receipt review
+
+From Add Expense, a parent can select or take a receipt photo. iOS bounds the
+image to 5 MiB / 24 MP and runs Vision OCR on-device. **Only bounded OCR text**
+(up to 10,000 characters), not the image, goes to the authenticated, parent-only
+API and private Ollama deployment. The photo and OCR text are not saved by the
+Expense API; the draft remains transient in the editing sheet. Clear the sheet
+to discard it. The extraction endpoint is rate limited and unavailable when
+Ollama is not configured. Model output is schema-validated and errors never echo
+OCR or financial details. The photo picker/camera needs an app update; merging
+backend code alone cannot install UI on a device.
 
 A receipt photo is transaction evidence, **not** an Expense until a parent
-reviews and confirms the merchant, date, currency, total and category. Line
-items can only become Pantry or Shopping candidates after explicit selection.
-Receipt capture must bound image/OCR work, reconcile totals, protect Family
-financial data, avoid logging receipt contents and discard original photos by
-default. See issue #155.
+reviews and confirms the merchant, date, currency, total and category. AI may
+misread discounts, tax, tips, line prices or item names: the UI always asks for
+review, never claims that summed line items reconcile to the charged total.
+Missing or unclear USD amounts require manual entry; the user is warned when
+currency is unclear. Line item suggestions default unselected. A parent can
+explicitly select reusable items to add to the Pantry catalog when saving an
+Expense; duplicates may require manual resolution. A **second**, separately
+unchecked choice explicitly creates a Family item request for future Shopping.
+That request is evidence for the next parent-reviewed trip, not an automatic
+Buy-list entry. This does not create Stock observations or automatically assume
+purchased items are needed again. The same idempotent expense creation and
+parent-only Shopping APIs handle confirmation; retry IDs are stable and
+individually saved Pantry and request suggestions are not repeated.
+
+Receipt capture must be verified with real sample photos on-device before
+claiming acceptance. Never put receipts or OCR text in logs or support tickets.

@@ -1,4 +1,7 @@
 import SwiftUI
+import PhotosUI
+import Vision
+import ImageIO
 import FamilyCore
 
 struct SettingsView: View {
@@ -13,6 +16,7 @@ struct SettingsView: View {
     private let dayBriefStore: (any DayBriefStore)?
     private let shoppingStore: (any ShoppingStore)?
     private let expenseStore: (any ExpenseStore)?
+    private let receiptDraftStore: (any ReceiptDraftStore)?
     private let locationSearch: (any LocationSearch)?
     private let canManageFamilyPlaces: Bool
     private let canManageShoppingCatalog: Bool
@@ -28,6 +32,7 @@ struct SettingsView: View {
         dayBriefStore: (any DayBriefStore)? = nil,
         shoppingStore: (any ShoppingStore)? = nil,
         expenseStore: (any ExpenseStore)? = nil,
+        receiptDraftStore: (any ReceiptDraftStore)? = nil,
         locationSearch: (any LocationSearch)? = nil,
         canManageFamilyPlaces: Bool = false,
         canManageShoppingCatalog: Bool = false,
@@ -43,6 +48,7 @@ struct SettingsView: View {
         self.dayBriefStore = dayBriefStore
         self.shoppingStore = shoppingStore
         self.expenseStore = expenseStore
+        self.receiptDraftStore = receiptDraftStore
         self.locationSearch = locationSearch
         self.canManageFamilyPlaces = canManageFamilyPlaces
         self.canManageShoppingCatalog = canManageShoppingCatalog
@@ -87,6 +93,7 @@ struct SettingsView: View {
                             HouseholdView(
                                 shoppingStore: shoppingStore,
                                 expenseStore: expenseStore,
+                                receiptDraftStore: receiptDraftStore,
                                 canManageShoppingCatalog: canManageShoppingCatalog,
                                 currentMemberID: currentMemberID
                             )
@@ -877,6 +884,7 @@ private struct DayBriefSettingsView: View {
 struct HouseholdView: View {
     let shoppingStore: any ShoppingStore
     let expenseStore: (any ExpenseStore)?
+    let receiptDraftStore: (any ReceiptDraftStore)?
     let canManageShoppingCatalog: Bool
     let currentMemberID: String?
 
@@ -884,7 +892,10 @@ struct HouseholdView: View {
         List {
             if let expenseStore {
                 Section("Finances") {
-                    NavigationLink("Expenses") { ExpenseLedgerView(store: expenseStore) }
+                    NavigationLink("Expenses") {
+                        ExpenseLedgerView(store: expenseStore, receiptDraftStore: receiptDraftStore,
+                            shoppingStore: canManageShoppingCatalog ? shoppingStore : nil)
+                    }
                 }
             }
             Section("Shopping") {
@@ -903,6 +914,8 @@ struct HouseholdView: View {
 
 private struct ExpenseLedgerView: View {
     let store: any ExpenseStore
+    let receiptDraftStore: (any ReceiptDraftStore)?
+    let shoppingStore: (any ShoppingStore)?
     @State private var entries: [FamilyExpense] = []
     @State private var nextCursor: String?
     @State private var isAdding = false
@@ -953,10 +966,12 @@ private struct ExpenseLedgerView: View {
         .task { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $isAdding) {
-            ExpenseEditorView(store: store, expense: nil) { await load() }
+            ExpenseEditorView(store: store, expense: nil, receiptDraftStore: receiptDraftStore,
+                shoppingStore: shoppingStore, existingExpenses: entries) { await load() }
         }
         .sheet(item: $editing) { entry in
-            ExpenseEditorView(store: store, expense: entry) { await load() }
+            ExpenseEditorView(store: store, expense: entry, receiptDraftStore: receiptDraftStore,
+                shoppingStore: shoppingStore, existingExpenses: entries) { await load() }
         }
         .confirmationDialog("Delete this Expense?", isPresented: Binding(
             get: { deleting != nil }, set: { if !$0 { deleting = nil } }
@@ -992,6 +1007,9 @@ private struct ExpenseLedgerView: View {
 private struct ExpenseEditorView: View {
     let store: any ExpenseStore
     let expense: FamilyExpense?
+    let receiptDraftStore: (any ReceiptDraftStore)?
+    let shoppingStore: (any ShoppingStore)?
+    let existingExpenses: [FamilyExpense]
     let onSaved: () async -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var date: Date
@@ -1004,13 +1022,24 @@ private struct ExpenseEditorView: View {
     @State private var errorMessage: String?
     @State private var pendingID = UUID()
     @State private var lastAttempt: ExpenseDraft?
+    @State private var savedExpense: FamilyExpense?
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var isShowingCamera = false
+    @State private var isExtractingReceipt = false
+    @State private var suggestedItems: [ReceiptItemChoice] = []
+    @State private var receiptNotice: String?
 
     private static let categories = ["Groceries", "Dining", "Housing", "Utilities",
         "Transportation", "Health", "Education", "Activities", "Other"]
 
-    init(store: any ExpenseStore, expense: FamilyExpense?, onSaved: @escaping () async -> Void) {
+    init(store: any ExpenseStore, expense: FamilyExpense?, receiptDraftStore: (any ReceiptDraftStore)?,
+         shoppingStore: (any ShoppingStore)?, existingExpenses: [FamilyExpense],
+         onSaved: @escaping () async -> Void) {
         self.store = store
         self.expense = expense
+        self.receiptDraftStore = receiptDraftStore
+        self.shoppingStore = shoppingStore
+        self.existingExpenses = existingExpenses
         self.onSaved = onSaved
         _date = State(initialValue: expense.flatMap { Self.dateFormatter.date(from: $0.spentOn) } ?? Date())
         _amountText = State(initialValue: expense.map {
@@ -1026,6 +1055,59 @@ private struct ExpenseEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if expense == nil, receiptDraftStore != nil {
+                    Section("Receipt photo") {
+                        Text("Extract a proposal, then review every field before saving. The photo is not uploaded or stored.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        PhotosPicker("Choose receipt photo", selection: $selectedPhoto, matching: .images)
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            Button("Take receipt photo") { isShowingCamera = true }
+                        }
+                        #if DEBUG
+                        if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT"] == "1",
+                           let receiptDraftStore {
+                            Button("Preview test receipt") {
+                                Task {
+                                    if let draft = try? await receiptDraftStore.propose(
+                                        ocrText: "Test Market\nMilk 4.99\nTotal 12.34\nSeptember 26 2026") {
+                                        applyReceiptSuggestion(draft)
+                                    }
+                                }
+                            }
+                        }
+                        #endif
+                        if isExtractingReceipt { ProgressView("Reading receipt…") }
+                        if let receiptNotice {
+                            Text(receiptNotice).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if !suggestedItems.isEmpty {
+                        Section("Optional Pantry candidates") {
+                            Text("These were purchased, not necessarily needed again. Nothing is added automatically.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ForEach(suggestedItems.indices, id: \.self) { index in
+                                VStack(alignment: .leading) {
+                                    Button {
+                                        suggestedItems[index].isSelected.toggle()
+                                    } label: {
+                                        Label("Add \(suggestedItems[index].name) to Pantry",
+                                            systemImage: suggestedItems[index].isSelected ? "checkmark.circle.fill" : "circle")
+                                    }
+                                    if suggestedItems[index].isSelected {
+                                        Button {
+                                            suggestedItems[index].requestNextTrip.toggle()
+                                        } label: {
+                                            Label("Request \(suggestedItems[index].name) for future Shopping",
+                                                systemImage: suggestedItems[index].requestNextTrip ? "checkmark.circle.fill" : "circle")
+                                        }
+                                        .font(.caption)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 Section("Expense") {
                     TextField("Amount (USD)", text: $amountText)
                         .keyboardType(.decimalPad)
@@ -1039,9 +1121,35 @@ private struct ExpenseEditorView: View {
                     TextField("Merchant (optional)", text: $merchant)
                     TextField("Note (optional)", text: $note)
                 }
+                if let draft, existingExpenses.contains(where: {
+                    $0.id != expense?.id && $0.spentOn == draft.spentOn
+                        && $0.amountMinor == draft.amountMinor
+                        && $0.merchant?.localizedCaseInsensitiveCompare(draft.merchant ?? "") == .orderedSame
+                }) {
+                    Text("Possible duplicate Expense on this date. Check the existing entry before saving.")
+                        .foregroundStyle(.orange)
+                }
                 if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             }
             .navigationTitle(expense == nil ? "Add Expense" : "Edit Expense")
+            .onChange(of: selectedPhoto) { item in
+                guard let item else { return }
+                Task {
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self) else {
+                            throw ReceiptCaptureError.invalidImage
+                        }
+                        await scanReceipt(data)
+                    } catch { errorMessage = "The receipt photo could not be read." }
+                    selectedPhoto = nil
+                }
+            }
+            .sheet(isPresented: $isShowingCamera) {
+                ReceiptCameraPicker { data in
+                    isShowingCamera = false
+                    if let data { Task { await scanReceipt(data) } }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -1073,16 +1181,135 @@ private struct ExpenseEditorView: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            if let expense {
-                _ = try await store.update(id: expense.id, version: expense.version, draft: draft)
-            } else {
-                if lastAttempt != nil && lastAttempt != draft { pendingID = UUID() }
-                lastAttempt = draft
-                _ = try await store.create(id: pendingID, draft: draft)
+            if savedExpense.map({ $0.spentOn != draft.spentOn || $0.amountMinor != draft.amountMinor
+                || $0.currency != draft.currency || $0.category != draft.category
+                || $0.merchant != draft.merchant || $0.note != draft.note }) ?? true {
+                if let existing = savedExpense ?? expense {
+                    savedExpense = try await store.update(id: existing.id, version: existing.version, draft: draft)
+                } else {
+                    if lastAttempt != nil && lastAttempt != draft { pendingID = UUID() }
+                    lastAttempt = draft
+                    savedExpense = try await store.create(id: pendingID, draft: draft)
+                }
+            }
+            // Expense creation is independent of Pantry suggestions; a receipt
+            // alone never updates Stock or silently creates a future Buy list.
+            if let shoppingStore {
+                for index in suggestedItems.indices where suggestedItems[index].isSelected {
+                    let item = suggestedItems[index]
+                    if !item.isSaved {
+                        _ = try await shoppingStore.savePantryItem(id: item.id,
+                            draft: PantryItemDraft(name: item.name, category: nil, unit: nil,
+                                critical: false, expectedDurationDays: nil, minimumQuantity: nil,
+                                targetQuantity: nil, routineIDs: []))
+                        suggestedItems[index].isSaved = true
+                    }
+                    if item.requestNextTrip && !item.isRequested {
+                        _ = try await shoppingStore.requestItem(id: item.requestID,
+                            draft: ShoppingItemRequestDraft(itemID: item.id, quantity: nil, note: nil))
+                        suggestedItems[index].isRequested = true
+                    }
+                }
             }
             await onSaved()
             dismiss()
-        } catch { errorMessage = "The Expense could not be saved. Check the details and try again." }
+        } catch {
+            errorMessage = savedExpense == nil
+                ? "The Expense could not be saved. Review the entries and retry."
+                : "The Expense saved, but selected Pantry candidates did not. Resolve any duplicates and retry."
+        }
+    }
+
+    private func scanReceipt(_ data: Data) async {
+        guard let receiptDraftStore else { return }
+        isExtractingReceipt = true
+        defer { isExtractingReceipt = false }
+        do {
+            let text = try await ReceiptImageRecognizer.read(data)
+            let suggestion = try await receiptDraftStore.propose(ocrText: text)
+            applyReceiptSuggestion(suggestion)
+        } catch {
+            errorMessage = "Receipt reading is unavailable. Enter the Expense manually; no photo was saved."
+        }
+    }
+
+    private func applyReceiptSuggestion(_ suggestion: ReceiptExpenseDraft) {
+            merchant = suggestion.merchant ?? ""
+            if let total = suggestion.totalMinor, total > 0 {
+                amountText = "\(total / 100).\(String(format: "%02d", total % 100))"
+            }
+            if let spentOn = suggestion.spentOn, let parsed = Self.dateFormatter.date(from: spentOn) {
+                date = parsed
+            }
+            if let value = suggestion.category {
+                if Self.categories.contains(value) { category = value }
+                else { category = "Custom"; customCategory = value }
+            }
+            suggestedItems = suggestion.lineItems.map {
+                ReceiptItemChoice(id: UUID(), requestID: UUID(), name: $0.name,
+                    isSelected: false, requestNextTrip: false, isSaved: false, isRequested: false)
+            }
+            receiptNotice = suggestion.currency == "USD"
+                ? "AI proposed these details. Verify the receipt total, tax, date, category and every selected item before saving."
+                : "Currency was unclear. Verify that the receipt uses USD and enter the correct total before saving."
+            if suggestion.currency != "USD" { amountText = "" }
+            lastAttempt = nil
+            pendingID = UUID()
+    }
+}
+
+private struct ReceiptItemChoice: Identifiable {
+    let id: UUID
+    let requestID: UUID
+    let name: String
+    var isSelected: Bool
+    var requestNextTrip: Bool
+    var isSaved: Bool
+    var isRequested: Bool
+}
+
+private enum ReceiptCaptureError: Error { case invalidImage }
+
+private enum ReceiptImageRecognizer {
+    static func read(_ data: Data) async throws -> String {
+        guard data.count <= 5 * 1024 * 1024,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 8_000, height <= 8_000,
+              width * height <= 24_000_000 else { throw ReceiptCaptureError.invalidImage }
+        return try await Task.detached(priority: .userInitiated) {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+            try VNImageRequestHandler(data: data).perform([request])
+            let text = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: "\n")
+            guard text.count >= 20 && text.count <= 10_000 else { throw ReceiptCaptureError.invalidImage }
+            return text
+        }.value
+    }
+}
+
+private struct ReceiptCameraPicker: UIViewControllerRepresentable {
+    let onSelection: (Data?) -> Void
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(onSelection: onSelection) }
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onSelection: (Data?) -> Void
+        init(onSelection: @escaping (Data?) -> Void) { self.onSelection = onSelection }
+        func imagePickerController(_ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            onSelection((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.65))
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { onSelection(nil) }
     }
 }
 

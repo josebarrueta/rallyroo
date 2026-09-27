@@ -11,6 +11,7 @@ import type { CalendarSourceModule } from "./calendar-source-module.js";
 import { validateCalendarFeedURL } from "./calendar-source-adapters.js";
 import type { DayBriefPersistence } from "./day-brief.js";
 import { ExpenseError, type ExpenseModule } from "./expense-module.js";
+import { ReceiptDraftProviderError, receiptDraftSchema, type ReceiptDraftExtractor } from "./receipt-draft-extractor.js";
 import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
 import type { CaltrainLiveRefreshOperations } from "./caltrain-live-refresh.js";
 import { EventMutationError, EventMutationModule } from "./event-mutation.js";
@@ -268,6 +269,7 @@ const dayBriefDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value
 });
 
 const shoppingResourceIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
+const receiptRequestSchema = z.object({ ocrText: z.string().trim().min(20).max(10_000) }).strict();
 const expenseDraftSchema = z.object({
   spentOn: dayBriefDateSchema,
   amountMinor: z.number().int().min(1).max(1_000_000_000_000),
@@ -369,6 +371,7 @@ interface Dependencies {
   dayBriefs?: DayBriefPersistence;
   shopping?: ShoppingModule;
   expenses?: ExpenseModule;
+  receiptDraftExtractor?: ReceiptDraftExtractor;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -392,6 +395,7 @@ export function buildApp({
   dayBriefs,
   shopping,
   expenses,
+  receiptDraftExtractor,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -614,6 +618,24 @@ export function buildApp({
     if (!parsed.success) return reply.code(400).send({ error: "invalid_day_brief_date" });
     const brief = await dayBriefs.dayBrief(account.familyID, account.memberID, parsed.data);
     return brief ?? reply.code(404).send({ error: "day_brief_not_found" });
+  });
+
+  app.post("/v1/household/receipt-drafts", {
+    config: { rateLimit: { max: 5, timeWindow: 60_000 } },
+  }, async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    const parsed = receiptRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_receipt_text" });
+    if (!receiptDraftExtractor) return reply.code(503).send({ error: "receipt_extraction_unavailable" });
+    try {
+      // This is a transient, untrusted draft. Only the existing Expense/Shopping
+      // endpoints can persist parent-reviewed data; never log OCR or raw errors.
+      return receiptDraftSchema.parse(await receiptDraftExtractor.extract(parsed.data.ocrText));
+    } catch (error) {
+      return reply.code(error instanceof ReceiptDraftProviderError && error.reason === "unavailable" ? 503 : 502)
+        .send({ error: "receipt_extraction_failed" });
+    }
   });
 
   app.get("/v1/household/expenses", async (request, reply) => {

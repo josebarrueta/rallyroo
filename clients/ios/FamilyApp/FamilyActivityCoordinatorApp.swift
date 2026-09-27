@@ -305,6 +305,14 @@ private actor ShoppingUITestStore: ShoppingStore {
     }
 }
 
+private actor ReceiptUITestStore: ReceiptDraftStore {
+    func propose(ocrText: String) async throws -> ReceiptExpenseDraft {
+        ReceiptExpenseDraft(merchant: "Test Market", spentOn: "2026-09-26", totalMinor: 1234,
+            currency: "USD", category: "Groceries",
+            lineItems: [ReceiptLineSuggestion(name: "Milk", amountMinor: 499)])
+    }
+}
+
 private actor ExpenseUITestStore: ExpenseStore {
     private var entries: [FamilyExpense] = []
 
@@ -370,6 +378,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let dayBriefStore: (any DayBriefStore)?
     private let shoppingStore: (any ShoppingStore)?
     private let expenseStore: (any ExpenseStore)?
+    private let receiptDraftStore: (any ReceiptDraftStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -432,6 +441,8 @@ struct FamilyActivityCoordinatorApp: App {
             expenseStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_EXPENSES"] == "1"
                 ? ExpenseUITestStore()
                 : nil
+            receiptDraftStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT"] == "1"
+                ? ReceiptUITestStore() : nil
             inboxStore = usesDayBriefUITest
                 ? DayBriefUITestInboxStore()
                 : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
@@ -439,6 +450,7 @@ struct FamilyActivityCoordinatorApp: App {
             dayBriefStore = nil
             shoppingStore = nil
             expenseStore = nil
+            receiptDraftStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
             #endif
         case .remote:
@@ -507,6 +519,7 @@ struct FamilyActivityCoordinatorApp: App {
                 transport: authenticatedTransport
             )
             expenseStore = RemoteExpenseStore(baseURL: baseURL, transport: authenticatedTransport)
+            receiptDraftStore = RemoteReceiptDraftStore(baseURL: baseURL, transport: authenticatedTransport)
 
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
@@ -538,6 +551,7 @@ struct FamilyActivityCoordinatorApp: App {
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         shoppingStore: shoppingStore,
                         expenseStore: session.role == .parent ? expenseStore : nil,
+                        receiptDraftStore: session.role == .parent ? receiptDraftStore : nil,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
                         occurrenceLifecycleStore: occurrenceLifecycleStore,
@@ -583,6 +597,7 @@ struct FamilyActivityCoordinatorApp: App {
                         dayBriefStore: session.role == .parent ? dayBriefStore : nil,
                         shoppingStore: shoppingStore,
                         expenseStore: session.role == .parent ? expenseStore : nil,
+                        receiptDraftStore: session.role == .parent ? receiptDraftStore : nil,
                         canManageShoppingCatalog: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount

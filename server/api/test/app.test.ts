@@ -534,6 +534,34 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("treats receipt OCR as a bounded parent-only proposal and never persists it", async () => {
+    const expenses = new ExpenseModule(new InMemoryExpenseRepository());
+    const receiptDraftExtractor = { extract: async (_text: string) => ({
+      merchant: "Example Market", spentOn: "2026-09-26", totalMinor: 1499,
+      currency: "USD" as const, category: "Groceries", lineItems: [{ name: "Milk", amountMinor: 499 }],
+    }) };
+    const app = buildApp({ identityProvider, repository: repository(), expenses, receiptDraftExtractor });
+    const url = "/v1/household/receipt-drafts";
+    const payload = { ocrText: "Example Market September 26 2026 Total $14.99" };
+    expect((await app.inject({ method: "POST", url, payload })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url, headers: { authorization: "Bearer kid-token" }, payload })).statusCode).toBe(403);
+    expect((await app.inject({ method: "POST", url, headers: { authorization: "Bearer parent-token" }, payload: { ocrText: "short" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url, headers: { authorization: "Bearer parent-token" }, payload: { ocrText: "x".repeat(10_001) } })).statusCode).toBe(400);
+    const proposed = await app.inject({ method: "POST", url, headers: { authorization: "Bearer parent-token" }, payload });
+    expect(proposed.statusCode).toBe(200);
+    expect(proposed.json()).toMatchObject({ totalMinor: 1499 });
+    expect((await app.inject({ method: "GET", url: "/v1/household/expenses", headers: { authorization: "Bearer parent-token" } })).json().expenses).toEqual([]);
+    await app.close();
+
+    const invalid = buildApp({ identityProvider, repository: repository(),
+      receiptDraftExtractor: { extract: async () => { throw new Error("secret receipt text"); } } });
+    const failed = await invalid.inject({ method: "POST", url,
+      headers: { authorization: "Bearer parent-token" }, payload });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.body).not.toContain("secret receipt text");
+    await invalid.close();
+  });
+
   it("keeps categorized financial Expenses parent-only and validates money before writing", async () => {
     const expenses = new ExpenseModule(new InMemoryExpenseRepository());
     const app = buildApp({ identityProvider, repository: repository(), expenses });
