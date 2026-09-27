@@ -343,6 +343,7 @@ interface Dependencies {
   commuterLiveRefresh?: CaltrainLiveRefreshOperations;
   scheduleDraftExtractor?: ScheduleDraftExtractor;
   readinessCheck?: () => Promise<void>;
+  applicationVersion?: string;
   rateLimits?: Partial<Record<"sessions" | "invitations" | "locations" | "scheduleDrafts" | "travelPreviews", RouteRateLimit>>;
   metrics?: RallyrooMetrics;
   notificationCenter?: NotificationCenterModule;
@@ -364,6 +365,7 @@ export function buildApp({
   commuterLiveRefresh,
   scheduleDraftExtractor = new UnavailableScheduleDraftExtractor(),
   readinessCheck = async () => {},
+  applicationVersion = "development",
   rateLimits = {},
   metrics = new RallyrooMetrics(),
   notificationCenter,
@@ -457,7 +459,7 @@ export function buildApp({
     }
   });
 
-  app.get("/health", { config: { rateLimit: false } }, async () => ({ status: "ok" }));
+  app.get("/health", { config: { rateLimit: false } }, async () => ({ status: "ok", version: applicationVersion }));
 
   app.get("/ready", { config: { rateLimit: false } }, async (_request, reply) => {
     try {

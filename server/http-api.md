@@ -266,7 +266,11 @@ Family-member fields are `id`, `name`, `role` (`parent` or `kid`), optional
 
 ## Operations
 
-- `GET /health` is a dependency-free process liveness check.
+- `GET /health` is a dependency-free, unauthenticated process liveness check.
+  It returns `{ "status": "ok", "version": "<running API image tag>" }`. In a
+  published release the version is the Helm-selected image tag (for example,
+  `0.11.2`); direct development runs use `development`. The tag alone does not
+  prove the exact source commit or image digest.
 - `GET /ready` verifies PostgreSQL and returns `503` when unavailable. Redis is
   deliberately excluded because cache failures fall through to source providers.
 - `GET /metrics` exports Prometheus metrics. Deployments can require

@@ -45,6 +45,9 @@ grep -q '"helm.sh/hook": pre-upgrade' "$rendered"
 grep -q 'name: rallyroo-migrate' "$rendered"
 grep -q 'args: \["pre"\]' "$rendered"
 grep -q 'name: APPLICATION_VERSION' "$rendered"
+# The running API, not only its migration init container, reports the image tag.
+grep -A8 '^        - name: api$' "$rendered" |
+  grep -q 'name: APPLICATION_VERSION'
 grep -q '"helm.sh/hook": post-upgrade' "$rendered"
 grep -q 'name: rallyroo-migrate-post' "$rendered"
 grep -q 'name: wait-for-api-rollout' "$rendered"

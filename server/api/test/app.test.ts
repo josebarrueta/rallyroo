@@ -550,6 +550,18 @@ describe("Rallyroo API", () => {
     await unavailable.close();
   });
 
+  it("reports the running API release version without requiring a session", async () => {
+    const app = buildApp({
+      identityProvider,
+      repository: repository(),
+      applicationVersion: "0.11.2",
+    });
+    const response = await app.inject({ method: "GET", url: "/health" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: "ok", version: "0.11.2" });
+    await app.close();
+  });
+
   it("rate limits session exchange without throttling health checks", async () => {
     const app = buildApp({
       identityProvider,

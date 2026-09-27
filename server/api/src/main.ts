@@ -177,6 +177,7 @@ const commuterLiveRefresh = vehiclePositionRefresher
   )
   : undefined;
 const app = buildApp({
+  applicationVersion: process.env.APPLICATION_VERSION?.trim() || "development",
   identityProvider,
   repository,
   commuter,

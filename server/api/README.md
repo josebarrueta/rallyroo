@@ -168,7 +168,9 @@ The API writes structured JSON request logs with request IDs, status codes, and
 response duration. Authorization and cookie headers are redacted. Configure
 verbosity with `LOG_LEVEL` (default `info`).
 
-- `/health` reports process liveness without checking dependencies.
+- `/health` reports process liveness and the running API image tag as `version`
+  without checking dependencies. The chart passes its selected image tag as
+  `APPLICATION_VERSION` to the API; local direct runs report `development`.
 - `/ready` checks PostgreSQL; Redis remains an optional accelerator.
 - `/metrics` exports Prometheus request, cache, and external-provider metrics.
 
