@@ -115,7 +115,7 @@ A Pantry item can have:
 - Expected duration after purchase.
 - Optional minimum and target quantities.
 
-Family Members may request items. Parents control the Pantry catalog, replenishment policies, and final Shopping trip plan. A draft trip with no remaining catalog candidates can open the Pantry item editor directly; creating an item there selects its routine and proposes **Check at home** until the parent saves and finalizes the trip. A preset only fills an item name for parent review; it never claims Stock or automatically purchases anything.
+Family Members may request items. Parents control the Pantry catalog, replenishment policies, and final Shopping trip plan. In a draft trip, **Add Pantry item** opens the item editor directly; **Add existing Pantry item** separately shows candidates that are not yet in the plan. Creating an item selects its routine and proposes **Check at home** until the parent saves and finalizes the trip. A preset only fills an item name for parent review; it never claims Stock or automatically purchases anything.
 
 Stock tracking defaults to three low-friction observations:
 

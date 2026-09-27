@@ -1697,6 +1697,7 @@ private struct ShoppingTripView: View {
     @State private var isConfirmingFinalization = false
     @State private var isRecordingOutcomes = false
     @State private var isAddingItem = false
+    @State private var isChoosingExistingItem = false
     @State private var errorMessage: String?
 
     init(store: any ShoppingStore, trip: ShoppingTripPlan, catalog: ShoppingCatalog,
@@ -1765,17 +1766,9 @@ private struct ShoppingTripView: View {
                 }
                 if canManage && trip.status == .draft {
                     Section {
-                        if availableItems.isEmpty {
-                            Button("Add Pantry item") { isAddingItem = true }
-                        } else {
-                            Menu("Add Pantry item") {
-                                ForEach(availableItems) { item in
-                                    Button(item.name) {
-                                        decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
-                                    }
-                                }
-                                Button("Create new Pantry item") { isAddingItem = true }
-                            }
+                        Button("Add Pantry item") { isAddingItem = true }
+                        if !availableItems.isEmpty {
+                            Button("Add existing Pantry item") { isChoosingExistingItem = true }
                         }
                         Button("Save Review") { saveReview() }
                             .disabled(!hasChanges || isSaving)
@@ -1788,6 +1781,20 @@ private struct ShoppingTripView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $isChoosingExistingItem) {
+                NavigationStack {
+                    List(availableItems) { item in
+                        Button(item.name) {
+                            decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
+                            isChoosingExistingItem = false
+                        }
+                    }
+                    .navigationTitle("Add existing Pantry item")
+                    .toolbar {
+                        Button("Cancel") { isChoosingExistingItem = false }
+                    }
                 }
             }
             .sheet(isPresented: $isAddingItem) {
