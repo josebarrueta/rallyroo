@@ -493,6 +493,7 @@ struct FamilyActivityCoordinatorApp: App {
                         reminderStore: reminderStore,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
+                        shoppingStore: shoppingStore,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
                         occurrenceLifecycleStore: occurrenceLifecycleStore,

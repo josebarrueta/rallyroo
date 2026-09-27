@@ -105,7 +105,7 @@ A question attached to a schedule draft when required information is ambiguous. 
 _Avoid_: Model guess, default date
 
 **Protected Family detail**:
-Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, Shopping routine, Pantry item, Shopping list, Purchase, or notification. Scheduling instants, alert triggers, statuses, cadences, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
+Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, Shopping routine, Pantry item, Shopping list, Purchase, Expense, receipt, or notification. Scheduling instants, alert triggers, statuses, cadences, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
 _Avoid_: Schedule metadata, trigger, ciphertext
 
 **Commuter installation**:
@@ -170,7 +170,15 @@ _Avoid_: Pantry item, Family item request, AI recommendation
 
 **Purchase record**:
 Timestamped evidence that a Pantry item was purchased at a store, with optional quantity and price. It informs replenishment without proving how much remains.
-_Avoid_: Stock observation, receipt image
+_Avoid_: Stock observation, receipt image, Expense
+
+**Expense**:
+A parent-managed record of money spent by the Family, classified by category regardless of whether it was spent on groceries. It may refer to a Shopping trip or a receipt but is not the same as item-level Purchase evidence.
+_Avoid_: Purchase record, Stock observation, shopping list entry
+
+**Receipt**:
+Evidence of a transaction that may support an Expense and suggest Pantry items for human review. It does not prove current Stock or automatically create a Shopping list.
+_Avoid_: Expense, Purchase record, authoritative inventory
 
 ## Live Train Positions
 

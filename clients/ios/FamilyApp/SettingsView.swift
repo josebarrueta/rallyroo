@@ -80,14 +80,14 @@ struct SettingsView: View {
 
                 if let shoppingStore {
                     Section("Household") {
-                        NavigationLink("Shopping and Pantry") {
-                            ShoppingCatalogView(
-                                store: shoppingStore,
-                                canManage: canManageShoppingCatalog,
+                        NavigationLink("Household") {
+                            HouseholdView(
+                                shoppingStore: shoppingStore,
+                                canManageShoppingCatalog: canManageShoppingCatalog,
                                 currentMemberID: currentMemberID
                             )
                         }
-                        Text("Manage store routines and the Family Pantry catalog.")
+                        Text("Shopping and Pantry for your Family.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -867,6 +867,27 @@ private struct DayBriefSettingsView: View {
 
     private static func time(hour: Int, minute: Int) -> Date {
         Calendar.current.date(bySettingHour: hour, minute: minute, second: 0, of: .now) ?? .now
+    }
+}
+
+struct HouseholdView: View {
+    let shoppingStore: any ShoppingStore
+    let canManageShoppingCatalog: Bool
+    let currentMemberID: String?
+
+    var body: some View {
+        List {
+            Section("Shopping") {
+                NavigationLink("Shopping and Pantry") {
+                    ShoppingCatalogView(
+                        store: shoppingStore,
+                        canManage: canManageShoppingCatalog,
+                        currentMemberID: currentMemberID
+                    )
+                }
+            }
+        }
+        .navigationTitle("Household")
     }
 }
 

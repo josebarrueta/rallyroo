@@ -10,6 +10,7 @@ struct WeeklyScheduleView: View {
     private let memberStore: any FamilyMemberStore
     private let currentMemberID: String?
     private let calendarSourceStore: (any CalendarSourceStore)?
+    private let shoppingStore: (any ShoppingStore)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
@@ -23,7 +24,6 @@ struct WeeklyScheduleView: View {
     @State private var captureImageData: Data?
     @Binding private var incomingSharedCaptureImageData: Data?
     @State private var scheduleUpdateNotice: String?
-    @State private var connectedCalendarCount: Int?
     @State private var commuterState: CommuterState?
     @State private var travelEvent: FamilyEvent?
      // Occurrence lifecycle confirmation states
@@ -70,6 +70,7 @@ struct WeeklyScheduleView: View {
         reminderStore: (any ReminderStore)? = nil,
         currentMemberID: String? = nil,
         calendarSourceStore: (any CalendarSourceStore)? = nil,
+        shoppingStore: (any ShoppingStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
         occurrenceLifecycleStore: (any OccurrenceLifecycleStore)? = nil,
@@ -82,6 +83,7 @@ struct WeeklyScheduleView: View {
         self.memberStore = memberStore
         self.currentMemberID = currentMemberID
         self.calendarSourceStore = calendarSourceStore
+        self.shoppingStore = shoppingStore
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
         self.occurrenceLifecycleStore = occurrenceLifecycleStore
@@ -106,7 +108,7 @@ struct WeeklyScheduleView: View {
                  )
                  .padding(.bottom, 4)
 
-                if (allowsEditing && calendarSourceStore != nil) || commuterStore != nil {
+                if shoppingStore != nil || commuterStore != nil {
                     scheduleConnections
                          .padding(.horizontal)
                          .padding(.bottom, 8)
@@ -317,22 +319,22 @@ struct WeeklyScheduleView: View {
 
     private var scheduleConnections: some View {
         HStack(spacing: 10) {
-            if let calendarSourceStore {
+            if let shoppingStore {
                 NavigationLink {
-                    CalendarSourcesView(
-                        store: calendarSourceStore,
-                        memberStore: memberStore,
+                    HouseholdView(
+                        shoppingStore: shoppingStore,
+                        canManageShoppingCatalog: allowsEditing,
                         currentMemberID: currentMemberID
-                     )
-                 } label: {
+                    )
+                } label: {
                     connectionCard(
-                        title: "Calendars",
-                        subtitle: calendarSubtitle,
-                        systemImage: "calendar.badge.plus"
-                     )
-                 }
-                 .accessibilityIdentifier("schedule-connected-calendars")
-             }
+                        title: "Household",
+                        subtitle: "Shopping and Pantry",
+                        systemImage: "house"
+                    )
+                }
+                .accessibilityIdentifier("schedule-household")
+            }
             if let commuterStore {
                 NavigationLink {
                     CommuterSettingsView(
@@ -373,12 +375,6 @@ struct WeeklyScheduleView: View {
          .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
      }
 
-    private var calendarSubtitle: String {
-        guard let connectedCalendarCount else { return "Manage sources" }
-        if connectedCalendarCount == 0 { return "Connect a calendar" }
-        return "\(connectedCalendarCount) connected"
-     }
-
     private var commuterSubtitle: String {
         commuterState?.scheduleCardSubtitle ?? "Manage alerts"
      }
@@ -390,9 +386,6 @@ struct WeeklyScheduleView: View {
     }
 
     private func loadConnectionSummaries() async {
-        if let calendarSourceStore {
-            connectedCalendarCount = (try? await calendarSourceStore.sources().count) ?? nil
-          }
         if let commuterStore {
             commuterState = try? await commuterStore.state()
           }
