@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import FamilyCore
 
 struct AddEventSheet: View {
@@ -44,6 +45,7 @@ struct AddEventSheet: View {
     @State private var locationSearchMessage: String?
     @State private var mutationID = UUID()
     @State private var deletionID = UUID()
+    @FocusState private var isLocationFieldFocused: Bool
 
     init(
         event: FamilyEvent? = nil,
@@ -225,16 +227,19 @@ struct AddEventSheet: View {
                 }
 
                 Section("Details") {
-                    TextField("Location", text: $location)
-                    if let locationDirectionsURL {
-                        Link(destination: locationDirectionsURL) {
-                            Label("Open directions in Maps", systemImage: "map")
-                        }
-                        .accessibilityIdentifier("open-event-directions")
+                    TextField("Location or latitude, longitude", text: $location)
+                        .focused($isLocationFieldFocused)
+                    if !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        DirectionsMenu(
+                            origin: nil,
+                            destination: location,
+                            accessibilityIdentifier: "open-event-directions"
+                        )
                     }
                     ForEach(locationSuggestions.filter { $0.address != location }) { suggestion in
                         Button {
                             location = suggestion.address
+                            isLocationFieldFocused = false
                             locationSuggestions = []
                             locationSearchMessage = nil
                         } label: {
@@ -312,9 +317,11 @@ struct AddEventSheet: View {
                 guard endMode == .endDate, newEndTime > startTime else { return }
                 durationMinutes = max(1, Int(newEndTime.timeIntervalSince(startTime) / 60))
             }
-            .task(id: location) {
+            .task(id: LocationSearchRequest(query: location, isFocused: isLocationFieldFocused)) {
                 let query = location.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard query.count >= 2 else {
+                guard isLocationFieldFocused,
+                      query.count >= 2,
+                      !MapsDirectionsURL.isCoordinate(query) else {
                     locationSuggestions = []
                     locationSearchMessage = nil
                     return
@@ -537,10 +544,6 @@ struct AddEventSheet: View {
         )
     }
 
-    private var locationDirectionsURL: URL? {
-        MapsDirectionsURL.make(origin: nil, destination: location)
-    }
-
     private func planTravel() {
         guard savedEventCanPlanTravel else {
             dismissAfterAlert = false
@@ -623,6 +626,61 @@ struct AddEventSheet: View {
     private func optionalText(_ value: String) -> String? {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
+    }
+}
+
+private struct LocationSearchRequest: Equatable {
+    let query: String
+    let isFocused: Bool
+}
+
+struct DirectionsMenu: View {
+    @Environment(\.openURL) private var openURL
+    @State private var isChoosingProvider = false
+    let origin: String?
+    let destination: String
+    let accessibilityIdentifier: String
+
+    var body: some View {
+        Button {
+            isChoosingProvider = true
+        } label: {
+            Label("Open directions", systemImage: "map")
+        }
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .confirmationDialog(
+            "Open directions",
+            isPresented: $isChoosingProvider,
+            titleVisibility: .visible
+        ) {
+            if let appleURL = MapsDirectionsURL.make(
+                origin: origin,
+                destination: destination,
+                provider: .apple
+            ) {
+                Button("Apple Maps") {
+                    openURL(appleURL)
+                }
+            }
+            if let googleURL = MapsDirectionsURL.make(
+                origin: origin,
+                destination: destination,
+                provider: .google
+            ) {
+                Button("Google Maps") {
+                    let appURL = MapsDirectionsURL.makeGoogleApp(
+                        origin: origin,
+                        destination: destination
+                    )
+                    if let appURL, UIApplication.shared.canOpenURL(appURL) {
+                        openURL(appURL)
+                    } else {
+                        openURL(googleURL)
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }
 

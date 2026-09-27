@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { NotificationCenterModule } from "./notification-center.js";
 import type { EventTravelPlan, SavedPlace, TravelPlanningRepository } from "./travel-planning.js";
-import { previewDrivingTravel, type RoutingProvider, type TravelWaypoint } from "./travel-preview.js";
+import {
+  previewDrivingTravel,
+  travelWaypointFromLocation,
+  type RoutingProvider,
+  type TravelWaypoint,
+} from "./travel-preview.js";
 
 const horizonMilliseconds = 24 * 60 * 60 * 1_000;
 const dueLookaheadMilliseconds = 90 * 1_000;
@@ -64,7 +69,7 @@ export class LeaveAlertDispatcher {
             const origin = resolveOrigin(plan, places);
             const preview = await previewDrivingTravel({
               origin,
-              destination: { address: event.location },
+              destination: travelWaypointFromLocation(event.location),
               arrivalTime: occurrenceArrival,
               preparationMinutes: plan.preparationMinutes,
               trafficPreference: plan.trafficPreference,

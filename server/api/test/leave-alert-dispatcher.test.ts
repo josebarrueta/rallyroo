@@ -3,9 +3,13 @@ import { InMemoryNotificationCenterRepository } from "../src/in-memory-notificat
 import { InMemoryTravelPlanningRepository } from "../src/in-memory-travel-planning-repository.js";
 import { LeaveAlertDispatcher } from "../src/leave-alert-dispatcher.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
-import type { RoutingProvider } from "../src/travel-preview.js";
+import type { RouteEstimateRequest, RoutingProvider } from "../src/travel-preview.js";
 
-function repository(overrides: { leaveAlertEnabled?: boolean; recipientMemberIDs?: string[] } = {}) {
+function repository(overrides: {
+  leaveAlertEnabled?: boolean;
+  recipientMemberIDs?: string[];
+  location?: string;
+} = {}) {
   return new InMemoryTravelPlanningRepository({
     members: [
       { id: "parent", familyID: "family", name: "Parent", role: "parent", colorTag: "blue" },
@@ -20,7 +24,7 @@ function repository(overrides: { leaveAlertEnabled?: boolean; recipientMemberIDs
       startTime: "2026-08-01T10:30:00Z",
       endTime: "2026-08-01T11:30:00Z",
       arrivalTime: "2026-08-01T10:00:00Z",
-      location: "Field",
+      location: overrides.location ?? "Field",
       driver: null,
       driverMemberID: "parent",
       source: "manual",
@@ -42,13 +46,20 @@ function repository(overrides: { leaveAlertEnabled?: boolean; recipientMemberIDs
   });
 }
 
-function provider(durationSeconds = 30 * 60): { provider: RoutingProvider; calls: () => number } {
+function provider(durationSeconds = 30 * 60): {
+  provider: RoutingProvider;
+  calls: () => number;
+  requests: RouteEstimateRequest[];
+} {
   let calls = 0;
+  const requests: RouteEstimateRequest[] = [];
   return {
     calls: () => calls,
+    requests,
     provider: {
-      async estimate() {
+      async estimate(request) {
         calls += 1;
+        requests.push(request);
         return { durationSeconds, distanceMeters: 10_000 };
       },
     },
@@ -80,6 +91,23 @@ describe("LeaveAlertDispatcher", () => {
     expect(await notifications.list({
       identitySubject: "kid-subject", familyID: "family", memberID: "kid", role: "kid",
     })).toHaveLength(1);
+  });
+
+  it("routes leave alerts to structured Event coordinates", async () => {
+    const routing = provider();
+    const dispatcher = new LeaveAlertDispatcher(
+      repository({ location: "37.4219999, -122.0840575" }),
+      routing.provider,
+      new NotificationCenterModule(new InMemoryNotificationCenterRepository()),
+    );
+
+    await dispatcher.dispatchDue(new Date("2026-08-01T09:14:00Z"));
+
+    expect(routing.requests[0]!.destination).toEqual({
+      kind: "coordinates",
+      latitude: 37.4219999,
+      longitude: -122.0840575,
+    });
   });
 
   it("still records a leave-now alert after the arrival target but before Event start", async () => {

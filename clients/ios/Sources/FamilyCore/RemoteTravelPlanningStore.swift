@@ -17,30 +17,89 @@ public enum TrafficPreference: String, Codable, Sendable {
     case pessimistic
 }
 
-/// Exactly one of `placeID` or `address`, matching the server's strict union
-/// `{ "placeID": "..." } | { "address": "..." }`.
+public struct GeographicCoordinate: Codable, Equatable, Sendable {
+    public let latitude: Double
+    public let longitude: Double
+
+    private enum CodingKeys: String, CodingKey {
+        case latitude, longitude
+    }
+
+    public init(latitude: Double, longitude: Double) throws {
+        guard latitude.isFinite, (-90...90).contains(latitude),
+              longitude.isFinite, (-180...180).contains(longitude) else {
+            throw TravelPlanningError.invalidWaypoint
+        }
+        self.latitude = latitude
+        self.longitude = longitude
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let latitude = try container.decode(Double.self, forKey: .latitude)
+        let longitude = try container.decode(Double.self, forKey: .longitude)
+        do {
+            try self.init(latitude: latitude, longitude: longitude)
+        } catch {
+            throw DecodingError.dataCorruptedError(
+                forKey: .latitude,
+                in: container,
+                debugDescription: "Coordinates are outside the supported range"
+            )
+        }
+    }
+
+    public static func parse(_ value: String) -> GeographicCoordinate? {
+        guard let values = numericPair(in: value) else { return nil }
+        return try? GeographicCoordinate(latitude: values.0, longitude: values.1)
+    }
+
+    static func isNumericPair(_ value: String) -> Bool {
+        numericPair(in: value) != nil
+    }
+
+    private static func numericPair(in value: String) -> (Double, Double)? {
+        let components = value
+            .replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+        guard components.count == 2,
+              let latitude = Double(components[0]),
+              let longitude = Double(components[1]) else {
+            return nil
+        }
+        return (latitude, longitude)
+    }
+}
+
+/// Exactly one of `placeID`, `address`, or `coordinates`, matching the server's strict union.
 public struct TravelWaypoint: Codable, Equatable, Sendable {
     public let placeID: String?
     public let address: String?
+    public let coordinates: GeographicCoordinate?
 
     private enum CodingKeys: String, CodingKey {
-        case placeID, address
+        case placeID, address, coordinates
      }
 
-    public init(placeID: String?, address: String?) throws {
+    public init(
+        placeID: String?,
+        address: String?,
+        coordinates: GeographicCoordinate? = nil
+    ) throws {
         let trimmedPlaceID = placeID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedAddress = address?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasPlaceID = !(trimmedPlaceID?.isEmpty ?? true)
         let hasAddress = !(trimmedAddress?.isEmpty ?? true)
-        guard hasPlaceID != hasAddress else {
+        guard [hasPlaceID, hasAddress, coordinates != nil].filter({ $0 }).count == 1 else {
             throw TravelPlanningError.invalidWaypoint
          }
         guard (trimmedPlaceID?.count ?? 0) <= 500,
               (trimmedAddress?.count ?? 0) <= 500 else {
             throw TravelPlanningError.invalidWaypoint
          }
-        self.placeID = trimmedPlaceID
-        self.address = trimmedAddress
+        self.placeID = hasPlaceID ? trimmedPlaceID : nil
+        self.address = hasAddress ? trimmedAddress : nil
+        self.coordinates = coordinates
      }
 
     public init(placeID: String) throws {
@@ -51,11 +110,26 @@ public struct TravelWaypoint: Codable, Equatable, Sendable {
         try self.init(placeID: nil, address: address)
      }
 
+    public init(coordinates: GeographicCoordinate) throws {
+        try self.init(placeID: nil, address: nil, coordinates: coordinates)
+    }
+
+    public init(location: String) throws {
+        if let coordinates = GeographicCoordinate.parse(location) {
+            try self.init(coordinates: coordinates)
+        } else if GeographicCoordinate.isNumericPair(location) {
+            throw TravelPlanningError.invalidWaypoint
+        } else {
+            try self.init(address: location)
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let placeID = try container.decodeIfPresent(String.self, forKey: .placeID)
         let address = try container.decodeIfPresent(String.self, forKey: .address)
-        try self.init(placeID: placeID, address: address)
+        let coordinates = try container.decodeIfPresent(GeographicCoordinate.self, forKey: .coordinates)
+        try self.init(placeID: placeID, address: address, coordinates: coordinates)
      }
 
     public func encode(to encoder: Encoder) throws {
@@ -64,6 +138,8 @@ public struct TravelWaypoint: Codable, Equatable, Sendable {
             try container.encode(placeID, forKey: .placeID)
          } else if let address {
             try container.encode(address, forKey: .address)
+         } else if let coordinates {
+            try container.encode(coordinates, forKey: .coordinates)
          }
      }
 }

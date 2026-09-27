@@ -56,6 +56,30 @@ describe("GoogleRoutingProvider", () => {
     });
   });
 
+  it("sends coordinates as a native Google latLng waypoint", async () => {
+    let body: Record<string, unknown> = {};
+    const provider = new GoogleRoutingProvider(apiKey, {
+      fetch: async (_url, init) => {
+        body = JSON.parse(String(init.body));
+        return routeResponse();
+      },
+    });
+
+    await provider.estimate(request({
+      destination: {
+        kind: "coordinates",
+        latitude: 37.4219999,
+        longitude: -122.0840575,
+      },
+    }));
+
+    expect(body.destination).toEqual({
+      location: {
+        latLng: { latitude: 37.4219999, longitude: -122.0840575 },
+      },
+    });
+  });
+
   it("supports place IDs and pessimistic traffic", async () => {
     let body: Record<string, unknown> = {};
     const provider = new GoogleRoutingProvider(apiKey, {

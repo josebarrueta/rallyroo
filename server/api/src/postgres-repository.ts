@@ -3864,12 +3864,26 @@ function parseTravelWaypoint(value: unknown): TravelWaypoint {
   const waypoint = value as Record<string, unknown>;
   const placeID = typeof waypoint.placeID === "string" ? waypoint.placeID.trim() : "";
   const address = typeof waypoint.address === "string" ? waypoint.address.trim() : "";
-  if ((placeID.length > 0) === (address.length > 0)
-    || placeID.length > 500
-    || address.length > 500) {
+  const coordinates = waypoint.coordinates;
+  const hasCoordinates = coordinates !== undefined;
+  const populatedValues = Number(placeID.length > 0) + Number(address.length > 0) + Number(hasCoordinates);
+  if (populatedValues !== 1 || placeID.length > 500 || address.length > 500) {
     throw new Error("Invalid protected travel details");
   }
-  return placeID ? { placeID } : { address };
+  if (placeID) return { placeID };
+  if (address) return { address };
+  if (!coordinates || typeof coordinates !== "object") {
+    throw new Error("Invalid protected travel details");
+  }
+  const coordinate = coordinates as Record<string, unknown>;
+  const latitude = coordinate.latitude;
+  const longitude = coordinate.longitude;
+  if (typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || typeof longitude !== "number" || !Number.isFinite(longitude)
+    || longitude < -180 || longitude > 180) {
+    throw new Error("Invalid protected travel details");
+  }
+  return { coordinates: { latitude, longitude } };
 }
 
 function parseTravelPlanOrigin(value: unknown): TravelPlanOrigin {

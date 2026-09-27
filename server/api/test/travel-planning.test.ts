@@ -15,6 +15,7 @@ import {
   type SavedPlaceDraft,
 } from "../src/travel-planning.js";
 import {
+  type RouteEstimateRequest,
   type RoutingProvider,
   type TravelPreview,
 } from "../src/travel-preview.js";
@@ -486,6 +487,28 @@ describe("TravelPlanningModule revisions and previews", () => {
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.updatedAt).toBe(moment.toISOString());
    });
+
+  it("previews an Event coordinate destination as a structured routing waypoint", async () => {
+    const requests: RouteEstimateRequest[] = [];
+    const provider: RoutingProvider = {
+      async estimate(request) {
+        requests.push(request);
+        return { durationSeconds: 1_800, distanceMeters: 9_000 };
+      },
+    };
+    const { module } = make({
+      events: [event({ location: "37.4219999, -122.0840575" })],
+      provider,
+    });
+
+    await module.preview(parent(), "event-1", oneTimeDraft());
+
+    expect(requests[0]!.destination).toEqual({
+      kind: "coordinates",
+      latitude: 37.4219999,
+      longitude: -122.0840575,
+    });
+  });
 
   it("previews both one-time origins and saved-place origins", async () => {
     const { module, calls } = make();

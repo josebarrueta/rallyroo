@@ -14,6 +14,7 @@ import { InMemoryNotificationCenterRepository } from "../src/in-memory-notificat
 import { NotificationCenterModule } from "../src/notification-center.js";
 import { InMemoryTravelPlanningRepository } from "../src/in-memory-travel-planning-repository.js";
 import { TravelPlanningModule } from "../src/travel-planning.js";
+import type { RouteEstimateRequest, RoutingProvider } from "../src/travel-preview.js";
 import type {
   DayBriefPersistence,
   DayBriefPreferences,
@@ -3057,7 +3058,10 @@ describe("Rallyroo API", () => {
 describe("Travel planning HTTP API", () => {
   const eventID = "abcdefab-cdef-4abc-8def-abcdefabcdef";
 
-  function appWithTravelPlanning() {
+  function appWithTravelPlanning(
+    eventLocation = "Soccer field",
+    routingProvider?: RoutingProvider,
+  ) {
     const core = repository();
     const travelRepository = new InMemoryTravelPlanningRepository({
       members: [
@@ -3073,14 +3077,14 @@ describe("Travel planning HTTP API", () => {
         startTime: "2026-08-23T18:30:00Z",
         endTime: "2026-08-23T19:30:00Z",
         arrivalTime: "2026-08-23T18:00:00Z",
-        location: "Soccer field",
+        location: eventLocation,
         driver: null,
         driverMemberID: "parent-1",
         source: "manual",
         status: "confirmed",
       }],
     });
-    const travelPlanning = new TravelPlanningModule(travelRepository, {
+    const travelPlanning = new TravelPlanningModule(travelRepository, routingProvider ?? {
       async estimate() {
         return { durationSeconds: 1_800, distanceMeters: 12_000 };
       },
@@ -3132,6 +3136,39 @@ describe("Travel planning HTTP API", () => {
         durationSeconds: 1_800,
         provider: "google_routes",
         attribution: "Google Maps",
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("previews an Event coordinate destination through the HTTP API as native coordinates", async () => {
+    const requests: RouteEstimateRequest[] = [];
+    const app = appWithTravelPlanning("37.4219999, -122.0840575", {
+      async estimate(request) {
+        requests.push(request);
+        return { durationSeconds: 1_800, distanceMeters: 12_000 };
+      },
+    });
+    try {
+      const preview = await app.inject({
+        method: "POST",
+        url: `/v1/events/${eventID}/travel-plan/preview`,
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          origin: { kind: "one_time", waypoint: { address: "Home" } },
+          preparationMinutes: 15,
+          trafficPreference: "best_guess",
+          recipientMemberIDs: ["kid-1", "parent-1"],
+          leaveAlertEnabled: true,
+        },
+      });
+
+      expect(preview.statusCode).toBe(200);
+      expect(requests[0]!.destination).toEqual({
+        kind: "coordinates",
+        latitude: 37.4219999,
+        longitude: -122.0840575,
       });
     } finally {
       await app.close();
@@ -3284,6 +3321,54 @@ describe("Travel planning HTTP API", () => {
         url: `/v1/saved-places/${uppercasePlaceID}`,
         headers: { authorization: "Bearer parent-token" },
       })).statusCode).toBe(204);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("accepts valid coordinate waypoints and rejects out-of-range coordinates", async () => {
+    const app = appWithTravelPlanning();
+    try {
+      const valid = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "personal",
+          label: "Trailhead",
+          waypoint: {
+            coordinates: { latitude: 37.4219999, longitude: -122.0840575 },
+          },
+        },
+      });
+      expect(valid.statusCode).toBe(201);
+      expect(valid.json().waypoint).toEqual({
+        coordinates: { latitude: 37.4219999, longitude: -122.0840575 },
+      });
+
+      const invalid = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "personal",
+          label: "Invalid",
+          waypoint: { coordinates: { latitude: 91, longitude: -122 } },
+        },
+      });
+      expect(invalid.statusCode).toBe(400);
+
+      const malformed = await app.inject({
+        method: "POST",
+        url: "/v1/saved-places",
+        headers: { authorization: "Bearer parent-token" },
+        payload: {
+          visibility: "personal",
+          label: "Malformed",
+          waypoint: { coordinates: { latitude: 37 } },
+        },
+      });
+      expect(malformed.statusCode).toBe(400);
     } finally {
       await app.close();
     }

@@ -1,14 +1,21 @@
 export type TrafficPreference = "best_guess" | "pessimistic";
 export type TravelProviderAttribution = "google_routes";
 
+export interface GeographicCoordinates {
+  latitude: number;
+  longitude: number;
+}
+
 export interface TravelWaypoint {
   placeID?: string;
   address?: string;
+  coordinates?: GeographicCoordinates;
 }
 
 export type RouteWaypoint =
   | { kind: "place_id"; placeID: string }
-  | { kind: "address"; address: string };
+  | { kind: "address"; address: string }
+  | { kind: "coordinates"; latitude: number; longitude: number };
 
 export interface TravelPreviewInput {
   origin: TravelWaypoint;
@@ -82,6 +89,21 @@ export class TravelPreviewError extends Error {
   }
 }
 
+export function travelWaypointFromLocation(value: string): TravelWaypoint {
+  const location = value.trim();
+  const parts = location.replaceAll(",", " ").split(/\s+/).filter(Boolean);
+  const numberPattern = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+  if (parts.length === 2 && parts.every((part) => numberPattern.test(part))) {
+    return {
+      coordinates: {
+        latitude: Number(parts[0]),
+        longitude: Number(parts[1]),
+      },
+    };
+  }
+  return { address: location };
+}
+
 export async function previewDrivingTravel(
   input: TravelPreviewInput,
   provider: RoutingProvider,
@@ -140,14 +162,22 @@ export async function previewDrivingTravel(
 function resolveWaypoint(waypoint: TravelWaypoint): RouteWaypoint {
   const placeID = typeof waypoint.placeID === "string" ? waypoint.placeID.trim() : "";
   const address = typeof waypoint.address === "string" ? waypoint.address.trim() : "";
-  if ((placeID.length > 0) === (address.length > 0)
-    || placeID.length > 500
-    || address.length > 500) {
+  const hasCoordinates = waypoint.coordinates !== undefined;
+  const populatedValues = Number(placeID.length > 0) + Number(address.length > 0) + Number(hasCoordinates);
+  if (populatedValues !== 1 || placeID.length > 500 || address.length > 500) {
     throw new TravelPreviewError("invalid_waypoint");
   }
-  return placeID.length > 0
-    ? { kind: "place_id", placeID }
-    : { kind: "address", address };
+  if (placeID) return { kind: "place_id", placeID };
+  if (address) return { kind: "address", address };
+
+  const latitude = waypoint.coordinates?.latitude;
+  const longitude = waypoint.coordinates?.longitude;
+  if (typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || typeof longitude !== "number" || !Number.isFinite(longitude)
+    || longitude < -180 || longitude > 180) {
+    throw new TravelPreviewError("invalid_waypoint");
+  }
+  return { kind: "coordinates", latitude, longitude };
 }
 
 function validDateMilliseconds(

@@ -85,12 +85,11 @@ struct TravelPlanSheet: View {
             }
             if let location = model.event.location {
                 LabeledContent("Destination", value: location)
-                if let directionsURL = model.directionsURL {
-                    Link(destination: directionsURL) {
-                        Label("Open directions in Maps", systemImage: "map")
-                    }
-                    .accessibilityIdentifier("open-travel-directions")
-                }
+                DirectionsMenu(
+                    origin: model.directionsOrigin,
+                    destination: location,
+                    accessibilityIdentifier: "open-travel-directions"
+                )
             }
         }
     }
@@ -201,17 +200,14 @@ final class TravelPlanViewModel: ObservableObject {
     @Published var isPreviewing = false
     @Published var didFinish = false
 
-    var directionsURL: URL? {
-        guard let destination = event.location else { return nil }
-        let origin: String?
+    var directionsOrigin: String? {
         if originChoice == Self.oneTimeChoice {
-            origin = originAddress
-        } else if let id = UUID(uuidString: originChoice) {
-            origin = savedPlaces.first(where: { $0.id == id })?.waypoint.address
-        } else {
-            origin = nil
+            return originAddress
         }
-        return MapsDirectionsURL.make(origin: origin, destination: destination)
+        if let id = UUID(uuidString: originChoice) {
+            return savedPlaces.first(where: { $0.id == id })?.waypoint.address
+        }
+        return nil
     }
 
     private let store: any TravelPlanningStore
@@ -420,6 +416,6 @@ final class TravelPlanViewModel: ObservableObject {
 
     private func oneTimeWaypoint() throws -> TravelWaypoint {
         if let selectedOriginPlaceID { return try TravelWaypoint(placeID: selectedOriginPlaceID) }
-        return try TravelWaypoint(address: originAddress)
+        return try TravelWaypoint(location: originAddress)
     }
 }
