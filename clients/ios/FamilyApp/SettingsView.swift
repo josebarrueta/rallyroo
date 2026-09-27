@@ -1417,28 +1417,31 @@ private struct ShoppingCatalogView: View {
                 }
             }
 
-            Section("Pantry catalog") {
-                if catalog.items.isEmpty {
-                    Text("No Pantry items yet")
-                        .foregroundStyle(.secondary)
+            if catalog.items.isEmpty {
+                Section("Pantry catalog") {
+                    Text("No Pantry items yet").foregroundStyle(.secondary)
                 }
-                ForEach(catalog.items) { item in
-                    VStack(alignment: .leading, spacing: 10) {
-                        itemRow(item)
-                        HStack {
-                            Button("Request") { requestingItem = item }
-                                .accessibilityLabel("Request \(item.name)")
-                            Button("Update stock") { observingItem = item }
-                                .accessibilityLabel("Update \(item.name) stock")
-                            if canManage {
-                                Button("Edit") { editingItem = item }
+            }
+            ForEach(PantryItemPresets.orderedCategories(in: catalog.items.map(\.category)), id: \.self) { category in
+                Section("Pantry · \(category)") {
+                    ForEach(catalog.items.filter { PantryItemPresets.displayCategory($0.category) == category }) { item in
+                        VStack(alignment: .leading, spacing: 10) {
+                            itemRow(item)
+                            HStack {
+                                Button("Request") { requestingItem = item }
+                                    .accessibilityLabel("Request \(item.name)")
+                                Button("Update stock") { observingItem = item }
+                                    .accessibilityLabel("Update \(item.name) stock")
+                                if canManage {
+                                    Button("Edit") { editingItem = item }
+                                }
                             }
+                            .buttonStyle(.borderless)
                         }
-                        .buttonStyle(.borderless)
-                    }
-                    .swipeActions {
-                        if canManage {
-                            Button("Delete", role: .destructive) { deleteItem(item) }
+                        .swipeActions {
+                            if canManage {
+                                Button("Delete", role: .destructive) { deleteItem(item) }
+                            }
                         }
                     }
                 }
@@ -1679,7 +1682,7 @@ private struct ShoppingCatalogView: View {
 private struct ShoppingTripView: View {
     @Environment(\.dismiss) private var dismiss
     let store: any ShoppingStore
-    let catalog: ShoppingCatalog
+    @State private var catalog: ShoppingCatalog
     let canManage: Bool
     let onSaved: @MainActor () async -> Void
     @State private var trip: ShoppingTripPlan
@@ -1687,12 +1690,14 @@ private struct ShoppingTripView: View {
     @State private var isSaving = false
     @State private var isConfirmingFinalization = false
     @State private var isRecordingOutcomes = false
+    @State private var isAddingItem = false
+    @State private var isChoosingExistingItem = false
     @State private var errorMessage: String?
 
     init(store: any ShoppingStore, trip: ShoppingTripPlan, catalog: ShoppingCatalog,
          canManage: Bool, onSaved: @escaping @MainActor () async -> Void) {
         self.store = store
-        self.catalog = catalog
+        _catalog = State(initialValue: catalog)
         self.canManage = canManage
         self.onSaved = onSaved
         _trip = State(initialValue: trip)
@@ -1755,14 +1760,9 @@ private struct ShoppingTripView: View {
                 }
                 if canManage && trip.status == .draft {
                     Section {
-                        Menu("Add Pantry item") {
-                            ForEach(catalog.items.filter { item in
-                                !decisions.contains(where: { $0.itemID == item.id })
-                            }) { item in
-                                Button(item.name) {
-                                    decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
-                                }
-                            }
+                        Button("Add Pantry item") { isAddingItem = true }
+                        if !availableItems.isEmpty {
+                            Button("Add existing Pantry item") { isChoosingExistingItem = true }
                         }
                         Button("Save Review") { saveReview() }
                             .disabled(!hasChanges || isSaving)
@@ -1776,6 +1776,31 @@ private struct ShoppingTripView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $isChoosingExistingItem) {
+                NavigationStack {
+                    List(availableItems) { item in
+                        Button(item.name) {
+                            decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
+                            isChoosingExistingItem = false
+                        }
+                    }
+                    .navigationTitle("Add existing Pantry item")
+                    .toolbar {
+                        Button("Cancel") { isChoosingExistingItem = false }
+                    }
+                }
+            }
+            .sheet(isPresented: $isAddingItem) {
+                PantryItemEditor(store: store, item: nil, routines: catalog.routines,
+                                 initialRoutineID: trip.routineID, onCreated: { item in
+                    if !catalog.items.contains(where: { $0.id == item.id }) {
+                        catalog = ShoppingCatalog(routines: catalog.routines, items: catalog.items + [item])
+                    }
+                    if !decisions.contains(where: { $0.itemID == item.id }) {
+                        decisions.append(ShoppingTripDecisionInput(itemID: item.id, decision: .checkAtHome))
+                    }
+                }) { await onSaved() }
             }
             .sheet(isPresented: $isRecordingOutcomes) {
                 ShoppingTripOutcomeEditor(store: store, trip: trip, catalog: catalog) { completed in
@@ -1795,6 +1820,10 @@ private struct ShoppingTripView: View {
                 Text(errorMessage ?? "Please try again.")
             }
         }
+    }
+
+    private var availableItems: [PantryItem] {
+        catalog.items.filter { item in !decisions.contains(where: { $0.itemID == item.id }) }
     }
 
     private var hasChanges: Bool {
@@ -2044,6 +2073,7 @@ private struct PantryItemEditor: View {
     let item: PantryItem?
     let routines: [ShoppingRoutine]
     let onSaved: @MainActor () async -> Void
+    let onCreated: (@MainActor (PantryItem) -> Void)?
     @State private var name: String
     @State private var category: String
     @State private var unit: String
@@ -2052,6 +2082,9 @@ private struct PantryItemEditor: View {
     @State private var minimumQuantity: String
     @State private var targetQuantity: String
     @State private var selectedRoutineIDs: Set<UUID>
+    @State private var pendingID = UUID()
+    @State private var lastAttempt: PantryItemDraft?
+    @State private var isChoosingPreset = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -2059,20 +2092,23 @@ private struct PantryItemEditor: View {
         store: any ShoppingStore,
         item: PantryItem?,
         routines: [ShoppingRoutine],
+        initialRoutineID: UUID? = nil,
+        onCreated: (@MainActor (PantryItem) -> Void)? = nil,
         onSaved: @escaping @MainActor () async -> Void
     ) {
         self.store = store
         self.item = item
         self.routines = routines
         self.onSaved = onSaved
+        self.onCreated = onCreated
         _name = State(initialValue: item?.name ?? "")
-        _category = State(initialValue: item?.category ?? "")
+        _category = State(initialValue: item?.category ?? (item == nil ? "Food" : ""))
         _unit = State(initialValue: item?.unit ?? "")
         _critical = State(initialValue: item?.critical ?? false)
         _expectedDurationDays = State(initialValue: item?.expectedDurationDays.map(String.init) ?? "")
         _minimumQuantity = State(initialValue: item?.minimumQuantity.map(Self.quantityText) ?? "")
         _targetQuantity = State(initialValue: item?.targetQuantity.map(Self.quantityText) ?? "")
-        _selectedRoutineIDs = State(initialValue: Set(item?.routineIDs ?? []))
+        _selectedRoutineIDs = State(initialValue: Set(item?.routineIDs ?? initialRoutineID.map { [$0] } ?? []))
     }
 
     var body: some View {
@@ -2080,7 +2116,14 @@ private struct PantryItemEditor: View {
             Form {
                 Section("Item") {
                     TextField("Name", text: $name)
-                    TextField("Category (optional)", text: $category)
+                    Picker("Category", selection: $category) {
+                        ForEach(PantryItemPresets.categories, id: \.self) { Text($0).tag($0) }
+                        if !PantryItemPresets.categories.contains(category) {
+                            Text(category.isEmpty ? "Uncategorized" : category).tag(category) // Preserve legacy categories.
+                        }
+                    }
+                    Button("Choose a common item") { isChoosingPreset = true }
+                        .disabled(PantryItemPresets.names(for: category).isEmpty)
                     TextField("Unit (optional)", text: $unit)
                     Toggle("Critical item", isOn: $critical)
                 }
@@ -2109,6 +2152,18 @@ private struct PantryItemEditor: View {
                 }
             }
             .navigationTitle(item == nil ? "New Pantry Item" : "Edit Pantry Item")
+            .sheet(isPresented: $isChoosingPreset) {
+                NavigationStack {
+                    List(PantryItemPresets.names(for: category), id: \.self) { suggestion in
+                        Button(suggestion) {
+                            name = suggestion
+                            isChoosingPreset = false
+                        }
+                    }
+                    .navigationTitle("Common items")
+                    .toolbar { Button("Cancel") { isChoosingPreset = false } }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -2143,19 +2198,20 @@ private struct PantryItemEditor: View {
         Task {
             defer { isSaving = false }
             do {
-                _ = try await store.savePantryItem(
-                    id: item?.id ?? UUID(),
-                    draft: PantryItemDraft(
-                        name: name,
-                        category: optional(category),
-                        unit: optional(unit),
-                        critical: critical,
-                        expectedDurationDays: Int(expectedDurationDays),
-                        minimumQuantity: Double(minimumQuantity),
-                        targetQuantity: Double(targetQuantity),
-                        routineIDs: selectedRoutineIDs.sorted { $0.uuidString < $1.uuidString }
-                    )
+                let draft = PantryItemDraft(
+                    name: name,
+                    category: optional(category),
+                    unit: optional(unit),
+                    critical: critical,
+                    expectedDurationDays: Int(expectedDurationDays),
+                    minimumQuantity: Double(minimumQuantity),
+                    targetQuantity: Double(targetQuantity),
+                    routineIDs: selectedRoutineIDs.sorted { $0.uuidString < $1.uuidString }
                 )
+                if item == nil, let lastAttempt, lastAttempt != draft { pendingID = UUID() }
+                lastAttempt = draft
+                let saved = try await store.savePantryItem(id: item?.id ?? pendingID, draft: draft)
+                onCreated?(saved)
                 await onSaved()
                 dismiss()
             } catch {

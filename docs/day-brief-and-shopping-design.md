@@ -106,13 +106,16 @@ A Family can define multiple store-specific Shopping routines. For example, Cost
 
 A Pantry item can have:
 
-- Name and optional category/unit.
+- Name and optional category/unit. The iOS catalog groups existing items by category
+  and offers optional, generic item-name presets under Food, Cleaning supplies,
+  Personal care, Household supplies, and Other. Custom and uncategorized legacy
+  values remain readable and unchanged until a parent edits them.
 - Relevant Shopping routines.
 - Criticality.
 - Expected duration after purchase.
 - Optional minimum and target quantities.
 
-Family Members may request items. Parents control the Pantry catalog, replenishment policies, and final Shopping trip plan.
+Family Members may request items. Parents control the Pantry catalog, replenishment policies, and final Shopping trip plan. In a draft trip, **Add Pantry item** opens the item editor directly; **Add existing Pantry item** separately shows candidates that are not yet in the plan. Creating an item selects its routine and proposes **Check at home** until the parent saves and finalizes the trip. A preset only fills an item name for parent review; it never claims Stock or automatically purchases anything.
 
 Stock tracking defaults to three low-friction observations:
 
