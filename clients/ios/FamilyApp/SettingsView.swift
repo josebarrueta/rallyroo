@@ -2090,6 +2090,7 @@ private struct PantryItemEditor: View {
     @State private var selectedRoutineIDs: Set<UUID>
     @State private var pendingID = UUID()
     @State private var lastAttempt: PantryItemDraft?
+    @State private var isChoosingPreset = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -2127,12 +2128,8 @@ private struct PantryItemEditor: View {
                             Text(category.isEmpty ? "Uncategorized" : category).tag(category) // Preserve legacy categories.
                         }
                     }
-                    Menu("Choose a common item") {
-                        ForEach(PantryItemPresets.names(for: category), id: \.self) { suggestion in
-                            Button(suggestion) { name = suggestion }
-                        }
-                    }
-                    .disabled(PantryItemPresets.names(for: category).isEmpty)
+                    Button("Choose a common item") { isChoosingPreset = true }
+                        .disabled(PantryItemPresets.names(for: category).isEmpty)
                     TextField("Unit (optional)", text: $unit)
                     Toggle("Critical item", isOn: $critical)
                 }
@@ -2161,6 +2158,18 @@ private struct PantryItemEditor: View {
                 }
             }
             .navigationTitle(item == nil ? "New Pantry Item" : "Edit Pantry Item")
+            .sheet(isPresented: $isChoosingPreset) {
+                NavigationStack {
+                    List(PantryItemPresets.names(for: category), id: \.self) { suggestion in
+                        Button(suggestion) {
+                            name = suggestion
+                            isChoosingPreset = false
+                        }
+                    }
+                    .navigationTitle("Common items")
+                    .toolbar { Button("Cancel") { isChoosingPreset = false } }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
