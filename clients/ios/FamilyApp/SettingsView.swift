@@ -1099,6 +1099,7 @@ private struct ExpenseEditorView: View {
                                         Label("Add \(suggestedItems[index].name) to Pantry",
                                             systemImage: suggestedItems[index].isSelected ? "checkmark.circle.fill" : "circle")
                                     }
+                                    .accessibilityValue(suggestedItems[index].isSelected ? "Selected" : "Not selected")
                                     if let price = suggestedItems[index].amountMinor {
                                         Text("Suggested item price: $\(price / 100).\(String(format: "%02d", price % 100))")
                                             .font(.caption).foregroundStyle(.secondary)
@@ -1110,6 +1111,7 @@ private struct ExpenseEditorView: View {
                                             Label("Request \(suggestedItems[index].name) for future Shopping",
                                                 systemImage: suggestedItems[index].requestNextTrip ? "checkmark.circle.fill" : "circle")
                                         }
+                                        .accessibilityValue(suggestedItems[index].requestNextTrip ? "Selected" : "Not selected")
                                         .font(.caption)
                                     }
                                 }
