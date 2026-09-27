@@ -450,7 +450,7 @@ private struct SavedPlaceEditor: View {
     private var waypoint: TravelWaypoint? {
         if let selectedWaypoint { return selectedWaypoint }
         let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : try? TravelWaypoint(address: value)
+        return value.isEmpty ? nil : try? TravelWaypoint(location: value)
     }
 
     private func search() async {

@@ -118,6 +118,30 @@ final class RemoteTravelPlanningStoreTests: XCTestCase {
         XCTAssertNil(requests.first?.headers["Content-Type"])
     }
 
+    func testRejectsOutOfRangeCoordinatesFromTheAPI() async throws {
+        let response = Data("""
+        [{
+          "id":"00000000-0000-4000-8000-000000000401",
+          "ownerMemberID":"parent-1",
+          "visibility":"personal",
+          "label":"Invalid",
+          "waypoint":{"coordinates":{"latitude":91,"longitude":-122}},
+          "createdAt":"2026-08-01T10:00:00.000Z",
+          "updatedAt":"2026-08-01T10:05:30.250Z"
+        }]
+        """.utf8)
+        let store = makeStore(RecordingHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: response)
+        ]))
+
+        do {
+            _ = try await store.savedPlaces()
+            XCTFail("Expected invalid API coordinates to be rejected")
+        } catch {
+            XCTAssertTrue(error is DecodingError)
+        }
+    }
+
     func testCreatesASavedPlacePostingTheRequestBody() async throws {
         let transport = RecordingHTTPTransport(responses: [
             HTTPResponse(statusCode: 201, body: validSavedPlaceJSON())
@@ -141,6 +165,47 @@ final class RemoteTravelPlanningStoreTests: XCTestCase {
         XCTAssertNil(json["id"])
         XCTAssertNil(json["ownerMemberID"])
         XCTAssertNil(json["createdAt"])
+    }
+
+    func testCreatesAndDecodesASavedPlaceWithCoordinates() async throws {
+        let response = Data("""
+        {
+          "id":"00000000-0000-4000-8000-000000000401",
+          "ownerMemberID":"parent-1",
+          "visibility":"personal",
+          "label":"Trailhead",
+          "waypoint":{"coordinates":{"latitude":37.4219999,"longitude":-122.0840575}},
+          "createdAt":"2026-08-01T10:00:00.000Z",
+          "updatedAt":"2026-08-01T10:05:30.250Z"
+        }
+        """.utf8)
+        let transport = RecordingHTTPTransport(responses: [
+            HTTPResponse(statusCode: 201, body: response)
+        ])
+        let store = makeStore(transport)
+        let coordinates = try GeographicCoordinate(
+            latitude: 37.4219999,
+            longitude: -122.0840575
+        )
+
+        let place = try await store.createSavedPlace(SavedPlaceDraft(
+            visibility: .personal,
+            label: "Trailhead",
+            waypoint: try TravelWaypoint(coordinates: coordinates)
+        ))
+
+        XCTAssertEqual(place.waypoint.coordinates, coordinates)
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        let json = try bodyObject(request)
+        let waypoint = try XCTUnwrap(json["waypoint"] as? [String: Any])
+        let encoded = try XCTUnwrap(waypoint["coordinates"] as? [String: Double])
+        XCTAssertEqual(encoded, [
+            "latitude": 37.4219999,
+            "longitude": -122.0840575,
+        ])
+        XCTAssertNil(waypoint["address"])
+        XCTAssertNil(waypoint["placeID"])
     }
 
     func testUpdatesASavedPlaceAtIDScopedPath() async throws {
@@ -376,6 +441,14 @@ final class RemoteTravelPlanningStoreTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? TravelPlanningError, .invalidWaypoint)
         }
+        let coordinates = try GeographicCoordinate(latitude: 37, longitude: -122)
+        XCTAssertNil(try? TravelWaypoint(
+            placeID: "a",
+            address: nil,
+            coordinates: coordinates
+        ))
+        XCTAssertNil(try? GeographicCoordinate(latitude: 91, longitude: -122))
+        XCTAssertNil(try? GeographicCoordinate(latitude: 37, longitude: -181))
         // A blank waypoint is also impossible.
         XCTAssertNil(try? TravelWaypoint(placeID: "    ", address: nil))
 

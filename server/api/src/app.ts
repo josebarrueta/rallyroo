@@ -146,6 +146,12 @@ const canonicalUUIDSchema = z.string().uuid().transform((value) => value.toLower
 const travelWaypointSchema = z.union([
   z.object({ placeID: z.string().trim().min(1).max(500) }).strict(),
   z.object({ address: z.string().trim().min(1).max(500) }).strict(),
+  z.object({
+    coordinates: z.object({
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+    }).strict(),
+  }).strict(),
 ]);
 const travelPlanOriginSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("saved_place"), savedPlaceID: canonicalUUIDSchema }).strict(),

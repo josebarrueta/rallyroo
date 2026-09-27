@@ -253,7 +253,14 @@ family. The client never chooses a family ID or overrides the invitation's role.
 
 The reference backend uses Google Places with a US region restriction. The iOS
 client only knows the provider-neutral `{ "id": "…", "address": "…" }` contract.
-Manual location entry remains available when search is not configured.
+Manual location entry remains available when search is not configured. Event locations may
+also be entered as a latitude/longitude pair such as `37.4219999, -122.0840575`; Travel
+planning and Leave alerts send a valid pair to the routing provider as native coordinates.
+
+Travel waypoints use exactly one of `{ "placeID": "…" }`, `{ "address": "…" }`, or
+`{ "coordinates": { "latitude": 37.4219999, "longitude": -122.0840575 } }`. Latitude
+must be between -90 and 90 and longitude between -180 and 180. Malformed, out-of-range,
+or mixed waypoint representations are rejected.
 
 ## Family members
 

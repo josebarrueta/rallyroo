@@ -253,8 +253,8 @@ final class FamilyAppUITests: XCTestCase {
 
         app.textFields["Title"].tap()
         app.textFields["Title"].typeText("Location fallback test")
-        app.textFields["Location"].tap()
-        app.textFields["Location"].typeText("123 Main Street")
+        app.textFields["Location or latitude, longitude"].tap()
+        app.textFields["Location or latitude, longitude"].typeText("123 Main Street")
 
         let fallbackMessage = app.staticTexts[
             "Location suggestions are unavailable. You can still enter a location manually."
@@ -264,6 +264,37 @@ final class FamilyAppUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["Location fallback test"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["123 Main Street"].exists)
+    }
+
+    func testSavedCoordinateLocationWaitsForEditingAndOffersBothMapProviders() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["Add"].tap()
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Coordinate destination")
+        let locationField = app.textFields["Location or latitude, longitude"]
+        locationField.tap()
+        locationField.typeText("37.4219999, -122.0840575")
+        XCTAssertFalse(app.staticTexts[
+            "Location suggestions are unavailable. You can still enter a location manually."
+        ].waitForExistence(timeout: 1))
+        app.buttons["Save"].tap()
+
+        let event = app.staticTexts["Coordinate destination"]
+        XCTAssertTrue(event.waitForExistence(timeout: 5))
+        event.tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts[
+            "Location suggestions are unavailable. You can still enter a location manually."
+        ].waitForExistence(timeout: 1))
+
+        app.buttons["open-event-directions"].tap()
+        let appleMaps = app.descendants(matching: .any)["Apple Maps"]
+        let googleMaps = app.descendants(matching: .any)["Google Maps"]
+        XCTAssertTrue(appleMaps.waitForExistence(timeout: 2))
+        XCTAssertTrue(googleMaps.exists)
     }
 
     func testParentCanCreateAndCompleteAReminderWithoutAnEndTime() {

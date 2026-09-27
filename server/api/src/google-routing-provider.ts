@@ -89,10 +89,17 @@ export class GoogleRoutingProvider implements RoutingProvider {
   }
 }
 
-function googleWaypoint(waypoint: RouteWaypoint): { placeId: string } | { address: string } {
-  return waypoint.kind === "place_id"
-    ? { placeId: waypoint.placeID }
-    : { address: waypoint.address };
+function googleWaypoint(waypoint: RouteWaypoint):
+  | { placeId: string }
+  | { address: string }
+  | { location: { latLng: { latitude: number; longitude: number } } } {
+  if (waypoint.kind === "place_id") return { placeId: waypoint.placeID };
+  if (waypoint.kind === "address") return { address: waypoint.address };
+  return {
+    location: {
+      latLng: { latitude: waypoint.latitude, longitude: waypoint.longitude },
+    },
+  };
 }
 
 function extractRoute(payload: unknown): RouteEstimate {

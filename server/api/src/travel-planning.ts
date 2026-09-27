@@ -3,6 +3,7 @@ import type { Account, FamilyEvent, FamilyMember } from "./domain.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
 import {
   previewDrivingTravel,
+  travelWaypointFromLocation,
   type RoutingProvider,
   type TrafficPreference,
   type TravelPreview,
@@ -228,7 +229,7 @@ export class TravelPlanningModule {
     const previewNow = validNow(this.now());
     return previewDrivingTravel({
       origin,
-      destination: { address: event.location! },
+      destination: travelWaypointFromLocation(event.location!),
       arrivalTime: previewArrivalTime(event, previewNow),
       preparationMinutes: planDraft.preparationMinutes,
       trafficPreference: planDraft.trafficPreference,
@@ -304,12 +305,22 @@ function validateLabel(label: unknown): string {
 function validateWaypoint(waypoint: TravelWaypoint): TravelWaypoint {
   const placeID = typeof waypoint.placeID === "string" ? waypoint.placeID.trim() : "";
   const address = typeof waypoint.address === "string" ? waypoint.address.trim() : "";
-  if ((placeID.length > 0) === (address.length > 0)
-    || placeID.length > 500
-    || address.length > 500) {
+  const hasCoordinates = waypoint.coordinates !== undefined;
+  const populatedValues = Number(placeID.length > 0) + Number(address.length > 0) + Number(hasCoordinates);
+  if (populatedValues !== 1 || placeID.length > 500 || address.length > 500) {
     throw new TravelPlanningError("invalid_travel_plan");
   }
-  return placeID ? { placeID } : { address };
+  if (placeID) return { placeID };
+  if (address) return { address };
+
+  const latitude = waypoint.coordinates?.latitude;
+  const longitude = waypoint.coordinates?.longitude;
+  if (typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || typeof longitude !== "number" || !Number.isFinite(longitude)
+    || longitude < -180 || longitude > 180) {
+    throw new TravelPlanningError("invalid_travel_plan");
+  }
+  return { coordinates: { latitude, longitude } };
 }
 
 function validatePlanFields(draft: EventTravelPlanDraft): void {

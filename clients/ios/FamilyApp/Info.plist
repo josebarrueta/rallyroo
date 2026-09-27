@@ -35,6 +35,10 @@
             </array>
         </dict>
     </array>
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>comgooglemaps</string>
+    </array>
     <key>NSMicrophoneUsageDescription</key>
     <string>Rallyroo uses the microphone to turn your spoken schedule into drafts you review.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

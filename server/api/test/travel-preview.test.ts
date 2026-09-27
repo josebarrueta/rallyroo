@@ -3,6 +3,7 @@ import {
   maxProviderCalls,
   minimumProviderDepartureLeadSeconds,
   previewDrivingTravel,
+  travelWaypointFromLocation,
   TravelPreviewError,
   type Clock,
   type RouteEstimateRequest,
@@ -67,6 +68,29 @@ describe("previewDrivingTravel", () => {
     });
   });
 
+  it("parses valid coordinate locations while preserving normal addresses", () => {
+    expect(travelWaypointFromLocation("37.4219999, -122.0840575")).toEqual({
+      coordinates: { latitude: 37.4219999, longitude: -122.0840575 },
+    });
+    expect(travelWaypointFromLocation("123 Main Street, Palo Alto")).toEqual({
+      address: "123 Main Street, Palo Alto",
+    });
+  });
+
+  it("passes structured coordinates to the routing provider", async () => {
+    const { provider, requests } = fixedProvider();
+
+    await previewDrivingTravel(input({
+      destination: { coordinates: { latitude: 37.4219999, longitude: -122.0840575 } },
+    }), provider, clock);
+
+    expect(requests[0]!.destination).toEqual({
+      kind: "coordinates",
+      latitude: 37.4219999,
+      longitude: -122.0840575,
+    });
+  });
+
   it("uses no more than three estimates when traffic does not converge", async () => {
     const durations = [1_000, 2_000, 1_500];
     let call = 0;
@@ -108,6 +132,9 @@ describe("previewDrivingTravel", () => {
     { origin: { address: " " } },
     { origin: { address: "secret", placeID: "also-secret" } },
     { destination: { placeID: " ", address: " " } },
+    { destination: { coordinates: { latitude: 91, longitude: -122 } } },
+    { destination: { coordinates: { latitude: 37, longitude: -181 } } },
+    { destination: { address: "Field", coordinates: { latitude: 37, longitude: -122 } } },
   ])("rejects invalid waypoints without leaking them", async (override) => {
     const { provider, requests } = fixedProvider();
     let caught: unknown;
