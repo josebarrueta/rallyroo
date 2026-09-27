@@ -57,6 +57,33 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Neighborhood Market"].exists)
     }
 
+    func testParentRecordsAndDeletesManualExpenseFromHousehold() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPENSES"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-household"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["Expenses"].tap()
+        XCTAssertTrue(app.navigationBars["Expenses"].waitForExistence(timeout: 5))
+        app.buttons["Add expense"].tap()
+        XCTAssertTrue(app.navigationBars["Add Expense"].waitForExistence(timeout: 5))
+        let amount = app.textFields["Amount (USD)"]
+        amount.tap()
+        amount.typeText("12.34")
+        app.textFields["Merchant (optional)"].tap()
+        app.textFields["Merchant (optional)"].typeText("Market")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Market"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["$12.34"].exists)
+        app.buttons.containing(.staticText, identifier: "Market").firstMatch.swipeLeft()
+        app.buttons["Delete"].tap()
+        app.buttons["Delete Expense"].tap()
+        XCTAssertTrue(app.staticTexts["No expenses yet"].waitForExistence(timeout: 5))
+    }
+
     func testParentCanManageShoppingRoutinesAndPantryCatalog() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"

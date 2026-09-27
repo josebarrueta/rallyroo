@@ -12,6 +12,7 @@ import { PostgresRallyrooRepository } from "../src/postgres-repository.js";
 import { NotificationCenterModule } from "../src/notification-center.js";
 import type { FamilyEvent } from "../src/domain.js";
 import { ShoppingModule, ShoppingModuleError } from "../src/shopping-module.js";
+import { ExpenseModule } from "../src/expense-module.js";
 
 const adminURL = process.env.INTEGRATION_DATABASE_URL;
 const databaseName = `rallyroo_test_${randomUUID().replaceAll("-", "")}`;
@@ -106,6 +107,40 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
     await adminPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
     await adminPool.end();
+  });
+
+  it("encrypts parent-only Expenses, scopes records by Family, and survives retries/corrections", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const parent = await first.provisionParentAccount("expense-parent", "Expense Parent");
+    const other = await first.provisionParentAccount("other-expense-parent", "Other Parent");
+    const expenses = new ExpenseModule(first, () => new Date("2026-09-27T10:00:00Z"));
+    const competing = new ExpenseModule(second, () => new Date("2026-09-27T11:00:00Z"));
+    const id = "90000000-0000-4000-8000-000000000001";
+    const draft = { spentOn: "2026-09-26", amountMinor: 1245, currency: "USD",
+      category: "Groceries", merchant: "Private Market", note: "Personal note" };
+    const [a, b] = await Promise.all([expenses.create(parent, id, draft), competing.create(parent, id, draft)]);
+    expect(a).toEqual(b);
+    expect((await expenses.list(parent)).expenses).toHaveLength(1);
+    expect((await expenses.list(other)).expenses).toEqual([]);
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const rows = await inspection.query<{ details_ciphertext: string }>(
+        "SELECT details_ciphertext FROM household_expenses WHERE family_id = $1", [parent.familyID],
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.details_ciphertext).toMatch(/^rr1\./);
+      expect(rows.rows[0]!.details_ciphertext).not.toContain("Groceries");
+      expect(rows.rows[0]!.details_ciphertext).not.toContain("Private Market");
+      const corrected = await expenses.update(parent, id, 1, { ...draft, amountMinor: 1395 });
+      expect(corrected).toMatchObject({ version: 2, amountMinor: 1395 });
+      await expect(competing.update(parent, id, 1, draft)).rejects.toMatchObject({ reason: "expense_conflict" });
+      await expenses.delete(parent, id, 2);
+      await expenses.delete(parent, id, 2);
+      expect((await expenses.list(parent)).expenses).toEqual([]);
+      await first.deleteAccount(parent.identitySubject);
+      expect((await inspection.query("SELECT 1 FROM household_expenses WHERE family_id = $1", [parent.familyID])).rows).toEqual([]);
+    } finally { await inspection.end(); }
   });
 
   it("persists Shopping catalog details encrypted and preserves idempotent resource updates", async () => {

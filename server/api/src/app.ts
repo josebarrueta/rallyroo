@@ -10,6 +10,7 @@ import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domai
 import type { CalendarSourceModule } from "./calendar-source-module.js";
 import { validateCalendarFeedURL } from "./calendar-source-adapters.js";
 import type { DayBriefPersistence } from "./day-brief.js";
+import { ExpenseError, type ExpenseModule } from "./expense-module.js";
 import { CommuterModuleError, type CommuterModule } from "./commuter-module.js";
 import type { CaltrainLiveRefreshOperations } from "./caltrain-live-refresh.js";
 import { EventMutationError, EventMutationModule } from "./event-mutation.js";
@@ -267,6 +268,17 @@ const dayBriefDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value
 });
 
 const shoppingResourceIDSchema = z.string().uuid().transform((value) => value.toLowerCase());
+const expenseDraftSchema = z.object({
+  spentOn: dayBriefDateSchema,
+  amountMinor: z.number().int().min(1).max(1_000_000_000_000),
+  currency: z.literal("USD"),
+  category: z.string().trim().min(1).max(60),
+  merchant: z.string().trim().max(120).nullable(),
+  note: z.string().trim().max(500).nullable(),
+}).strict();
+const expenseUpdateSchema = expenseDraftSchema.extend({ expectedVersion: z.number().int().positive() }).strict();
+const expenseDeletionSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+const expensePageSchema = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), cursor: z.string().max(80).optional() }).strict();
 const shoppingRoutineSchema = z.object({
   storeName: z.string().trim().min(1).max(120),
   intervalWeeks: z.number().int().min(1).max(52),
@@ -356,6 +368,7 @@ interface Dependencies {
   travelPlanning?: TravelPlanningModule;
   dayBriefs?: DayBriefPersistence;
   shopping?: ShoppingModule;
+  expenses?: ExpenseModule;
   metricsBearerToken?: string;
   logger?: FastifyServerOptions["logger"];
 }
@@ -378,6 +391,7 @@ export function buildApp({
   travelPlanning,
   dayBriefs,
   shopping,
+  expenses,
   metricsBearerToken,
   logger = false,
 }: Dependencies) {
@@ -600,6 +614,60 @@ export function buildApp({
     if (!parsed.success) return reply.code(400).send({ error: "invalid_day_brief_date" });
     const brief = await dayBriefs.dayBrief(account.familyID, account.memberID, parsed.data);
     return brief ?? reply.code(404).send({ error: "day_brief_not_found" });
+  });
+
+  app.get("/v1/household/expenses", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!expenses) return reply.code(503).send({ error: "expenses_unavailable" });
+    const query = expensePageSchema.safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "invalid_expense_page" });
+    let cursor = null;
+    if (query.data.cursor) {
+      const match = /^(\d{4}-\d{2}-\d{2})_([0-9a-f-]{36})$/.exec(query.data.cursor);
+      if (!match || !dayBriefDateSchema.safeParse(match[1]).success
+        || !shoppingResourceIDSchema.safeParse(match[2]).success) {
+        return reply.code(400).send({ error: "invalid_expense_page" });
+      }
+      cursor = { spentOn: match[1]!, id: match[2]! };
+    }
+    return expenses.list(account, query.data.limit, cursor);
+  });
+
+  app.put("/v1/household/expenses/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!expenses) return reply.code(503).send({ error: "expenses_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const draft = expenseDraftSchema.safeParse(request.body);
+    if (!id.success || !draft.success) return reply.code(400).send({ error: "invalid_expense" });
+    try { return reply.code(201).send(await expenses.create(account, id.data, draft.data)); }
+    catch (error) { return sendExpenseError(error, reply); }
+  });
+
+  app.patch("/v1/household/expenses/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!expenses) return reply.code(503).send({ error: "expenses_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const parsed = expenseUpdateSchema.safeParse(request.body);
+    if (!id.success || !parsed.success) return reply.code(400).send({ error: "invalid_expense" });
+    const { expectedVersion, ...draft } = parsed.data;
+    try { return await expenses.update(account, id.data, expectedVersion, draft); }
+    catch (error) { return sendExpenseError(error, reply); }
+  });
+
+  app.delete("/v1/household/expenses/:id", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!expenses) return reply.code(503).send({ error: "expenses_unavailable" });
+    const id = shoppingResourceIDSchema.safeParse((request.params as { id: string }).id);
+    const parsed = expenseDeletionSchema.safeParse(request.body);
+    if (!id.success || !parsed.success) return reply.code(400).send({ error: "invalid_expense" });
+    try {
+      await expenses.delete(account, id.data, parsed.data.expectedVersion);
+      return reply.code(204).send();
+    } catch (error) { return sendExpenseError(error, reply); }
   });
 
   app.get("/v1/shopping/catalog", async (request, reply) => {
@@ -1783,6 +1851,16 @@ function sendTravelPlanningError(error: unknown, reply: FastifyReply) {
   case "invalid_travel_plan":
   case "invalid_recipients":
     return reply.code(400).send({ error: "invalid_travel_plan" });
+  }
+}
+
+function sendExpenseError(error: unknown, reply: FastifyReply) {
+  if (!(error instanceof ExpenseError)) throw error;
+  switch (error.reason) {
+  case "parent_required": return reply.code(403).send({ error: "parent_role_required" });
+  case "expense_not_found": return reply.code(404).send({ error: "expense_not_found" });
+  case "expense_conflict": return reply.code(409).send({ error: "expense_conflict" });
+  case "invalid_expense": return reply.code(400).send({ error: "invalid_expense" });
   }
 }
 

@@ -50,6 +50,7 @@ import { SF511Client } from "./sf511-client.js";
 import { StytchIdentityProvider } from "./stytch-identity-provider.js";
 import { TravelPlanningModule } from "./travel-planning.js";
 import { ShoppingModule } from "./shopping-module.js";
+import { ExpenseModule } from "./expense-module.js";
 import { UnavailableRoutingProvider } from "./travel-preview.js";
 
 const databaseConfiguration = await databasePoolConfiguration();
@@ -155,6 +156,7 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
   : new UnavailableInvitationEmailSender();
 const travelPlanning = new TravelPlanningModule(repository, routingProvider);
 const shopping = new ShoppingModule(repository);
+const expenses = new ExpenseModule(repository);
 const leaveAlertDispatcher = googleRoutesAPIKey
   ? new LeaveAlertDispatcher(repository, routingProvider, notificationCenter)
   : undefined;
@@ -198,6 +200,7 @@ const app = buildApp({
   travelPlanning,
   dayBriefs: dayBriefRepository,
   shopping,
+  expenses,
   ...(metricsBearerToken
     ? { metricsBearerToken }
     : {}),

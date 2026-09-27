@@ -12,6 +12,7 @@ struct SettingsView: View {
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let dayBriefStore: (any DayBriefStore)?
     private let shoppingStore: (any ShoppingStore)?
+    private let expenseStore: (any ExpenseStore)?
     private let locationSearch: (any LocationSearch)?
     private let canManageFamilyPlaces: Bool
     private let canManageShoppingCatalog: Bool
@@ -26,6 +27,7 @@ struct SettingsView: View {
         travelPlanningStore: (any TravelPlanningStore)? = nil,
         dayBriefStore: (any DayBriefStore)? = nil,
         shoppingStore: (any ShoppingStore)? = nil,
+        expenseStore: (any ExpenseStore)? = nil,
         locationSearch: (any LocationSearch)? = nil,
         canManageFamilyPlaces: Bool = false,
         canManageShoppingCatalog: Bool = false,
@@ -40,6 +42,7 @@ struct SettingsView: View {
         self.travelPlanningStore = travelPlanningStore
         self.dayBriefStore = dayBriefStore
         self.shoppingStore = shoppingStore
+        self.expenseStore = expenseStore
         self.locationSearch = locationSearch
         self.canManageFamilyPlaces = canManageFamilyPlaces
         self.canManageShoppingCatalog = canManageShoppingCatalog
@@ -83,6 +86,7 @@ struct SettingsView: View {
                         NavigationLink("Household") {
                             HouseholdView(
                                 shoppingStore: shoppingStore,
+                                expenseStore: expenseStore,
                                 canManageShoppingCatalog: canManageShoppingCatalog,
                                 currentMemberID: currentMemberID
                             )
@@ -872,11 +876,17 @@ private struct DayBriefSettingsView: View {
 
 struct HouseholdView: View {
     let shoppingStore: any ShoppingStore
+    let expenseStore: (any ExpenseStore)?
     let canManageShoppingCatalog: Bool
     let currentMemberID: String?
 
     var body: some View {
         List {
+            if let expenseStore {
+                Section("Finances") {
+                    NavigationLink("Expenses") { ExpenseLedgerView(store: expenseStore) }
+                }
+            }
             Section("Shopping") {
                 NavigationLink("Shopping and Pantry") {
                     ShoppingCatalogView(
@@ -888,6 +898,191 @@ struct HouseholdView: View {
             }
         }
         .navigationTitle("Household")
+    }
+}
+
+private struct ExpenseLedgerView: View {
+    let store: any ExpenseStore
+    @State private var entries: [FamilyExpense] = []
+    @State private var nextCursor: String?
+    @State private var isAdding = false
+    @State private var editing: FamilyExpense?
+    @State private var deleting: FamilyExpense?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            if entries.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("No expenses yet", systemImage: "creditcard")
+                    Text("Parents can record Family spending in any category.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ForEach(entries) { entry in
+                Button {
+                    editing = entry
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(entry.merchant?.isEmpty == false ? entry.merchant! : entry.category)
+                                .font(.headline)
+                            Text("\(entry.category) · \(entry.spentOn)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(entry.currency == "USD"
+                             ? "$\(entry.amountMinor / 100).\(String(format: "%02d", entry.amountMinor % 100))"
+                             : "\(entry.currency) \(entry.amountMinor) minor units")
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .swipeActions {
+                    Button("Delete", role: .destructive) { deleting = entry }
+                }
+            }
+            if let nextCursor {
+                Button("Load more") { Task { await load(cursor: nextCursor) } }
+            }
+        }
+        .navigationTitle("Expenses")
+        .toolbar { Button { isAdding = true } label: { Image(systemName: "plus") }
+            .accessibilityLabel("Add expense") }
+        .task { await load() }
+        .refreshable { await load() }
+        .sheet(isPresented: $isAdding) {
+            ExpenseEditorView(store: store, expense: nil) { await load() }
+        }
+        .sheet(item: $editing) { entry in
+            ExpenseEditorView(store: store, expense: entry) { await load() }
+        }
+        .confirmationDialog("Delete this Expense?", isPresented: Binding(
+            get: { deleting != nil }, set: { if !$0 { deleting = nil } }
+        )) {
+            Button("Delete Expense", role: .destructive) {
+                guard let entry = deleting else { return }
+                Task {
+                    do {
+                        try await store.delete(id: entry.id, version: entry.version)
+                        await load()
+                    } catch { errorMessage = "The Expense changed. Refresh before trying again." }
+                    deleting = nil
+                }
+            }
+        }
+        .alert("Expenses Unavailable", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) { Button("OK") { errorMessage = nil } } message: {
+            Text(errorMessage ?? "Please try again.")
+        }
+    }
+
+    private func load(cursor: String? = nil) async {
+        do {
+            let page = try await store.list(limit: 50, cursor: cursor)
+            if cursor == nil { entries = page.expenses }
+            else { entries += page.expenses.filter { candidate in !entries.contains { $0.id == candidate.id } } }
+            nextCursor = page.nextCursor
+        } catch { errorMessage = "Expenses could not be loaded." }
+    }
+}
+
+private struct ExpenseEditorView: View {
+    let store: any ExpenseStore
+    let expense: FamilyExpense?
+    let onSaved: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var date: Date
+    @State private var amountText: String
+    @State private var category: String
+    @State private var customCategory: String
+    @State private var merchant: String
+    @State private var note: String
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+    @State private var pendingID = UUID()
+    @State private var lastAttempt: ExpenseDraft?
+
+    private static let categories = ["Groceries", "Dining", "Housing", "Utilities",
+        "Transportation", "Health", "Education", "Activities", "Other"]
+
+    init(store: any ExpenseStore, expense: FamilyExpense?, onSaved: @escaping () async -> Void) {
+        self.store = store
+        self.expense = expense
+        self.onSaved = onSaved
+        _date = State(initialValue: expense.flatMap { Self.dateFormatter.date(from: $0.spentOn) } ?? Date())
+        _amountText = State(initialValue: expense.map {
+            "\($0.amountMinor / 100).\(String(format: "%02d", $0.amountMinor % 100))"
+        } ?? "")
+        let preset = expense.map { Self.categories.contains($0.category) ? $0.category : "Custom" } ?? "Groceries"
+        _category = State(initialValue: preset)
+        _customCategory = State(initialValue: preset == "Custom" ? expense?.category ?? "" : "")
+        _merchant = State(initialValue: expense?.merchant ?? "")
+        _note = State(initialValue: expense?.note ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Expense") {
+                    TextField("Amount (USD)", text: $amountText)
+                        .keyboardType(.decimalPad)
+                    DatePicker("Date", selection: $date, displayedComponents: .date)
+                    Picker("Category", selection: $category) {
+                        ForEach(Self.categories + ["Custom"], id: \.self) { Text($0).tag($0) }
+                    }
+                    if category == "Custom" {
+                        TextField("Category name", text: $customCategory)
+                    }
+                    TextField("Merchant (optional)", text: $merchant)
+                    TextField("Note (optional)", text: $note)
+                }
+                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+            }
+            .navigationTitle(expense == nil ? "Add Expense" : "Edit Expense")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { Task { await save() } }.disabled(draft == nil || isSaving)
+                }
+            }
+        }
+    }
+
+    private static var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }
+
+    private var draft: ExpenseDraft? {
+        guard let amount = ExpenseAmount.usdMinorUnits(amountText) else { return nil }
+        let chosen = (category == "Custom" ? customCategory : category).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !chosen.isEmpty && chosen.count <= 60 && merchant.count <= 120 && note.count <= 500 else { return nil }
+        return ExpenseDraft(spentOn: Self.dateFormatter.string(from: date), amountMinor: amount,
+            currency: "USD", category: chosen, merchant: merchant.isEmpty ? nil : merchant,
+            note: note.isEmpty ? nil : note)
+    }
+
+    private func save() async {
+        guard let draft else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            if let expense {
+                _ = try await store.update(id: expense.id, version: expense.version, draft: draft)
+            } else {
+                if lastAttempt != nil && lastAttempt != draft { pendingID = UUID() }
+                lastAttempt = draft
+                _ = try await store.create(id: pendingID, draft: draft)
+            }
+            await onSaved()
+            dismiss()
+        } catch { errorMessage = "The Expense could not be saved. Check the details and try again." }
     }
 }
 

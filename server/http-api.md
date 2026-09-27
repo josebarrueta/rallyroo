@@ -225,6 +225,30 @@ imported; recurring events are expanded from one year before synchronization thr
 two years after it. A failed refresh returns `502`, marks the connection as failed,
 and preserves the last good schedule.
 
+## Household Expenses
+
+Parent-only manual Family spending ledger, separate from Shopping Purchase
+records. Other Members receive `403` for every route. Amounts use integer USD
+cents (positive, at most 1,000,000,000,000); dates are valid `YYYY-MM-DD`
+calendar days. No amount or category is inferred from Shopping history.
+
+- `GET /v1/household/expenses?limit=50&cursor=...` returns
+  `{ "expenses": [...], "nextCursor": null | "..." }`; `limit` is 1–100 and
+  cursor is opaque to clients. Results are ordered newest spending date then ID.
+- `PUT /v1/household/expenses/{uuid}` with `{ "spentOn", "amountMinor",
+  "currency": "USD", "category", "merchant": null | string, "note": null | string }`
+  creates one Expense. Repeating the same ID and data is idempotent; changing
+  the data or reviving a deleted ID returns `409`.
+- `PATCH /v1/household/expenses/{uuid}` includes the same fields and
+  `expectedVersion`; returns `409` after a concurrent correction.
+- `DELETE /v1/household/expenses/{uuid}` with `{ "expectedVersion" }`
+  soft-deletes an Expense, returns `204` on successful retry and `409` when the
+  expected version is stale. IDs remain reserved.
+
+Only date, Family and opaque coordination metadata are queryable. Financial
+amount, currency, category, merchant and notes are encrypted at rest under
+per-Family keys. Receipt photo extraction is not part of these routes.
+
 ## Family invitations
 
 - `POST /v1/invitations` with
