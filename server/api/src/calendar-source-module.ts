@@ -313,7 +313,13 @@ function parseCalendar(body: string): Array<Pick<
       throw new Error("Calendar contains an invalid event");
     }
     if (!event.isRecurring()) {
-      appendOccurrence(result, event.uid, event, event.startDate.toJSDate(), event.endDate.toJSDate());
+      appendOccurrence(
+        result,
+        event.uid,
+        event,
+        calendarInstant(event.startDate, calendarTimeZone(event, "dtstart")),
+        calendarInstant(event.endDate, calendarTimeZone(event, "dtend")),
+      );
       continue;
     }
 
@@ -325,7 +331,8 @@ function parseCalendar(body: string): Array<Pick<
         throw new Error("Calendar recurrence exceeds the expansion limit");
       }
       const details = event.getOccurrenceDetails(recurrence);
-      const start = details.startDate.toJSDate();
+      const start = calendarInstant(details.startDate, calendarTimeZone(details.item, "dtstart"));
+      const end = calendarInstant(details.endDate, calendarTimeZone(details.item, "dtend"));
       if (start > rangeEnd) break;
       if (start < rangeStart) continue;
       if (details.item.component.getFirstPropertyValue("status") === "CANCELLED") continue;
@@ -334,7 +341,7 @@ function parseCalendar(body: string): Array<Pick<
         `${event.uid}::${details.recurrenceId.toString()}`,
         details.item,
         start,
-        details.endDate.toJSDate(),
+        end,
       );
     }
   }
@@ -373,6 +380,29 @@ function importedEventDescription(event: InstanceType<typeof ICAL.Event>): strin
   return typeof description === "string" && description.trim() ? description.trim() : null;
 }
 
+function calendarTimeZone(event: InstanceType<typeof ICAL.Event>, propertyName: "dtstart" | "dtend"): string | null {
+  const value = event.component.getFirstProperty(propertyName)?.getParameter("tzid");
+  if (typeof value !== "string") return null;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function calendarInstant(time: InstanceType<typeof ICAL.Time>, timeZone: string | null): Date {
+  if (!timeZone) return time.toJSDate();
+  return instantForZonedParts({
+    year: time.year,
+    month: time.month,
+    day: time.day,
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+  }, timeZone) ?? time.toJSDate();
+}
+
 // RFC 5545 has DTSTART/DTEND but no event arrival-time property. TeamSnap places
 // this optional value in DESCRIPTION, so keep the adapter deliberately narrow.
 function teamSnapArrivalTime(event: InstanceType<typeof ICAL.Event>, start: Date): string | null {
@@ -385,12 +415,65 @@ function teamSnapArrivalTime(event: InstanceType<typeof ICAL.Event>, start: Date
   if (hour < 1 || hour > 12 || minute > 59) return null;
   hour %= 12;
   if (match[3]!.toUpperCase() === "PM") hour += 12;
-  const local = event.startDate.clone();
-  local.hour = hour;
-  local.minute = minute;
-  local.second = 0;
-  const arrival = local.toJSDate();
-  return Number.isFinite(arrival.getTime()) && arrival <= start ? arrival.toISOString() : null;
+
+  const sourceTimeZone = calendarTimeZone(event, "dtstart");
+  const describedTimeZone = description.match(/Pacific Time \(US & Canada\)/i)
+    ? "America/Los_Angeles"
+    : null;
+  const timeZone = describedTimeZone ?? sourceTimeZone;
+  const date = sourceTimeZone && sourceTimeZone === timeZone
+    ? { year: event.startDate.year, month: event.startDate.month, day: event.startDate.day }
+    : zonedParts(start, timeZone ?? "UTC");
+  const arrival = timeZone
+    ? instantForZonedParts({ ...date, hour, minute, second: 0 }, timeZone)
+    : new Date(Date.UTC(date.year, date.month - 1, date.day, hour, minute));
+  return arrival && arrival <= start ? arrival.toISOString() : null;
+}
+
+interface CalendarDateParts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+function zonedParts(date: Date, timeZone: string): CalendarDateParts {
+  const values: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
+  for (const part of new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date)) values[part.type] = part.value;
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    second: Number(values.second),
+  };
+}
+
+function instantForZonedParts(parts: CalendarDateParts, timeZone: string): Date | null {
+  const desired = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  let candidate = desired;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const actual = zonedParts(new Date(candidate), timeZone);
+    const represented = Date.UTC(
+      actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, actual.second,
+    );
+    const adjustment = desired - represented;
+    if (adjustment === 0) return new Date(candidate);
+    candidate += adjustment;
+  }
+  return null;
 }
 
 function eventFingerprint(event: {
