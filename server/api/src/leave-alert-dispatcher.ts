@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
 import type { NotificationCenterModule } from "./notification-center.js";
+import type { FamilyEvent } from "./domain.js";
 import type { EventTravelPlan, SavedPlace, TravelPlanningRepository } from "./travel-planning.js";
 import {
   previewDrivingTravel,
@@ -27,6 +28,7 @@ export class LeaveAlertDispatcher {
     private readonly repository: TravelPlanningRepository,
     private readonly routingProvider: RoutingProvider,
     private readonly notificationCenter: NotificationCenterModule,
+    private readonly importedEvents?: { allEvents(familyID: string): Promise<FamilyEvent[]> },
   ) {}
 
   async dispatchDue(now = new Date()): Promise<LeaveAlertDispatchResult> {
@@ -36,12 +38,14 @@ export class LeaveAlertDispatcher {
     const activeKeys = new Set<string>();
 
     for (const familyID of familyIDs) {
-      const [plans, events, places, members] = await Promise.all([
+      const [plans, nativeEvents, importedEvents, places, members] = await Promise.all([
         this.repository.travelPlansForFamily(familyID),
         this.repository.eventsForFamily(familyID),
+        this.importedEvents?.allEvents(familyID) ?? Promise.resolve([]),
         this.repository.savedPlacesForFamily(familyID),
         this.repository.membersForFamily(familyID),
       ]);
+      const events = [...nativeEvents, ...importedEvents];
       const memberIDs = new Set(members.map((member) => member.id));
       for (const plan of plans) {
         if (result.evaluated >= maximumCandidates) break;

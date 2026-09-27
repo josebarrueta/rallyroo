@@ -443,6 +443,20 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     return due;
   }
 
+  async claimImportedEventNotification(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<boolean> {
+    const key = eventNotificationKey(familyID, eventID, occurrenceStart);
+    const existing = this.claimedEventNotifications.get(key);
+    if (this.sentEventNotifications.has(key)
+      || (existing && existing.getTime() >= claimedAt.getTime() - 5 * 60_000)) return false;
+    this.claimedEventNotifications.set(key, claimedAt);
+    return true;
+  }
+
   async occurrenceStatesForFamily(
     familyID: string,
    ): Promise<ScheduleOccurrenceState[]> {

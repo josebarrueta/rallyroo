@@ -1,5 +1,5 @@
 import type { DayBriefEventFact, DayBriefVerifiedLeaveTimeProvider } from "./day-brief.js";
-import type { TravelPlanningRepository } from "./travel-planning.js";
+import type { ImportedTravelEventReader, TravelPlanningRepository } from "./travel-planning.js";
 import { TravelPlanningModule } from "./travel-planning.js";
 import type { RoutingProvider } from "./travel-preview.js";
 
@@ -16,6 +16,7 @@ export class DayBriefTravelTiming implements DayBriefVerifiedLeaveTimeProvider {
   constructor(
     private readonly repository: TravelPlanningRepository,
     private readonly routingProvider: RoutingProvider,
+    private readonly importedEvents?: ImportedTravelEventReader,
   ) {}
 
   async earliestVerifiedLeaveTime(
@@ -27,7 +28,12 @@ export class DayBriefTravelTiming implements DayBriefVerifiedLeaveTimeProvider {
     if (events.length === 0) return null;
     const plans = await this.repository.travelPlansForFamily(familyID);
     const byEventID = new Map(plans.map((plan) => [plan.eventID, plan]));
-    const planning = new TravelPlanningModule(this.repository, this.routingProvider, () => now);
+    const planning = new TravelPlanningModule(
+      this.repository,
+      this.routingProvider,
+      () => now,
+      this.importedEvents,
+    );
     let earliest: Date | null = null;
     for (const event of events) {
       if (event.roles.includes("personal_calendar")

@@ -69,6 +69,51 @@ private actor OccurrenceLifecycleUITestEventStore: EventStore {
     func clearCache() async throws {}
 }
 
+private actor ImportedEventUITestEventStore: EventStore {
+    private var event: FamilyEvent
+
+    init(now: Date = .now, calendar: Calendar = .autoupdatingCurrent) {
+        let start = calendar.date(byAdding: .hour, value: 2, to: now)!
+        event = FamilyEvent(
+            id: UUID(uuidString: "10000000-0000-5000-8000-000000000004")!,
+            title: "Imported championship",
+            kidID: nil,
+            participantIDs: [],
+            startTime: start,
+            endTime: start.addingTimeInterval(3_600),
+            location: "37.7749, -122.4194",
+            notes: "Bring the blue uniform.",
+            source: .calendar,
+            status: .confirmed,
+            alertLeadTime: nil,
+            isReadOnly: true,
+            provenance: [EventProvenance(
+                sourceID: "source-1", sourceName: "TeamSnap", externalUID: "game-1"
+            )]
+        )
+    }
+
+    func loadEvents() async throws -> EventSnapshot {
+        EventSnapshot(events: [event], freshness: .fresh)
+    }
+    func save(_ event: FamilyEvent, notifyParticipants: Bool, idempotencyKey: UUID) async throws -> EventMutationResult {
+        throw CocoaError(.featureUnsupported)
+    }
+    func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+    ) async throws -> FamilyEvent {
+        self.event.arrivalTime = arrivalTime
+        self.event.alertLeadTime = alertLeadTime
+        return self.event
+    }
+    func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws { throw CocoaError(.featureUnsupported) }
+    func updateRecurringEvent(
+        _ edit: RecurringEventEdit, notifyParticipants: Bool, idempotencyKey: UUID
+    ) async throws -> EventMutationResult { throw CocoaError(.featureUnsupported) }
+}
+
 private actor ScheduleOverlapUITestEventStore: EventStore {
     private let events: [FamilyEvent]
 
@@ -406,6 +451,8 @@ struct FamilyActivityCoordinatorApp: App {
             ] == "1"
             if testsOccurrenceLifecycle {
                 eventStore = OccurrenceLifecycleUITestEventStore()
+            } else if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_IMPORTED_EVENT"] == "1" {
+                eventStore = ImportedEventUITestEventStore()
             } else if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SCHEDULE_OVERLAP"] == "1" {
                 eventStore = ScheduleOverlapUITestEventStore()
             } else {

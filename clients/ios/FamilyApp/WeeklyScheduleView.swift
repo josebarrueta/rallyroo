@@ -20,6 +20,7 @@ struct WeeklyScheduleView: View {
     @State private var isAddingEvent = false
     @State private var editingOccurrence: EventOccurrence?
     @State private var linkedEvent: FamilyEvent?
+    @State private var importedEvent: FamilyEvent?
     @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
     @State private var isCapturingSchedule = false
@@ -180,20 +181,53 @@ struct WeeklyScheduleView: View {
                  }
              }
              .sheet(item: $linkedEvent) { event in
-                NavigationStack {
-                    List {
-                        Section("Event") {
-                            Text(event.title).font(.headline)
-                            LabeledContent("Starts", value: event.startTime.formatted())
-                            LabeledContent("Ends", value: event.endTime.formatted())
-                            if let arrivalTime = event.arrivalTime {
-                                LabeledContent("Arrive by", value: arrivalTime.formatted())
-                             }
-                            if let location = event.location { LabeledContent("Location", value: location) }
-                         }
+                if event.isReadOnly {
+                    ImportedEventDetailSheet(
+                        event: event,
+                        canCustomize: allowsEditing && !viewModel.isShowingCachedEvents,
+                        members: viewModel.members,
+                        locationSearch: locationSearch,
+                        travelPlanningStore: travelPlanningStore,
+                        onSaveSettings: { arrivalTime, alertLeadTime in
+                            try await viewModel.saveImportedEventSettings(
+                                for: event,
+                                arrivalTime: arrivalTime,
+                                alertLeadTime: alertLeadTime
+                            )
+                        }
+                    )
+                } else {
+                    NavigationStack {
+                        List {
+                            Section("Event") {
+                                Text(event.title).font(.headline)
+                                LabeledContent("Starts", value: event.startTime.formatted())
+                                LabeledContent("Ends", value: event.endTime.formatted())
+                                if let arrivalTime = event.arrivalTime {
+                                    LabeledContent("Arrive by", value: arrivalTime.formatted())
+                                }
+                                if let location = event.location { LabeledContent("Location", value: location) }
+                            }
+                        }
+                        .navigationTitle("Event details")
                     }
-                    .navigationTitle("Event details")
-                 }
+                }
+             }
+             .sheet(item: $importedEvent) { event in
+                ImportedEventDetailSheet(
+                    event: event,
+                    canCustomize: allowsEditing && !viewModel.isShowingCachedEvents,
+                    members: viewModel.members,
+                    locationSearch: locationSearch,
+                    travelPlanningStore: travelPlanningStore,
+                    onSaveSettings: { arrivalTime, alertLeadTime in
+                        try await viewModel.saveImportedEventSettings(
+                            for: event,
+                            arrivalTime: arrivalTime,
+                            alertLeadTime: alertLeadTime
+                        )
+                    }
+                )
              }
              .sheet(item: $travelEvent) { event in
                 if let travelPlanningStore {
@@ -571,13 +605,12 @@ struct WeeklyScheduleView: View {
         }
          .contentShape(Rectangle())
          .onTapGesture {
-            if allowsEditing && !viewModel.isShowingCachedEvents {
-                if occurrence.sourceEvent.isReadOnly, calendarSourceStore != nil {
-                    linkedCalendarSourceID = occurrence.sourceEvent.provenance.first?.sourceID
-                 } else {
-                    editingOccurrence = occurrence
-                 }
-             }
+            guard !viewModel.isShowingCachedEvents else { return }
+            if occurrence.sourceEvent.isReadOnly {
+                importedEvent = occurrence.sourceEvent
+            } else if allowsEditing {
+                editingOccurrence = occurrence
+            }
          }
          .contextMenu {
             if !viewModel.isShowingCachedEvents,
@@ -929,6 +962,203 @@ private struct OverlapTimeline<Content: View>: View {
           }
           .frame(height: cluster.height)
       }
+}
+
+private struct ImportedEventDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var event: FamilyEvent
+    @State private var arrivalEnabled: Bool
+    @State private var arrivalTime: Date
+    @State private var alertChoice: ImportedEventAlertChoice
+    @State private var isSaving = false
+    @State private var message: String?
+    @State private var showsTravelPlan = false
+
+    let canCustomize: Bool
+    let members: [FamilyMember]
+    let locationSearch: any LocationSearch
+    let travelPlanningStore: (any TravelPlanningStore)?
+    let onSaveSettings: (Date?, EventAlertLeadTime?) async throws -> FamilyEvent
+
+    init(
+        event: FamilyEvent,
+        canCustomize: Bool,
+        members: [FamilyMember],
+        locationSearch: any LocationSearch,
+        travelPlanningStore: (any TravelPlanningStore)?,
+        onSaveSettings: @escaping (Date?, EventAlertLeadTime?) async throws -> FamilyEvent
+    ) {
+        _event = State(initialValue: event)
+        _arrivalEnabled = State(initialValue: event.arrivalTime != nil)
+        _arrivalTime = State(initialValue: event.arrivalTime ?? event.startTime)
+        _alertChoice = State(initialValue: ImportedEventAlertChoice(leadTime: event.alertLeadTime))
+        self.canCustomize = canCustomize
+        self.members = members
+        self.locationSearch = locationSearch
+        self.travelPlanningStore = travelPlanningStore
+        self.onSaveSettings = onSaveSettings
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Event") {
+                    Text(event.title).font(.headline)
+                    LabeledContent("Starts", value: event.startTime.formatted(date: .abbreviated, time: .shortened))
+                    LabeledContent("Ends", value: event.endTime.formatted(date: .abbreviated, time: .shortened))
+                    if !participantNames.isEmpty {
+                        LabeledContent("Participants", value: participantNames)
+                    }
+                    if let location = event.location, !location.isEmpty {
+                        LabeledContent("Location", value: location)
+                        DirectionsMenu(
+                            origin: nil,
+                            destination: location,
+                            accessibilityIdentifier: "open-imported-event-directions"
+                        )
+                    }
+                    if let notes = event.notes, !notes.isEmpty {
+                        LabeledContent("Details") {
+                            Text(notes).multilineTextAlignment(.leading)
+                        }
+                    }
+                    if !event.provenance.isEmpty {
+                        LabeledContent(
+                            "Source",
+                            value: event.provenance.map(\.sourceName).uniqued().joined(separator: " • ")
+                        )
+                    }
+                }
+
+                Section("Rallyroo settings") {
+                    Toggle("Arrive by", isOn: $arrivalEnabled)
+                        .disabled(!canCustomize)
+                        .accessibilityIdentifier("imported-event-arrive-by")
+                    if arrivalEnabled {
+                        DatePicker(
+                            "Arrival time",
+                            selection: $arrivalTime,
+                            in: ...event.startTime,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .disabled(!canCustomize)
+                        .accessibilityIdentifier("imported-event-arrival-time")
+                    }
+                    Picker("Alert", selection: $alertChoice) {
+                        ForEach(ImportedEventAlertChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    .disabled(!canCustomize)
+
+                    if canCustomize {
+                        Button("Save settings") { Task { await save() } }
+                            .disabled(isSaving)
+                            .accessibilityIdentifier("save-imported-event-settings")
+                    } else {
+                        Text("Event details come from the connected calendar and are read-only.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if travelPlanningStore != nil {
+                    Section("Travel") {
+                        Button {
+                            showsTravelPlan = true
+                        } label: {
+                            Label(canCustomize ? "Plan travel" : "Travel details", systemImage: "car")
+                        }
+                        .disabled(event.arrivalTime == nil || event.location?.isEmpty != false)
+                        .accessibilityIdentifier("plan-imported-event-travel")
+                        if event.arrivalTime == nil {
+                            Text("Set and save an Arrive by time before planning travel.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Event details")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showsTravelPlan) {
+                if let travelPlanningStore {
+                    TravelPlanSheet(
+                        event: event,
+                        members: members,
+                        store: travelPlanningStore,
+                        locationSearch: locationSearch,
+                        readOnly: !canCustomize
+                    )
+                }
+            }
+            .alert("Event settings", isPresented: Binding(
+                get: { message != nil },
+                set: { if !$0 { message = nil } }
+            )) {
+                Button("OK") { message = nil }
+            } message: {
+                Text(message ?? "")
+            }
+        }
+    }
+
+    private var participantNames: String {
+        let ids = Set(event.participantIDs)
+        return members.filter { ids.contains($0.id) }.map(\.name).joined(separator: ", ")
+    }
+
+    private func save() async {
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            event = try await onSaveSettings(
+                arrivalEnabled ? arrivalTime : nil,
+                alertChoice.leadTime
+            )
+            arrivalEnabled = event.arrivalTime != nil
+            arrivalTime = event.arrivalTime ?? event.startTime
+            message = "Rallyroo settings saved."
+        } catch {
+            message = "The event settings could not be saved."
+        }
+    }
+}
+
+private enum ImportedEventAlertChoice: Int, CaseIterable, Identifiable {
+    case none = -1
+    case atStart = 0
+    case fiveMinutes = 5
+    case fifteenMinutes = 15
+    case thirtyMinutes = 30
+    case fortyFiveMinutes = 45
+    case oneHour = 60
+    case oneDay = 1_440
+
+    init(leadTime: EventAlertLeadTime?) {
+        self = leadTime.flatMap { Self(rawValue: $0.rawValue) } ?? .none
+    }
+
+    var id: Int { rawValue }
+    var leadTime: EventAlertLeadTime? {
+        rawValue < 0 ? nil : EventAlertLeadTime(rawValue: rawValue)
+    }
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .atStart: "At start"
+        case .fiveMinutes: "5 minutes before"
+        case .fifteenMinutes: "15 minutes before"
+        case .thirtyMinutes: "30 minutes before"
+        case .fortyFiveMinutes: "45 minutes before"
+        case .oneHour: "1 hour before"
+        case .oneDay: "1 day before"
+        }
+    }
 }
 
 private struct EventRow: View {

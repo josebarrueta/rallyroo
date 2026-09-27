@@ -85,6 +85,14 @@ const apnsPushNotificationProvider = APNSPushNotificationProvider.fromEnvironmen
 const pushNotificationProvider = apnsPushNotificationProvider
   ?? new NoopPushNotificationProvider();
 const notificationCenter = new NotificationCenterModule(repository, pushNotificationProvider, metrics);
+const calendarEncryptionKey = configuredSecret("CALENDAR_SOURCE_ENCRYPTION_KEY");
+const calendarSources = calendarEncryptionKey
+  ? new CalendarSourceModule({
+    repository,
+    ...calendarURLProtection(calendarEncryptionKey),
+    fetchFeed: fetchPublicCalendarFeed,
+  })
+  : undefined;
 const reminderNotificationDispatcher = new ReminderNotificationDispatcher({
   repository,
   pushNotificationProvider,
@@ -94,6 +102,7 @@ const eventNotificationDispatcher = new EventNotificationDispatcher({
   repository,
   pushNotificationProvider,
   notificationCenter,
+  ...(calendarSources ? { importedEvents: calendarSources } : {}),
 });
 const scheduleUpdateNotificationDispatcher = new ScheduleUpdateNotificationDispatcher({
   persistence: repository,
@@ -106,14 +115,6 @@ const commuterAlertDispatcher = apnsPushNotificationProvider
     repository,
     pushNotificationProvider: apnsPushNotificationProvider,
     notificationCenter,
-  })
-  : undefined;
-const calendarEncryptionKey = configuredSecret("CALENDAR_SOURCE_ENCRYPTION_KEY");
-const calendarSources = calendarEncryptionKey
-  ? new CalendarSourceModule({
-    repository,
-    ...calendarURLProtection(calendarEncryptionKey),
-    fetchFeed: fetchPublicCalendarFeed,
   })
   : undefined;
 const resendAPIKey = configuredSecret("RESEND_API_KEY");
@@ -147,7 +148,7 @@ const dayBriefs = new DayBriefModule(
   dayBriefRepository,
   notificationCenter,
   ollamaConfiguration ? new OllamaDayBriefNarrator(ollamaConfiguration) : undefined,
-  googleRoutesAPIKey ? new DayBriefTravelTiming(repository, routingProvider) : undefined,
+  googleRoutesAPIKey ? new DayBriefTravelTiming(repository, routingProvider, calendarSources) : undefined,
 );
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM
   ? new ResendInvitationEmailSender({
@@ -155,11 +156,11 @@ const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env
     from: process.env.INVITATION_EMAIL_FROM,
   })
   : new UnavailableInvitationEmailSender();
-const travelPlanning = new TravelPlanningModule(repository, routingProvider);
+const travelPlanning = new TravelPlanningModule(repository, routingProvider, undefined, calendarSources);
 const shopping = new ShoppingModule(repository);
 const expenses = new ExpenseModule(repository);
 const leaveAlertDispatcher = googleRoutesAPIKey
-  ? new LeaveAlertDispatcher(repository, routingProvider, notificationCenter)
+  ? new LeaveAlertDispatcher(repository, routingProvider, notificationCenter, calendarSources)
   : undefined;
 const vehiclePositionStore = new CachedCaltrainVehiclePositionStore(cache);
 const commuter = new CommuterModule(repository, vehiclePositionStore);

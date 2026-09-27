@@ -105,6 +105,23 @@ final class WeeklyScheduleViewModel: ObservableObject {
         return result
      }
 
+     func saveImportedEventSettings(
+        for event: FamilyEvent,
+        arrivalTime: Date?,
+        alertLeadTime: EventAlertLeadTime?
+     ) async throws -> FamilyEvent {
+        let updated = try await eventStore.saveImportedEventSettings(
+            for: event,
+            arrivalTime: arrivalTime,
+            alertLeadTime: alertLeadTime
+        )
+        try? await alertScheduler?.schedule(updated)
+        if let index = events.firstIndex(where: { $0.id == updated.id }) {
+            events[index] = updated
+        }
+        return updated
+     }
+
      func deleteEvent(_ event: FamilyEvent, idempotencyKey: UUID = UUID()) async throws {
         try await eventStore.delete(event, idempotencyKey: idempotencyKey)
         await alertScheduler?.cancel(event)

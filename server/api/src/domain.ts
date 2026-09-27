@@ -53,6 +53,7 @@ export interface FamilyEvent {
   endTime: string;
   arrivalTime?: string | null;
   location: string | null;
+  notes?: string | null;
   driver: string | null;
   driverMemberID?: string | null;
   source: "manual" | "email_suggested" | "voice" | "calendar";

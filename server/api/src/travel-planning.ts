@@ -97,11 +97,16 @@ export class TravelPlanningError extends Error {
   }
 }
 
+export interface ImportedTravelEventReader {
+  events(familyID: string, viewerMemberID: string): Promise<FamilyEvent[]>;
+}
+
 export class TravelPlanningModule {
   constructor(
     private readonly repository: TravelPlanningRepository,
     private readonly routingProvider: RoutingProvider,
     private readonly now: () => Date = () => new Date(),
+    private readonly importedEvents?: ImportedTravelEventReader,
   ) {}
 
   async listSavedPlaces(account: Account): Promise<SavedPlace[]> {
@@ -184,7 +189,7 @@ export class TravelPlanningModule {
     draft: EventTravelPlanDraft,
   ): Promise<EventTravelPlan> {
     requireParent(account);
-    const { event, members } = await this.validatedContext(account.familyID, eventID, draft);
+    const { event, members } = await this.validatedContext(account, eventID, draft);
     await this.resolveOrigin(account, draft.origin);
     validateRecipients(draft.recipientMemberIDs, event, members);
     const existing = await this.repository.travelPlanForEvent(account.familyID, eventID);
@@ -218,7 +223,7 @@ export class TravelPlanningModule {
   ): Promise<TravelPreview> {
     if (draft) requireParent(account);
     const planDraft = draft ?? await this.existingDraft(account, eventID);
-    const { event, members } = await this.validatedContext(account.familyID, eventID, planDraft);
+    const { event, members } = await this.validatedContext(account, eventID, planDraft);
     if (account.role !== "parent" && !planDraft.recipientMemberIDs.includes(account.memberID)) {
       throw new TravelPlanningError("travel_plan_forbidden");
     }
@@ -243,18 +248,20 @@ export class TravelPlanningModule {
   }
 
   private async validatedContext(
-    familyID: string,
+    account: Account,
     eventID: string,
     draft: EventTravelPlanDraft,
   ): Promise<{ event: FamilyEvent; members: FamilyMember[] }> {
     validatePlanFields(draft);
-    const [events, members] = await Promise.all([
-      this.repository.eventsForFamily(familyID),
-      this.repository.membersForFamily(familyID),
+    const [nativeEvents, importedEvents, members] = await Promise.all([
+      this.repository.eventsForFamily(account.familyID),
+      this.importedEvents?.events(account.familyID, account.memberID) ?? Promise.resolve([]),
+      this.repository.membersForFamily(account.familyID),
     ]);
-    const event = events.find((candidate) => candidate.familyID === familyID && candidate.id === eventID);
+    const event = [...nativeEvents, ...importedEvents]
+      .find((candidate) => candidate.familyID === account.familyID && candidate.id === eventID);
     if (!event) throw new TravelPlanningError("event_not_found");
-    const familyMembers = members.filter((member) => member.familyID === familyID);
+    const familyMembers = members.filter((member) => member.familyID === account.familyID);
     if (!event.arrivalTime) throw new TravelPlanningError("event_missing_arrival_target");
     if (!event.location?.trim()) throw new TravelPlanningError("event_missing_destination");
     return { event, members: familyMembers };

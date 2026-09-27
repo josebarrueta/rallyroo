@@ -9,6 +9,12 @@ export interface DueEventNotification {
 
 export interface EventNotificationRepository {
   claimDueEventNotifications(now: Date, limit: number): Promise<DueEventNotification[]>;
+  claimImportedEventNotification?(
+    familyID: string,
+    eventID: string,
+    occurrenceStart: string,
+    claimedAt: Date,
+  ): Promise<boolean>;
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
   markEventNotificationSent(
     familyID: string,
@@ -29,6 +35,7 @@ interface Dependencies {
   pushNotificationProvider: PushNotificationProvider;
   batchSize?: number;
   notificationCenter?: NotificationCenterModule;
+  importedEvents?: { alertEvents(): Promise<FamilyEvent[]> };
 }
 
 export class EventNotificationDispatcher {
@@ -46,6 +53,19 @@ export class EventNotificationDispatcher {
 
   async dispatchDue(now = new Date()): Promise<void> {
     const notifications = await this.repository.claimDueEventNotifications(now, this.batchSize);
+    if (this.dependencies.importedEvents && this.repository.claimImportedEventNotification
+      && notifications.length < this.batchSize) {
+      const imported = await this.dependencies.importedEvents.alertEvents();
+      for (const notification of dueImportedNotifications(imported, now)) {
+        if (notifications.length >= this.batchSize) break;
+        if (await this.repository.claimImportedEventNotification(
+          notification.event.familyID,
+          notification.event.id,
+          notification.occurrenceStart,
+          now,
+        )) notifications.push(notification);
+      }
+    }
     const results = await Promise.allSettled(notifications.map(async ({ event, occurrenceStart }) => {
       try {
         const recipientMemberIDs = [...new Set([
@@ -98,6 +118,19 @@ export class EventNotificationDispatcher {
       throw new AggregateError(failures.map((failure) => failure.reason), "Event notification delivery failed");
     }
   }
+}
+
+function dueImportedNotifications(events: FamilyEvent[], now: Date): DueEventNotification[] {
+  const oldestOccurrence = now.getTime() - 5 * 60_000;
+  return events.flatMap((event) => {
+    const leadTime = event.alertLeadTimeMinutes;
+    if (leadTime === null || leadTime === undefined) return [];
+    const start = new Date(event.startTime);
+    const notifyAt = start.getTime() - leadTime * 60_000;
+    if (!Number.isFinite(start.getTime()) || notifyAt > now.getTime()
+      || start.getTime() < oldestOccurrence) return [];
+    return [{ event, occurrenceStart: start.toISOString() }];
+  }).sort((left, right) => left.occurrenceStart.localeCompare(right.occurrenceStart));
 }
 
 function alertBody(leadTimeMinutes: FamilyEvent["alertLeadTimeMinutes"]): string {

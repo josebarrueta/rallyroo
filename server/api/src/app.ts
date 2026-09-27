@@ -7,7 +7,7 @@ import Fastify, {
 } from "fastify";
 import { z } from "zod";
 import type { Account, FamilyEvent, FamilyMember, FamilyReminder } from "./domain.js";
-import type { CalendarSourceModule } from "./calendar-source-module.js";
+import { CalendarSourceSyncError, type CalendarSourceModule } from "./calendar-source-module.js";
 import { validateCalendarFeedURL } from "./calendar-source-adapters.js";
 import type { DayBriefPersistence } from "./day-brief.js";
 import { ExpenseError, type ExpenseModule } from "./expense-module.js";
@@ -206,6 +206,13 @@ const memberSchema = z.object({
 
 const calendarSourceVisibilitySchema = z.object({
   visibility: z.enum(["personal", "family"]),
+});
+const importedEventSettingsSchema = z.object({
+  arrivalTime: z.string().datetime().nullable(),
+  alertLeadTimeMinutes: z.union([
+    z.literal(0), z.literal(5), z.literal(15), z.literal(30),
+    z.literal(45), z.literal(60), z.literal(1440),
+  ]).nullable(),
 });
 
 const commuterSubscriptionSchema = z.object({
@@ -1062,6 +1069,34 @@ export function buildApp({
       return source;
     } catch {
       return reply.code(502).send({ error: "calendar_source_sync_failed" });
+    }
+  });
+
+  app.patch("/v1/imported-events/:id/settings", async (request, reply) => {
+    const account = await requireParent(request, reply);
+    if (!account) return;
+    if (!calendarSources) return reply.code(503).send({ error: "calendar_sources_unavailable" });
+    const eventID = (request.params as { id: string }).id;
+    if (!z.string().uuid().safeParse(eventID).success) {
+      return reply.code(400).send({ error: "invalid_imported_event_id" });
+    }
+    const parsed = importedEventSettingsSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_imported_event_settings" });
+    try {
+      const event = await calendarSources.updateEventSettings(
+        account.familyID,
+        account.memberID,
+        eventID,
+        parsed.data,
+      );
+      if (!event) return reply.code(404).send({ error: "imported_event_not_found" });
+      await repository.markFamilyChanged(account.familyID);
+      return clientEvent(event);
+    } catch (error) {
+      if (error instanceof CalendarSourceSyncError) {
+        return reply.code(400).send({ error: "invalid_imported_event_settings" });
+      }
+      throw error;
     }
   });
 
