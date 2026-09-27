@@ -35,6 +35,7 @@ import {
   type WrappedFamilyDataKey,
 } from "./family-data-protection.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
+import type { Expense, ExpenseCursor, ExpenseDraft, ExpenseRepository } from "./expense-module.js";
 import {
   normalizedSavedPlaceLabel,
   SavedPlaceLabelConflictError,
@@ -87,7 +88,7 @@ import type {
   CommuteSubscription,
 } from "./commuter-module.js";
 
-export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository, DayBriefPersistence, ShoppingRepository {
+export class PostgresRallyrooRepository implements RallyrooRepository, CalendarSourceRepository, CommuterRepository, CommuterAlertDeliveryRepository, NotificationCenterRepository, TravelPlanningRepository, DayBriefPersistence, ShoppingRepository, ExpenseRepository {
   private constructor(
     private readonly pool: Pool,
     private readonly familyDataProtector: FamilyDataProtector,
@@ -1081,6 +1082,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       );
 
       if (familyAccounts.rowCount === 1) {
+        await client.query("DELETE FROM household_expenses WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM shopping_purchases WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM shopping_trip_plans WHERE family_id = $1", [row.family_id]);
         await client.query("DELETE FROM pantry_items WHERE family_id = $1", [row.family_id]);
@@ -1415,6 +1417,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           [existingRow.family_id, existingRow.member_id],
         );
         await client.query("DELETE FROM family_change_versions WHERE family_id = $1", [existingRow.family_id]);
+        await client.query("DELETE FROM household_expenses WHERE family_id = $1", [existingRow.family_id]);
         await client.query("DELETE FROM family_data_keys WHERE family_id = $1", [existingRow.family_id]);
       } else {
         await client.query(
@@ -3565,6 +3568,94 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     };
   }
 
+  async listExpenses(familyID: string, limit: number, cursor: ExpenseCursor | null): Promise<Expense[]> {
+    const rows = await this.pool.query<ExpenseRow>(
+      `SELECT family_id, id, created_by_member_id, spent_on::text AS spent_on,
+         version, details_ciphertext, created_at, updated_at, deleted_at FROM household_expenses
+       WHERE family_id = $1 AND deleted_at IS NULL
+         AND ($2::date IS NULL OR (spent_on, id) < ($2::date, $3::uuid))
+       ORDER BY household_expenses.spent_on DESC, household_expenses.id DESC LIMIT $4`,
+      [familyID, cursor?.spentOn ?? null, cursor?.id ?? null, limit],
+    );
+    return Promise.all(rows.rows.map((row) => this.expenseFromRow(row)));
+  }
+
+  async expense(familyID: string, id: string): Promise<Expense | null> {
+    const rows = await this.pool.query<ExpenseRow>(
+      `SELECT family_id, id, created_by_member_id, spent_on::text AS spent_on,
+         version, details_ciphertext, created_at, updated_at, deleted_at FROM household_expenses
+       WHERE family_id = $1 AND id = $2::uuid AND deleted_at IS NULL`, [familyID, id],
+    );
+    return rows.rows[0] ? this.expenseFromRow(rows.rows[0]) : null;
+  }
+
+  async createExpenseIfAbsent(expense: Expense): Promise<Expense | null> {
+    const details = await this.protectExpense(expense.familyID, expense.id, expense);
+    await this.pool.query(
+      `INSERT INTO household_expenses (family_id, id, created_by_member_id, spent_on,
+         version, details_ciphertext, created_at, updated_at)
+       VALUES ($1, $2::uuid, $3, $4::date, 1, $5, $6::timestamptz, $6::timestamptz)
+       ON CONFLICT (family_id, id) DO NOTHING`,
+      [expense.familyID, expense.id, expense.createdByMemberID, expense.spentOn,
+        details, expense.createdAt],
+    );
+    const rows = await this.pool.query<ExpenseRow>(
+      `SELECT family_id, id, created_by_member_id, spent_on::text AS spent_on,
+         version, details_ciphertext, created_at, updated_at, deleted_at FROM household_expenses WHERE family_id = $1 AND id = $2::uuid`,
+      [expense.familyID, expense.id],
+    );
+    return rows.rows[0] && !rows.rows[0].deleted_at ? this.expenseFromRow(rows.rows[0]) : null;
+  }
+
+  async updateExpense(familyID: string, id: string, version: number,
+    draft: ExpenseDraft, updatedAt: string): Promise<Expense | null> {
+    const details = await this.protectExpense(familyID, id, draft);
+    const rows = await this.pool.query<ExpenseRow>(
+      `UPDATE household_expenses
+       SET spent_on = $4::date, details_ciphertext = $5,
+           updated_at = $6::timestamptz, version = version + 1
+       WHERE family_id = $1 AND id = $2::uuid AND version = $3 AND deleted_at IS NULL
+       RETURNING family_id, id, created_by_member_id, spent_on::text AS spent_on,
+         version, details_ciphertext, created_at, updated_at, deleted_at`,
+      [familyID, id, version, draft.spentOn, details, updatedAt],
+    );
+    return rows.rows[0] ? this.expenseFromRow(rows.rows[0]) : null;
+  }
+
+  async deleteExpense(familyID: string, id: string, version: number): Promise<"deleted" | "already_deleted" | "not_found" | "conflict"> {
+    const rows = await this.pool.query(
+      `UPDATE household_expenses SET deleted_at = now(), version = version + 1
+       WHERE family_id = $1 AND id = $2::uuid AND version = $3 AND deleted_at IS NULL
+       RETURNING id`, [familyID, id, version],
+    );
+    if (rows.rowCount) return "deleted";
+    const existing = await this.pool.query<{ deleted_at: Date | null }>(
+      `SELECT deleted_at FROM household_expenses WHERE family_id = $1 AND id = $2::uuid`,
+      [familyID, id],
+    );
+    if (!existing.rows[0]) return "not_found";
+    return existing.rows[0].deleted_at ? "already_deleted" : "conflict";
+  }
+
+  private protectExpense(familyID: string, id: string, draft: ExpenseDraft): Promise<string> {
+    return this.familyDataProtector.protect(familyID, `expense:${id}:details`, JSON.stringify({
+      amountMinor: draft.amountMinor, currency: draft.currency, category: draft.category,
+      merchant: draft.merchant, note: draft.note,
+    }));
+  }
+
+  private async expenseFromRow(row: ExpenseRow): Promise<Expense> {
+    const details = JSON.parse(await this.familyDataProtector.reveal(
+      row.family_id, `expense:${row.id}:details`, row.details_ciphertext,
+    )) as Pick<Expense, "amountMinor" | "currency" | "category" | "merchant" | "note">;
+    return {
+      id: row.id, familyID: row.family_id, createdByMemberID: row.created_by_member_id,
+      spentOn: row.spent_on, version: row.version,
+      createdAt: asISOString(row.created_at), updatedAt: asISOString(row.updated_at),
+      ...details,
+    };
+  }
+
   private async revealLegacyValue(
     familyID: string,
     purpose: string,
@@ -3574,6 +3665,18 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       ? this.familyDataProtector.reveal(familyID, purpose, value)
       : value;
   }
+}
+
+interface ExpenseRow {
+  family_id: string;
+  id: string;
+  created_by_member_id: string;
+  spent_on: string;
+  version: number;
+  details_ciphertext: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+  deleted_at: Date | string | null;
 }
 
 interface ShoppingPurchaseRow {

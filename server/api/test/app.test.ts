@@ -22,6 +22,8 @@ import type {
 } from "../src/day-brief.js";
 import { InMemoryShoppingRepository } from "../src/in-memory-shopping-repository.js";
 import { ShoppingModule } from "../src/shopping-module.js";
+import { ExpenseModule } from "../src/expense-module.js";
+import { InMemoryExpenseRepository } from "../src/in-memory-expense-repository.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -529,6 +531,36 @@ describe("Rallyroo API", () => {
       installation: { status: "disabled" },
       subscriptions: [{ visibility: "personal" }, { visibility: "family" }],
     });
+    await app.close();
+  });
+
+  it("keeps categorized financial Expenses parent-only and validates money before writing", async () => {
+    const expenses = new ExpenseModule(new InMemoryExpenseRepository());
+    const app = buildApp({ identityProvider, repository: repository(), expenses });
+    const headers = { authorization: "Bearer parent-token" };
+    const id = "00000000-0000-4000-8000-000000009999";
+    const url = `/v1/household/expenses/${id}`;
+    const payload = { spentOn: "2026-09-26", amountMinor: 1999, currency: "USD",
+      category: "Activities", merchant: "Example merchant", note: null };
+    expect((await app.inject({ method: "GET", url: "/v1/household/expenses", headers: { authorization: "Bearer kid-token" } })).statusCode).toBe(403);
+    expect((await app.inject({ method: "PUT", url, headers: { authorization: "Bearer kid-token" }, payload })).statusCode).toBe(403);
+    for (const amountMinor of [0, -2, 12.1, "19.99", 1e15]) {
+      expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, amountMinor } })).statusCode).toBe(400);
+    }
+    expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, currency: "INVALID" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, currency: "EUR" } })).statusCode).toBe(400);
+    const created = await app.inject({ method: "PUT", url, headers, payload });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ id, version: 1, ...payload });
+    expect((await app.inject({ method: "PUT", url, headers, payload })).json()).toEqual(created.json());
+    expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, amountMinor: 100 } })).statusCode).toBe(409);
+    const page = await app.inject({ method: "GET", url: "/v1/household/expenses", headers });
+    expect(page.json()).toMatchObject({ expenses: [{ id }], nextCursor: null });
+    expect((await app.inject({ method: "GET", url: "/v1/household/expenses?cursor=invalid", headers })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/v1/household/expenses", headers: { authorization: "Bearer other-parent-token" } })).json().expenses).toEqual([]);
+    expect((await app.inject({ method: "DELETE", url, headers, payload: { expectedVersion: 1 } })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url, headers, payload: { expectedVersion: 1 } })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: "/v1/household/expenses", headers })).json().expenses).toEqual([]);
     await app.close();
   });
 

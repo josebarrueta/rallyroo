@@ -11,6 +11,7 @@ struct WeeklyScheduleView: View {
     private let currentMemberID: String?
     private let calendarSourceStore: (any CalendarSourceStore)?
     private let shoppingStore: (any ShoppingStore)?
+    private let expenseStore: (any ExpenseStore)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
@@ -71,6 +72,7 @@ struct WeeklyScheduleView: View {
         currentMemberID: String? = nil,
         calendarSourceStore: (any CalendarSourceStore)? = nil,
         shoppingStore: (any ShoppingStore)? = nil,
+        expenseStore: (any ExpenseStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
         occurrenceLifecycleStore: (any OccurrenceLifecycleStore)? = nil,
@@ -84,6 +86,7 @@ struct WeeklyScheduleView: View {
         self.currentMemberID = currentMemberID
         self.calendarSourceStore = calendarSourceStore
         self.shoppingStore = shoppingStore
+        self.expenseStore = expenseStore
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
         self.occurrenceLifecycleStore = occurrenceLifecycleStore
@@ -323,13 +326,14 @@ struct WeeklyScheduleView: View {
                 NavigationLink {
                     HouseholdView(
                         shoppingStore: shoppingStore,
+                        expenseStore: expenseStore,
                         canManageShoppingCatalog: allowsEditing,
                         currentMemberID: currentMemberID
                     )
                 } label: {
                     connectionCard(
                         title: "Household",
-                        subtitle: "Shopping and Pantry",
+                        subtitle: expenseStore == nil ? "Shopping and Pantry" : "Shopping and Expenses",
                         systemImage: "house"
                     )
                 }

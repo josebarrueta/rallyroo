@@ -304,6 +304,43 @@ private actor ShoppingUITestStore: ShoppingStore {
         return observation
     }
 }
+
+private actor ExpenseUITestStore: ExpenseStore {
+    private var entries: [FamilyExpense] = []
+
+    func list(limit: Int, cursor: String?) async throws -> ExpensePage {
+        ExpensePage(expenses: entries, nextCursor: nil)
+    }
+
+    func create(id: UUID, draft: ExpenseDraft) async throws -> FamilyExpense {
+        if let saved = entries.first(where: { $0.id == id }) { return saved }
+        let date = "2026-09-27T00:00:00.000Z"
+        let expense = FamilyExpense(id: id, familyID: "ui-test-family",
+            createdByMemberID: "parent", spentOn: draft.spentOn,
+            amountMinor: draft.amountMinor, currency: draft.currency,
+            category: draft.category, merchant: draft.merchant, note: draft.note,
+            version: 1, createdAt: date, updatedAt: date)
+        entries.insert(expense, at: 0)
+        return expense
+    }
+
+    func update(id: UUID, version: Int, draft: ExpenseDraft) async throws -> FamilyExpense {
+        guard let index = entries.firstIndex(where: { $0.id == id && $0.version == version })
+        else { throw URLError(.badServerResponse) }
+        let previous = entries[index]
+        let updated = FamilyExpense(id: id, familyID: previous.familyID,
+            createdByMemberID: previous.createdByMemberID, spentOn: draft.spentOn,
+            amountMinor: draft.amountMinor, currency: draft.currency,
+            category: draft.category, merchant: draft.merchant, note: draft.note,
+            version: version + 1, createdAt: previous.createdAt, updatedAt: previous.updatedAt)
+        entries[index] = updated
+        return updated
+    }
+
+    func delete(id: UUID, version: Int) async throws {
+        entries.removeAll { $0.id == id && $0.version == version }
+    }
+}
 #endif
 
 @main
@@ -332,6 +369,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let travelPlanningStore: (any TravelPlanningStore)?
     private let dayBriefStore: (any DayBriefStore)?
     private let shoppingStore: (any ShoppingStore)?
+    private let expenseStore: (any ExpenseStore)?
     private let dataIsSynced: Bool
 
     init() {
@@ -391,12 +429,16 @@ struct FamilyActivityCoordinatorApp: App {
             shoppingStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SHOPPING"] == "1"
                 ? ShoppingUITestStore()
                 : nil
+            expenseStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_EXPENSES"] == "1"
+                ? ExpenseUITestStore()
+                : nil
             inboxStore = usesDayBriefUITest
                 ? DayBriefUITestInboxStore()
                 : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
             #else
             dayBriefStore = nil
             shoppingStore = nil
+            expenseStore = nil
             inboxStore = LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
             #endif
         case .remote:
@@ -464,6 +506,7 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            expenseStore = RemoteExpenseStore(baseURL: baseURL, transport: authenticatedTransport)
 
             inboxStore = RemoteNotificationInboxStore(
                 baseURL: baseURL,
@@ -494,6 +537,7 @@ struct FamilyActivityCoordinatorApp: App {
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
                         shoppingStore: shoppingStore,
+                        expenseStore: session.role == .parent ? expenseStore : nil,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,
                         occurrenceLifecycleStore: occurrenceLifecycleStore,
@@ -538,6 +582,7 @@ struct FamilyActivityCoordinatorApp: App {
                         travelPlanningStore: travelPlanningStore,
                         dayBriefStore: session.role == .parent ? dayBriefStore : nil,
                         shoppingStore: shoppingStore,
+                        expenseStore: session.role == .parent ? expenseStore : nil,
                         canManageShoppingCatalog: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount

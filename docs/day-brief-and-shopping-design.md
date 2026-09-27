@@ -201,8 +201,9 @@ The Day Brief and Shopping modules should ship independently. Neither should del
 ## Household Expenses (planned, separate from Shopping)
 
 The Schedule's Household shortcut opens a hub for Shopping and Pantry; connected
-calendars remain in Settings. Expenses will join this hub in a separate release,
-not as an empty or nonfunctional destination.
+calendars remain in Settings. The manual parent-only Expenses ledger is
+implemented in a separate slice; see [Household Expenses](household-expenses.md).
+The merge and production rollout of that slice are distinct.
 
 An Expense represents any Family spending, categorized for later summaries; it
 is **not** inferred from item-level Shopping Purchases. Initially only parents
