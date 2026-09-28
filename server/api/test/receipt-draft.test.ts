@@ -24,6 +24,22 @@ describe("untrusted receipt OCR extraction", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it("spells out exact JSON keys when structured output is unsupported", async () => {
+    const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse(init!.body as string);
+      if (payload.format) return new Response("unsupported format", { status: 501 });
+      expect(payload.messages[0].content).toContain('"spentOn"');
+      expect(payload.messages[0].content).toContain('"totalMinor"');
+      expect(payload.messages[0].content).toContain('"lineItems"');
+      return new Response(JSON.stringify({ message: { content: `\`\`\`json\n${JSON.stringify(example)}\n\`\`\`` }, done: true }));
+    });
+    const adapter = new OllamaReceiptDraftExtractor({
+      baseURL: new URL("https://ollama.example.test"), model: "test", fetch,
+    });
+    expect(await adapter.extract("synthetic item 4.99 USD total 4.99")).toEqual(example);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects implausible provider output without leaking its body or OCR text", async () => {
     const adapter = new OllamaReceiptDraftExtractor({ baseURL: new URL("https://ollama.example.test"),
       model: "test", fetch: async () => new Response(JSON.stringify({
