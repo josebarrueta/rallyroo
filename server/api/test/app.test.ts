@@ -1778,7 +1778,7 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
-  it("lets a parent customize only arrival and alert settings for an imported event", async () => {
+  it("lets a parent customize arrival, alert, and driver settings for an imported event", async () => {
     const calendarSources = new CalendarSourceModule({
       repository: new InMemoryCalendarSourceRepository(),
       protectURL: (url) => url,
@@ -1808,7 +1808,12 @@ describe("Rallyroo API", () => {
     const updated = await app.inject({
       method: "PATCH", url: `/v1/imported-events/${imported.id}/settings`,
       headers: { authorization: "Bearer parent-token" },
-      payload: { arrivalTime: "2026-09-12T17:30:00.000Z", alertLeadTimeMinutes: 30 },
+      payload: {
+        arrivalTime: "2026-09-12T17:30:00.000Z",
+        alertLeadTimeMinutes: 30,
+        driver: null,
+        driverMemberID: "parent-1",
+      },
     });
     const after = await app.inject({
       method: "GET", url: "/v1/events",
@@ -1823,7 +1828,29 @@ describe("Rallyroo API", () => {
       readOnly: true,
       arrivalTime: "2026-09-12T17:30:00.000Z",
       alertLeadTimeMinutes: 30,
+      driver: null,
+      driverMemberID: "parent-1",
     });
+
+    const invalidDriver = await app.inject({
+      method: "PATCH", url: `/v1/imported-events/${imported.id}/settings`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        arrivalTime: null, alertLeadTimeMinutes: null,
+        driver: null, driverMemberID: "kid-1",
+      },
+    });
+    const conflictingDriverChoices = await app.inject({
+      method: "PATCH", url: `/v1/imported-events/${imported.id}/settings`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        arrivalTime: null, alertLeadTimeMinutes: null,
+        driver: "Coach", driverMemberID: "parent-1",
+      },
+    });
+    expect(invalidDriver.statusCode).toBe(400);
+    expect(invalidDriver.json()).toEqual({ error: "invalid_imported_event_driver" });
+    expect(conflictingDriverChoices.statusCode).toBe(400);
     await app.close();
   });
 
@@ -2222,7 +2249,7 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
-  it("lets only the source owner change calendar visibility", async () => {
+  it("lets only the source owner rename a calendar and change its visibility", async () => {
     const calendarSources = new CalendarSourceModule({
       repository: new InMemoryCalendarSourceRepository(),
       protectURL: (url) => url,
@@ -2257,13 +2284,13 @@ describe("Rallyroo API", () => {
       method: "PATCH",
       url: sourceURL,
       headers: { authorization: "Bearer family-parent-token" },
-      payload: { visibility: "family" },
+      payload: { name: "Corrected Work", visibility: "family" },
     });
     const shared = await app.inject({
       method: "PATCH",
       url: sourceURL,
       headers: { authorization: "Bearer parent-token" },
-      payload: { visibility: "family" },
+      payload: { name: "Corrected Work", visibility: "family" },
     });
     const familyEvents = await app.inject({
       method: "GET",
@@ -2273,8 +2300,13 @@ describe("Rallyroo API", () => {
 
     expect(forbidden.statusCode).toBe(404);
     expect(shared.statusCode).toBe(200);
-    expect(shared.json()).toMatchObject({ visibility: "family" });
-    expect(familyEvents.body).toContain("Visibility test");
+    expect(shared.json()).toMatchObject({ name: "Corrected Work", visibility: "family" });
+    expect(familyEvents.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "Visibility test",
+        provenance: [expect.objectContaining({ sourceName: "Corrected Work" })],
+      }),
+    ]));
     await app.close();
   });
 

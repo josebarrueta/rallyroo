@@ -108,12 +108,16 @@ final class WeeklyScheduleViewModel: ObservableObject {
      func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
      ) async throws -> FamilyEvent {
         let updated = try await eventStore.saveImportedEventSettings(
             for: event,
             arrivalTime: arrivalTime,
-            alertLeadTime: alertLeadTime
+            alertLeadTime: alertLeadTime,
+            driver: driver,
+            driverMemberID: driverMemberID
         )
         try? await alertScheduler?.schedule(updated)
         if let index = events.firstIndex(where: { $0.id == updated.id }) {

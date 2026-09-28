@@ -50,8 +50,9 @@ public protocol CalendarSourceStore: Sendable {
         participantIDs: [KidID],
         visibility: CalendarSourceVisibility
     ) async throws -> CalendarSourceConnection
-    func updateVisibility(
+    func update(
         _ source: CalendarSourceConnection,
+        name: String,
         visibility: CalendarSourceVisibility
     ) async throws -> CalendarSourceConnection
     func synchronize(_ source: CalendarSourceConnection) async throws -> CalendarSourceConnection
@@ -100,15 +101,16 @@ public actor RemoteCalendarSourceStore: CalendarSourceStore {
         return try decoder.decode(CalendarSourceConnection.self, from: response.body)
     }
 
-    public func updateVisibility(
+    public func update(
         _ source: CalendarSourceConnection,
+        name: String,
         visibility: CalendarSourceVisibility
     ) async throws -> CalendarSourceConnection {
         let response = try await transport.send(HTTPRequest(
             method: .patch,
             url: sourcesURL.appending(path: source.id.uuidString),
             headers: ["Content-Type": "application/json"],
-            body: try encoder.encode(UpdateCalendarSourceVisibilityRequest(visibility: visibility))
+            body: try encoder.encode(UpdateCalendarSourceRequest(name: name, visibility: visibility))
         ))
         try response.requireSuccess()
         return try decoder.decode(CalendarSourceConnection.self, from: response.body)
@@ -132,7 +134,8 @@ public actor RemoteCalendarSourceStore: CalendarSourceStore {
     }
 }
 
-private struct UpdateCalendarSourceVisibilityRequest: Codable {
+private struct UpdateCalendarSourceRequest: Codable {
+    let name: String
     let visibility: CalendarSourceVisibility
 }
 

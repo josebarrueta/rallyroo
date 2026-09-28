@@ -188,11 +188,13 @@ struct WeeklyScheduleView: View {
                         members: viewModel.members,
                         locationSearch: locationSearch,
                         travelPlanningStore: travelPlanningStore,
-                        onSaveSettings: { arrivalTime, alertLeadTime in
+                        onSaveSettings: { arrivalTime, alertLeadTime, driver, driverMemberID in
                             try await viewModel.saveImportedEventSettings(
                                 for: event,
                                 arrivalTime: arrivalTime,
-                                alertLeadTime: alertLeadTime
+                                alertLeadTime: alertLeadTime,
+                                driver: driver,
+                                driverMemberID: driverMemberID
                             )
                         }
                     )
@@ -220,11 +222,13 @@ struct WeeklyScheduleView: View {
                     members: viewModel.members,
                     locationSearch: locationSearch,
                     travelPlanningStore: travelPlanningStore,
-                    onSaveSettings: { arrivalTime, alertLeadTime in
+                    onSaveSettings: { arrivalTime, alertLeadTime, driver, driverMemberID in
                         try await viewModel.saveImportedEventSettings(
                             for: event,
                             arrivalTime: arrivalTime,
-                            alertLeadTime: alertLeadTime
+                            alertLeadTime: alertLeadTime,
+                            driver: driver,
+                            driverMemberID: driverMemberID
                         )
                     }
                 )
@@ -970,6 +974,8 @@ private struct ImportedEventDetailSheet: View {
     @State private var arrivalEnabled: Bool
     @State private var arrivalTime: Date
     @State private var alertChoice: ImportedEventAlertChoice
+    @State private var driverChoice: ImportedEventDriverChoice
+    @State private var otherDriver: String
     @State private var isSaving = false
     @State private var message: String?
     @State private var showsTravelPlan = false
@@ -978,7 +984,7 @@ private struct ImportedEventDetailSheet: View {
     let members: [FamilyMember]
     let locationSearch: any LocationSearch
     let travelPlanningStore: (any TravelPlanningStore)?
-    let onSaveSettings: (Date?, EventAlertLeadTime?) async throws -> FamilyEvent
+    let onSaveSettings: (Date?, EventAlertLeadTime?, String?, KidID?) async throws -> FamilyEvent
 
     init(
         event: FamilyEvent,
@@ -986,12 +992,15 @@ private struct ImportedEventDetailSheet: View {
         members: [FamilyMember],
         locationSearch: any LocationSearch,
         travelPlanningStore: (any TravelPlanningStore)?,
-        onSaveSettings: @escaping (Date?, EventAlertLeadTime?) async throws -> FamilyEvent
+        onSaveSettings: @escaping (Date?, EventAlertLeadTime?, String?, KidID?) async throws -> FamilyEvent
     ) {
         _event = State(initialValue: event)
         _arrivalEnabled = State(initialValue: event.arrivalTime != nil)
         _arrivalTime = State(initialValue: event.arrivalTime ?? event.startTime)
         _alertChoice = State(initialValue: ImportedEventAlertChoice(leadTime: event.alertLeadTime))
+        _driverChoice = State(initialValue: event.driverMemberID.map(ImportedEventDriverChoice.member)
+            ?? (event.driver?.isEmpty == false ? .other : .notApplicable))
+        _otherDriver = State(initialValue: event.driver ?? "")
         self.canCustomize = canCustomize
         self.members = members
         self.locationSearch = locationSearch
@@ -1050,6 +1059,20 @@ private struct ImportedEventDetailSheet: View {
                         }
                     }
                     .disabled(!canCustomize)
+
+                    Picker("Driver", selection: $driverChoice) {
+                        Text("Not applicable").tag(ImportedEventDriverChoice.notApplicable)
+                        ForEach(eligibleDrivers) { member in
+                            Text(member.name).tag(ImportedEventDriverChoice.member(member.id))
+                        }
+                        Text("Other").tag(ImportedEventDriverChoice.other)
+                    }
+                    .disabled(!canCustomize)
+                    .accessibilityIdentifier("imported-event-driver")
+                    if driverChoice == .other {
+                        TextField("Other driver", text: $otherDriver)
+                            .disabled(!canCustomize)
+                    }
 
                     if canCustomize {
                         Button("Save settings") { Task { await save() } }
@@ -1112,13 +1135,19 @@ private struct ImportedEventDetailSheet: View {
         return members.filter { ids.contains($0.id) }.map(\.name).joined(separator: ", ")
     }
 
+    private var eligibleDrivers: [FamilyMember] {
+        members.filter { $0.role == .parent || $0.canDrive }
+    }
+
     private func save() async {
         isSaving = true
         defer { isSaving = false }
         do {
             event = try await onSaveSettings(
                 arrivalEnabled ? arrivalTime : nil,
-                alertChoice.leadTime
+                alertChoice.leadTime,
+                driverChoice == .other ? optionalImportedDriver(otherDriver) : nil,
+                driverChoice.memberID
             )
             arrivalEnabled = event.arrivalTime != nil
             arrivalTime = event.arrivalTime ?? event.startTime
@@ -1127,6 +1156,22 @@ private struct ImportedEventDetailSheet: View {
             message = "The event settings could not be saved."
         }
     }
+}
+
+private enum ImportedEventDriverChoice: Hashable {
+    case notApplicable
+    case member(KidID)
+    case other
+
+    var memberID: KidID? {
+        if case .member(let id) = self { return id }
+        return nil
+    }
+}
+
+private func optionalImportedDriver(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
 
 private enum ImportedEventAlertChoice: Int, CaseIterable, Identifiable {

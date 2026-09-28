@@ -58,6 +58,7 @@ export class InMemoryCalendarSourceRepository implements CalendarSourceRepositor
         const source = this.sources.find((candidate) => candidate.id === event.sourceID);
         return structuredClone({
           ...event,
+          sourceName: source?.name ?? event.sourceName,
           sourceOwnerMemberID: source?.ownerMemberID ?? event.sourceOwnerMemberID,
           sourceVisibility: source?.visibility ?? event.sourceVisibility,
         });
