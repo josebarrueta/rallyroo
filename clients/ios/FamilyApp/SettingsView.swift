@@ -1381,8 +1381,8 @@ private struct ExpenseEditorView: View {
                     isSelected: false, requestNextTrip: false, isSaved: false, isRequested: false)
             }
             receiptNotice = suggestion.currency == "USD"
-                ? "AI proposed these details. Verify the receipt total, tax, date, category and every selected item before saving."
-                : "Currency was unclear. Verify that the receipt uses USD and enter the correct total before saving."
+                ? "AI proposed these details. Verify the receipt total, tax, date, category and every selected item before saving. Compare with the photo: items may be missed, and only the first 50 suggestions are shown."
+                : "Currency was unclear. Verify that the receipt uses USD and enter the correct total before saving. Compare with the photo: items may be missed, and only the first 50 suggestions are shown."
             if suggestion.currency != "USD" { amountText = "" }
             lastAttempt = nil
             pendingID = UUID()

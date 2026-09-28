@@ -42,6 +42,40 @@ describe("untrusted receipt OCR extraction", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds an overlong but valid item proposal without losing merchant or total", async () => {
+    const lineItems = Array.from({ length: 56 }, (_, index) => ({
+      name: `Synthetic item ${index + 1}`, amountMinor: 100,
+    }));
+    const adapter = new OllamaReceiptDraftExtractor({
+      baseURL: new URL("https://ollama.example.test"), model: "test",
+      fetch: async () => new Response(JSON.stringify({
+        message: { content: JSON.stringify({ ...example, lineItems }) }, done: true,
+      })),
+    });
+    const draft = await adapter.extract("synthetic receipt text longer than twenty characters");
+    expect(draft.merchant).toBe(example.merchant);
+    expect(draft.totalMinor).toBe(example.totalMinor);
+    expect(draft.lineItems).toEqual(lineItems.slice(0, 50));
+  });
+
+  it("rejects invalid overflow entries and proposals beyond the bounded provider limit", async () => {
+    for (const lineItems of [
+      Array.from({ length: 56 }, (_, index) => ({
+        name: `Synthetic item ${index + 1}`, amountMinor: index === 55 ? -1 : 100,
+      })),
+      Array.from({ length: 101 }, (_, index) => ({ name: `Synthetic item ${index + 1}`, amountMinor: 100 })),
+    ]) {
+      const adapter = new OllamaReceiptDraftExtractor({
+        baseURL: new URL("https://ollama.example.test"), model: "test",
+        fetch: async () => new Response(JSON.stringify({
+          message: { content: JSON.stringify({ ...example, lineItems }) }, done: true,
+        })),
+      });
+      await expect(adapter.extract("synthetic receipt with many purchased items"))
+        .rejects.toMatchObject({ reason: "invalid_response" });
+    }
+  });
+
   it("rejects implausible provider output without leaking its body or OCR text", async () => {
     const adapter = new OllamaReceiptDraftExtractor({ baseURL: new URL("https://ollama.example.test"),
       model: "test", fetch: async () => new Response(JSON.stringify({

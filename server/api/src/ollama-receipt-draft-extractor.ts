@@ -14,6 +14,11 @@ interface Configuration {
 }
 
 const envelopeSchema = z.object({ message: z.object({ content: z.string() }), done: z.boolean() });
+// The model may ignore the requested 50-item limit. Validate every proposed
+// item before discarding overflow; never send more than 50 to the client.
+const providerReceiptDraftSchema = receiptDraftSchema.extend({
+  lineItems: z.array(receiptDraftSchema.shape.lineItems.element).max(100),
+});
 
 export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
   private readonly chatURL: URL;
@@ -35,7 +40,11 @@ export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
       const envelope = envelopeSchema.parse(await response.json());
       const raw = envelope.message.content.trim();
       const candidate = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i)?.[1] ?? raw;
-      const draft = receiptDraftSchema.parse(JSON.parse(candidate));
+      const proposed = providerReceiptDraftSchema.parse(JSON.parse(candidate));
+      const draft = receiptDraftSchema.parse({
+        ...proposed,
+        lineItems: proposed.lineItems.slice(0, 50),
+      });
       if (draft.spentOn && (Number.isNaN(Date.parse(`${draft.spentOn}T00:00:00Z`))
         || new Date(`${draft.spentOn}T00:00:00Z`).toISOString().slice(0, 10) !== draft.spentOn)) {
         throw new ReceiptDraftProviderError("invalid_response");
