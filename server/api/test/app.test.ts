@@ -579,6 +579,41 @@ describe("Rallyroo API", () => {
     }
   });
 
+  it("bounds receipt request bytes and rejects unexpected shapes without forwarding OCR", async () => {
+    const forwarded: string[] = [];
+    const app = buildApp({ identityProvider, repository: repository(),
+      receiptDraftExtractor: { extract: async (text) => {
+        forwarded.push(text);
+        return { merchant: null, spentOn: null, totalMinor: null, currency: null,
+          category: null, lineItems: [] };
+      } },
+    });
+    const url = "/v1/household/receipt-drafts";
+    const headers = { authorization: "Bearer parent-token", "content-type": "application/json" };
+    const hostile = "<script>alert('x')</script> ' OR 1=1 --";
+    for (const payload of [
+      { ocrText: hostile, extra: "not allowed" }, { ocrText: [hostile] },
+      { ocrText: { nested: hostile } },
+    ]) {
+      const response = await app.inject({ method: "POST", url, headers, payload });
+      expect(response.statusCode).toBe(400);
+      expect(response.body).not.toContain(hostile);
+    }
+    expect(forwarded).toEqual([]);
+    const tooLarge = await app.inject({ method: "POST", url, headers,
+      payload: { ocrText: "a".repeat(10_000), extra: "x".repeat(8_000) } });
+    expect(tooLarge.statusCode).toBe(413);
+    expect(tooLarge.body).not.toContain("aaaaa");
+    expect(forwarded).toEqual([]);
+    const accepted = await app.inject({ method: "POST", url, headers, payload: { ocrText: hostile } });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.headers["content-type"]).toMatch(/^application\/json/);
+    expect(accepted.headers["x-content-type-options"]).toBe("nosniff");
+    expect(forwarded).toEqual([hostile]); // Content is data, not commands or HTML.
+    expect(accepted.body).not.toContain(hostile);
+    await app.close();
+  });
+
   it("keeps categorized financial Expenses parent-only and validates money before writing", async () => {
     const expenses = new ExpenseModule(new InMemoryExpenseRepository());
     const app = buildApp({ identityProvider, repository: repository(), expenses });
