@@ -633,8 +633,13 @@ export function buildApp({
   });
 
   app.post("/v1/household/receipt-drafts", {
+    // Fastify rejects oversized JSON before parsing or invoking the extractor.
+    // The text limit below is in characters; the wire limit also bounds UTF-8 bytes.
+    bodyLimit: 16 * 1024,
     config: { rateLimit: { max: 5, timeWindow: 60_000 } },
   }, async (request, reply) => {
+    // The response is JSON data, never HTML; prevent MIME sniffing by browsers.
+    reply.header("x-content-type-options", "nosniff");
     const account = await requireParent(request, reply);
     if (!account) return;
     const parsed = receiptRequestSchema.safeParse(request.body);

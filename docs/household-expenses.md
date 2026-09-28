@@ -38,12 +38,17 @@ acceptance steps; a merged PR does not mean either was shipped.
 From Add Expense, a parent can select or take a receipt photo. Camera captures
 are downsampled to 4,000 pixels on their longest edge and encoded within 5 MiB;
 iOS checks images against 5 MiB / 24 MP limits and runs Vision OCR on-device. **Only bounded OCR text**
-(up to 10,000 characters), not the image, goes to the authenticated, parent-only
-API and private Ollama deployment. The photo and OCR text are not saved by the
+(up to 10,000 characters in a JSON body capped at 16 KiB), not the image,
+goes to the authenticated, parent-only API and private Ollama deployment. The photo and OCR text are not saved by the
 Expense API; the draft remains transient in the editing sheet. Clear the sheet
 to discard it. The extraction endpoint is rate limited and unavailable when
 Ollama is not configured. Model output is schema-validated and errors never echo
-OCR or financial details. The provider allows enough output tokens for the
+OCR or financial details. The API rejects unexpected request fields and types;
+the OCR text remains untrusted data. Do not use SQL/XSS keyword blacklists: real
+item names may contain punctuation and attack strings can bypass such filters.
+Use strict shape/length/byte limits, parameterized persistence, JSON-only responses
+with `nosniff`, and safe text rendering instead. Provider output is validated and
+requires parent review before any write. The provider allows enough output tokens for the
 bounded 100-item proposal so long receipts are not cut off mid-JSON. The API
 validates all 100 suggestions without truncating them; a model response with
 more than 100 items is rejected, not silently shortened. The editor warns that

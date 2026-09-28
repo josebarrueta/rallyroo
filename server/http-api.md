@@ -267,7 +267,10 @@ amount, currency, category, merchant and notes are encrypted at rest under
 per-Family keys.
 
 - `POST /v1/household/receipt-drafts` (parent-only, bounded/rate-limited) with
-  `{ "ocrText": "20–10,000 characters" }` returns an **unverified**, transient
+  a JSON object containing **only** `{ "ocrText": "20–10,000 characters" }`;
+  the full request body is capped at 16 KiB. Larger bodies return 413 before
+  extraction. Accepted text is untrusted data, not HTML, SQL or model instructions;
+  it is not stored or included in error responses. The endpoint returns an **unverified**, transient
   proposal `{ "merchant", "spentOn", "totalMinor", "currency", "category",
   "lineItems": [{ "name", "amountMinor" }] }`. Unknown values are null.
   It performs no writes, never accepts a photo upload, and returns at most 100
