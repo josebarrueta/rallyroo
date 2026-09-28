@@ -17,6 +17,21 @@ public struct ExpenseDraft: Codable, Equatable, Sendable {
     self.merchant = merchant
     self.note = note
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case spentOn, amountMinor, currency, category, merchant, note
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var fields = encoder.container(keyedBy: CodingKeys.self)
+    try fields.encode(spentOn, forKey: .spentOn)
+    try fields.encode(amountMinor, forKey: .amountMinor)
+    try fields.encode(currency, forKey: .currency)
+    try fields.encode(category, forKey: .category)
+    // The API requires nullable fields to be present even when empty.
+    try fields.encode(merchant, forKey: .merchant)
+    try fields.encode(note, forKey: .note)
+  }
 }
 
 public struct FamilyExpense: Codable, Equatable, Identifiable, Sendable {
@@ -83,6 +98,30 @@ public enum ExpenseAmount {
   }
 }
 
+/// Content-free feedback: never include a server response body or Expense details.
+public enum ExpenseSaveFeedback {
+  public static func message(for error: Error, expenseSaved: Bool) -> String {
+    if expenseSaved {
+      return "The Expense was saved, but selected Pantry items were not. Resolve duplicates or deselect them before retrying."
+    }
+    if case let RemoteStoreError.requestFailed(statusCode) = error {
+      switch statusCode {
+      case 400:
+        return "The Expense was rejected by the server and was not saved. Review its fields and retry."
+      case 401, 403:
+        return "Parent access is required to save this Expense. It was not saved."
+      case 503:
+        return "Expenses are temporarily unavailable. The save could not be confirmed; retry without changing the entry."
+      case 500...599:
+        return "The Expense server could not confirm the save. Retry without changing the entry to avoid duplicates."
+      default:
+        return "The Expense save could not be confirmed (HTTP \(statusCode)). Retry without changing the entry."
+      }
+    }
+    return "The Expense save could not be confirmed. Retry without changing the entry; duplicate retries use the same ID."
+  }
+}
+
 public actor RemoteExpenseStore: ExpenseStore {
   private let expensesURL: URL
   private let transport: any HTTPTransport
@@ -133,6 +172,10 @@ public actor RemoteExpenseStore: ExpenseStore {
 }
 
 private struct ExpenseCorrection: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case spentOn, amountMinor, currency, category, merchant, note, expectedVersion
+  }
+
   let spentOn: String
   let amountMinor: Int
   let currency: String
@@ -149,6 +192,17 @@ private struct ExpenseCorrection: Encodable {
     merchant = draft.merchant
     note = draft.note
     self.expectedVersion = expectedVersion
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var fields = encoder.container(keyedBy: CodingKeys.self)
+    try fields.encode(spentOn, forKey: .spentOn)
+    try fields.encode(amountMinor, forKey: .amountMinor)
+    try fields.encode(currency, forKey: .currency)
+    try fields.encode(category, forKey: .category)
+    try fields.encode(merchant, forKey: .merchant)
+    try fields.encode(note, forKey: .note)
+    try fields.encode(expectedVersion, forKey: .expectedVersion)
   }
 }
 

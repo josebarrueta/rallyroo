@@ -93,6 +93,32 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Test Market"].waitForExistence(timeout: 5))
     }
 
+    func testParentExplicitlySelectsAndDeselectsAllPantryItemsWithoutShoppingOptIn() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPENSES"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_RECEIPT"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-household"].tap()
+        app.buttons["Expenses"].tap()
+        XCTAssertTrue(app.buttons["Add expense"].waitForExistence(timeout: 5))
+        app.buttons["Add expense"].tap()
+        app.buttons["Preview test receipt"].tap()
+        let selectAll = app.buttons["receipt-select-all-pantry"]
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+        XCTAssertEqual(selectAll.label, "Select all Pantry items")
+        selectAll.tap()
+        XCTAssertEqual(app.buttons["Add Milk to Pantry"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["Add Bread to Pantry"].value as? String, "Selected")
+        XCTAssertEqual(app.buttons["Request Milk for future Shopping"].value as? String, "Not selected")
+        XCTAssertEqual(app.buttons["Request Bread for future Shopping"].value as? String, "Not selected")
+        XCTAssertEqual(selectAll.label, "Deselect all Pantry items")
+        selectAll.tap()
+        XCTAssertEqual(app.buttons["Add Milk to Pantry"].value as? String, "Not selected")
+        XCTAssertEqual(app.buttons["Add Bread to Pantry"].value as? String, "Not selected")
+    }
+
     func testRejectedReceiptProposalExplainsTheHundredItemLimitWithoutEnablingSave() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
