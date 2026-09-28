@@ -62,6 +62,7 @@ final class RemoteEventStoreTests: XCTestCase {
         var updated = sampleEvent()
         updated.arrivalTime = Date(timeIntervalSince1970: 1_735_838_000)
         updated.alertLeadTime = .thirtyMinutes
+        updated.driverMemberID = KidID(rawValue: "parent-1")
         updated.isReadOnly = true
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -76,11 +77,14 @@ final class RemoteEventStoreTests: XCTestCase {
         let result = try await store.saveImportedEventSettings(
             for: updated,
             arrivalTime: updated.arrivalTime,
-            alertLeadTime: .thirtyMinutes
+            alertLeadTime: .thirtyMinutes,
+            driver: nil,
+            driverMemberID: KidID(rawValue: "parent-1")
         )
 
         XCTAssertEqual(result.arrivalTime, updated.arrivalTime)
         XCTAssertEqual(result.alertLeadTime, .thirtyMinutes)
+        XCTAssertEqual(result.driverMemberID, KidID(rawValue: "parent-1"))
         let requests = await transport.recordedRequests()
         let request = try XCTUnwrap(requests.first)
         XCTAssertEqual(request.method, .patch)
@@ -92,6 +96,8 @@ final class RemoteEventStoreTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(json["alertLeadTimeMinutes"] as? Int, 30)
         XCTAssertEqual(json["arrivalTime"] as? String, "2025-01-02T17:13:20Z")
+        XCTAssertEqual(json["driverMemberID"] as? String, "parent-1")
+        XCTAssertTrue(json["driver"] is NSNull)
         XCTAssertNil(json["title"])
         XCTAssertNil(json["location"])
     }

@@ -609,9 +609,39 @@ final class FamilyAppUITests: XCTestCase {
         app.switches["imported-event-arrive-by"].tap()
         app.buttons["Alert, None"].tap()
         app.buttons["30 minutes before"].tap()
+        app.buttons["Driver, Not applicable"].tap()
+        app.buttons["Other"].tap()
+        app.textFields["Other driver"].tap()
+        app.textFields["Other driver"].typeText("Coach Alex")
         app.buttons["save-imported-event-settings"].tap()
         XCTAssertTrue(app.alerts["Event settings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts["Event settings"].staticTexts["Rallyroo settings saved."].exists)
+    }
+
+    func testConnectedCalendarHasVisibleSyncAndEditableName() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALENDAR_SOURCE"] = "1"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Connected calendars"].tap()
+        XCTAssertTrue(app.navigationBars["Calendars"].waitForExistence(timeout: 5))
+        app.buttons["calendar-source-00000000-0000-4000-8000-000000000301"].tap()
+
+        XCTAssertTrue(app.navigationBars["Calendar details"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sync-calendar-now"].exists)
+        let name = app.textFields["calendar-source-name"]
+        name.tap()
+        name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20))
+        name.typeText("Santiago AYSO Soccer")
+        app.buttons["save-calendar-source"].tap()
+
+        XCTAssertTrue(app.staticTexts["Santiago AYSO Soccer"].waitForExistence(timeout: 5))
+        app.buttons["calendar-source-00000000-0000-4000-8000-000000000301"].tap()
+        XCTAssertTrue(app.buttons["sync-calendar-now"].waitForExistence(timeout: 5))
+        app.buttons["sync-calendar-now"].tap()
+        XCTAssertTrue(app.navigationBars["Calendars"].waitForExistence(timeout: 5))
     }
 
     private func addFamilyMember(named name: String, in app: XCUIApplication) {

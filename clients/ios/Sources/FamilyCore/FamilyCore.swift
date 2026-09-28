@@ -234,7 +234,9 @@ public protocol EventStore: Sendable {
     func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
     ) async throws -> FamilyEvent
     func clearCache() async throws
 }
@@ -260,7 +262,9 @@ public extension EventStore {
     func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
     ) async throws -> FamilyEvent {
         throw EventValidationError.importedEventSettingsUnsupported
     }
@@ -314,7 +318,9 @@ public actor LocalEventStore: EventStore {
     public func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
     ) async throws -> FamilyEvent {
         guard event.isReadOnly else {
             throw EventValidationError.importedEventSettingsUnsupported
@@ -325,6 +331,8 @@ public actor LocalEventStore: EventStore {
         var updated = event
         updated.arrivalTime = arrivalTime
         updated.alertLeadTime = alertLeadTime
+        updated.driver = driver
+        updated.driverMemberID = driverMemberID
         var savedEvents = try await events()
         savedEvents.removeAll { $0.id == event.id }
         savedEvents.append(updated)

@@ -55,6 +55,8 @@ export interface ImportedEventSettings {
   eventID: string;
   arrivalTime: string | null;
   alertLeadTimeMinutes: 0 | 5 | 15 | 30 | 45 | 60 | 1440 | null;
+  driver: string | null;
+  driverMemberID: string | null;
 }
 
 export interface CalendarSourceRepository {
@@ -137,15 +139,15 @@ export class CalendarSourceModule {
       .map(publicCalendarSource);
   }
 
-  async updateVisibility(
+  async update(
     familyID: string,
     sourceID: string,
     requesterMemberID: string,
-    visibility: CalendarSourceVisibility,
+    settings: Pick<CalendarSource, "visibility"> & { name?: string | undefined },
   ): Promise<PublicCalendarSource | null> {
     const source = await this.dependencies.repository.calendarSource(familyID, sourceID);
     if (!source || source.ownerMemberID !== requesterMemberID) return null;
-    const updated = { ...source, visibility };
+    const updated = { ...source, ...settings, name: settings.name ?? source.name };
     await this.dependencies.repository.saveCalendarSource(updated);
     return publicCalendarSource(updated);
   }
@@ -245,7 +247,10 @@ export class CalendarSourceModule {
     familyID: string,
     viewerMemberID: string,
     eventID: string,
-    settings: Pick<ImportedEventSettings, "arrivalTime" | "alertLeadTimeMinutes">,
+    settings: Pick<ImportedEventSettings, "arrivalTime" | "alertLeadTimeMinutes"> & {
+      driver?: string | null | undefined;
+      driverMemberID?: string | null | undefined;
+    },
   ): Promise<FamilyEvent | null> {
     const event = (await this.events(familyID, viewerMemberID))
       .find((candidate) => candidate.id.toLowerCase() === eventID.toLowerCase());
@@ -256,15 +261,25 @@ export class CalendarSourceModule {
         throw new CalendarSourceSyncError("Imported event arrival time is invalid");
       }
     }
-    await this.dependencies.repository.saveImportedEventSettings({
+    const customized = {
       familyID,
       eventID: event.id,
-      ...settings,
-    });
-    return {
-      ...event,
       arrivalTime: settings.arrivalTime,
       alertLeadTimeMinutes: settings.alertLeadTimeMinutes,
+      driver: settings.driver !== undefined
+        ? settings.driver
+        : (settings.driverMemberID !== undefined ? null : event.driver),
+      driverMemberID: settings.driverMemberID !== undefined
+        ? settings.driverMemberID
+        : (settings.driver !== undefined ? null : (event.driverMemberID ?? null)),
+    };
+    await this.dependencies.repository.saveImportedEventSettings(customized);
+    return {
+      ...event,
+      arrivalTime: customized.arrivalTime,
+      alertLeadTimeMinutes: customized.alertLeadTimeMinutes,
+      driver: customized.driver,
+      driverMemberID: customized.driverMemberID,
     };
   }
 
@@ -279,6 +294,8 @@ export class CalendarSourceModule {
         ...event,
         arrivalTime: customized.arrivalTime,
         alertLeadTimeMinutes: customized.alertLeadTimeMinutes,
+        driver: customized.driver,
+        driverMemberID: customized.driverMemberID,
       } : event;
     });
   }

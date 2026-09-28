@@ -504,6 +504,7 @@ struct CalendarSourcesView: View {
     @State private var sources: [CalendarSourceConnection] = []
     @State private var members: [FamilyMember] = []
     @State private var isAdding = false
+    @State private var selectedSource: CalendarSourceConnection?
     @State private var errorMessage: String?
 
     init(
@@ -528,44 +529,40 @@ struct CalendarSourcesView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(sources) { source in
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text(source.name).font(.headline)
-                        if source.id.uuidString.lowercased() == initialSourceID?.lowercased() {
+                Button {
+                    selectedSource = source
+                } label: {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text(source.name).font(.headline)
                             Spacer()
-                            Label("Selected event source", systemImage: "link")
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.purple)
+                            if source.id.uuidString.lowercased() == initialSourceID?.lowercased() {
+                                Label("Selected event source", systemImage: "link")
+                                    .font(.caption2)
+                                    .foregroundStyle(AppTheme.purple)
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
                         }
-                    }
-                    Text(participantNames(for: source))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Label(
-                        source.visibility == .personal ? "Personal" : "Shared with family",
-                        systemImage: source.visibility == .personal ? "person" : "person.2"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    Label(statusText(source), systemImage: statusIcon(source.status))
+                        Text(participantNames(for: source))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Label(
+                            source.visibility == .personal ? "Personal" : "Shared with family",
+                            systemImage: source.visibility == .personal ? "person" : "person.2"
+                        )
                         .font(.caption)
-                        .foregroundStyle(source.status == .error ? .red : .secondary)
-                }
-                .swipeActions(edge: .leading) {
-                    Button("Sync") { Task { await synchronize(source) } }
-                        .tint(AppTheme.purple)
-                    if source.ownerMemberID == currentMemberID {
-                        Button(source.visibility == .personal ? "Share" : "Make Personal") {
-                            Task { await toggleVisibility(source) }
-                        }
-                        .tint(AppTheme.mint)
+                        .foregroundStyle(.secondary)
+                        Label(statusText(source), systemImage: statusIcon(source.status))
+                            .font(.caption)
+                            .foregroundStyle(source.status == .error ? .red : .secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) {
-                        Task { await delete(source) }
-                    }
-                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("calendar-source-\(source.id.uuidString.lowercased())")
             }
         }
         .navigationTitle("Calendars")
@@ -574,6 +571,21 @@ struct CalendarSourcesView: View {
                 .disabled(members.isEmpty)
         }
         .task { await load() }
+        .sheet(item: $selectedSource) { source in
+            NavigationStack {
+                CalendarSourceDetailView(
+                    source: source,
+                    canEdit: source.ownerMemberID == currentMemberID,
+                    participantNames: participantNames(for: source),
+                    store: store,
+                    onChanged: {
+                        selectedSource = nil
+                        await load()
+                        NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                    }
+                )
+            }
+        }
         .sheet(isPresented: $isAdding) {
             AddCalendarSourceView(members: members) { name, url, participantIDs, visibility in
                 _ = try await store.connect(
@@ -601,40 +613,6 @@ struct CalendarSourcesView: View {
         }
     }
 
-    private func synchronize(_ source: CalendarSourceConnection) async {
-        do {
-            _ = try await store.synchronize(source)
-            await load()
-            NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-        } catch {
-            await load()
-            errorMessage = "The calendar could not be synchronized."
-        }
-    }
-
-    private func toggleVisibility(_ source: CalendarSourceConnection) async {
-        do {
-            _ = try await store.updateVisibility(
-                source,
-                visibility: source.visibility == .personal ? .family : .personal
-            )
-            await load()
-            NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-        } catch {
-            errorMessage = "Calendar visibility could not be changed."
-        }
-    }
-
-    private func delete(_ source: CalendarSourceConnection) async {
-        do {
-            try await store.delete(source)
-            await load()
-            NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
-        } catch {
-            errorMessage = "The calendar could not be removed."
-        }
-    }
-
     private func participantNames(for source: CalendarSourceConnection) -> String {
         members.filter { source.participantIDs.contains($0.id) }
             .map(\.name)
@@ -655,6 +633,135 @@ struct CalendarSourcesView: View {
         case .pending: "clock"
         case .ready: "checkmark.circle"
         case .error: "exclamationmark.triangle"
+        }
+    }
+}
+
+private struct CalendarSourceDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var visibility: CalendarSourceVisibility
+    @State private var isWorking = false
+    @State private var message: String?
+
+    let source: CalendarSourceConnection
+    let canEdit: Bool
+    let participantNames: String
+    let store: any CalendarSourceStore
+    let onChanged: () async -> Void
+
+    init(
+        source: CalendarSourceConnection,
+        canEdit: Bool,
+        participantNames: String,
+        store: any CalendarSourceStore,
+        onChanged: @escaping () async -> Void
+    ) {
+        self.source = source
+        self.canEdit = canEdit
+        self.participantNames = participantNames
+        self.store = store
+        self.onChanged = onChanged
+        _name = State(initialValue: source.name)
+        _visibility = State(initialValue: source.visibility)
+    }
+
+    var body: some View {
+        Form {
+            Section("Calendar") {
+                TextField("Calendar name", text: $name)
+                    .disabled(!canEdit)
+                    .accessibilityIdentifier("calendar-source-name")
+                LabeledContent("Family members", value: participantNames)
+                Picker("Visibility", selection: $visibility) {
+                    Text("Personal").tag(CalendarSourceVisibility.personal)
+                    Text("Shared with family").tag(CalendarSourceVisibility.family)
+                }
+                .disabled(!canEdit)
+            }
+
+            Section("Synchronization") {
+                LabeledContent("Last sync", value: syncStatus)
+                Button {
+                    Task { await synchronize() }
+                } label: {
+                    Label("Sync now", systemImage: "arrow.clockwise")
+                }
+                .disabled(isWorking)
+                .accessibilityIdentifier("sync-calendar-now")
+            }
+
+            if canEdit {
+                Section {
+                    Button("Save changes") { Task { await save() } }
+                        .disabled(isWorking || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("save-calendar-source")
+                    Button("Remove calendar", role: .destructive) { Task { await remove() } }
+                        .disabled(isWorking)
+                }
+            }
+        }
+        .navigationTitle("Calendar details")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .alert("Calendar", isPresented: Binding(
+            get: { message != nil },
+            set: { if !$0 { message = nil } }
+        )) {
+            Button("OK") { message = nil }
+        } message: {
+            Text(message ?? "")
+        }
+    }
+
+    private var syncStatus: String {
+        if let date = source.lastSyncedAt {
+            return date.formatted(.relative(presentation: .named))
+        }
+        switch source.status {
+        case .pending: return "Waiting for first sync"
+        case .ready: return "Ready"
+        case .error: return "Last sync failed"
+        }
+    }
+
+    private func synchronize() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await store.synchronize(source)
+            await onChanged()
+        } catch {
+            message = "The calendar could not be synchronized."
+        }
+    }
+
+    private func save() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            _ = try await store.update(
+                source,
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                visibility: visibility
+            )
+            await onChanged()
+        } catch {
+            message = "The calendar changes could not be saved."
+        }
+    }
+
+    private func remove() async {
+        isWorking = true
+        defer { isWorking = false }
+        do {
+            try await store.delete(source)
+            await onChanged()
+        } catch {
+            message = "The calendar could not be removed."
         }
     }
 }

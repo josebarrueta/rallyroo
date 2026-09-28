@@ -204,15 +204,20 @@ const memberSchema = z.object({
   canDrive: z.boolean().default(false),
 });
 
-const calendarSourceVisibilitySchema = z.object({
+const calendarSourceUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
   visibility: z.enum(["personal", "family"]),
-});
+}).strict();
 const importedEventSettingsSchema = z.object({
   arrivalTime: z.string().datetime().nullable(),
   alertLeadTimeMinutes: z.union([
     z.literal(0), z.literal(5), z.literal(15), z.literal(30),
     z.literal(45), z.literal(60), z.literal(1440),
   ]).nullable(),
+  driver: z.string().trim().min(1).max(200).nullable().optional(),
+  driverMemberID: z.string().trim().min(1).nullable().optional(),
+}).strict().refine((settings) => !(settings.driver && settings.driverMemberID), {
+  message: "driverMemberID and driver cannot both be set",
 });
 
 const commuterSubscriptionSchema = z.object({
@@ -1027,13 +1032,13 @@ export function buildApp({
     const account = await requireParent(request, reply);
     if (!account) return;
     if (!calendarSources) return reply.code(503).send({ error: "calendar_sources_unavailable" });
-    const parsed = calendarSourceVisibilitySchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_calendar_source_visibility" });
-    const source = await calendarSources.updateVisibility(
+    const parsed = calendarSourceUpdateSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_calendar_source_settings" });
+    const source = await calendarSources.update(
       account.familyID,
       (request.params as { id: string }).id,
       account.memberID,
-      parsed.data.visibility,
+      parsed.data,
     );
     if (!source) return reply.code(404).send({ error: "calendar_source_not_found" });
     await repository.markFamilyChanged(account.familyID);
@@ -1082,6 +1087,13 @@ export function buildApp({
     }
     const parsed = importedEventSettingsSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_imported_event_settings" });
+    if (parsed.data.driverMemberID) {
+      const driver = (await repository.membersForFamily(account.familyID))
+        .find((member) => member.id === parsed.data.driverMemberID);
+      if (!driver || (driver.role === "kid" && driver.canDrive !== true)) {
+        return reply.code(400).send({ error: "invalid_imported_event_driver" });
+      }
+    }
     try {
       const event = await calendarSources.updateEventSettings(
         account.familyID,

@@ -2196,17 +2196,26 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       event_id: string;
       arrival_time: Date | string | null;
       alert_lead_time_minutes: ImportedEventSettings["alertLeadTimeMinutes"];
+      driver: string | null;
+      driver_member_id: string | null;
     }>(
-      `SELECT family_id, event_id::text, arrival_time, alert_lead_time_minutes
+      `SELECT family_id, event_id::text, arrival_time, alert_lead_time_minutes,
+              driver, driver_member_id
        FROM imported_event_settings WHERE family_id = $1`,
       [familyID],
     );
-    return result.rows.map((row) => ({
+    return Promise.all(result.rows.map(async (row) => ({
       familyID: row.family_id,
       eventID: row.event_id,
       arrivalTime: row.arrival_time === null ? null : asISOString(row.arrival_time),
       alertLeadTimeMinutes: row.alert_lead_time_minutes,
-    }));
+      driver: row.driver === null ? null : await this.revealLegacyValue(
+        row.family_id,
+        `imported_event_settings/${row.event_id}/driver`,
+        row.driver,
+      ),
+      driverMemberID: row.driver_member_id,
+    })));
   }
 
   async familyIDsWithImportedEventSettings(): Promise<string[]> {
@@ -2217,16 +2226,23 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 
   async saveImportedEventSettings(settings: ImportedEventSettings): Promise<void> {
+    const driver = settings.driver === null ? null : await this.familyDataProtector.protect(
+      settings.familyID,
+      `imported_event_settings/${settings.eventID}/driver`,
+      settings.driver,
+    );
     await this.pool.query(
       `INSERT INTO imported_event_settings (
-         family_id, event_id, arrival_time, alert_lead_time_minutes
-       ) VALUES ($1,$2,$3,$4)
+         family_id, event_id, arrival_time, alert_lead_time_minutes, driver, driver_member_id
+       ) VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (family_id, event_id) DO UPDATE SET
          arrival_time=EXCLUDED.arrival_time,
-         alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes`,
+         alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
+         driver=EXCLUDED.driver,
+         driver_member_id=EXCLUDED.driver_member_id`,
       [
         settings.familyID, settings.eventID, settings.arrivalTime,
-        settings.alertLeadTimeMinutes,
+        settings.alertLeadTimeMinutes, driver, settings.driverMemberID,
       ],
     );
   }

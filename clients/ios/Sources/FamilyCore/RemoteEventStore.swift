@@ -80,9 +80,25 @@ public actor RemoteEventStore: EventStore {
         let events: [FamilyEvent]
     }
 
-    private struct ImportedEventSettingsRequest: Codable {
+    private struct ImportedEventSettingsRequest: Encodable {
         let arrivalTime: Date?
         let alertLeadTimeMinutes: Int?
+        let driver: String?
+        let driverMemberID: KidID?
+
+        private enum CodingKeys: String, CodingKey {
+            case arrivalTime, alertLeadTimeMinutes, driver, driverMemberID
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(arrivalTime, forKey: .arrivalTime)
+            try container.encode(alertLeadTimeMinutes, forKey: .alertLeadTimeMinutes)
+            if let driver { try container.encode(driver, forKey: .driver) }
+            else { try container.encodeNil(forKey: .driver) }
+            if let driverMemberID { try container.encode(driverMemberID, forKey: .driverMemberID) }
+            else { try container.encodeNil(forKey: .driverMemberID) }
+        }
     }
 
     private struct RecurringEditRequest: Codable {
@@ -251,7 +267,9 @@ public actor RemoteEventStore: EventStore {
     public func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
     ) async throws -> FamilyEvent {
         let url = eventsURL
             .deletingLastPathComponent()
@@ -264,7 +282,9 @@ public actor RemoteEventStore: EventStore {
             headers: ["Content-Type": "application/json"],
             body: try encoder.encode(ImportedEventSettingsRequest(
                 arrivalTime: arrivalTime,
-                alertLeadTimeMinutes: alertLeadTime?.rawValue
+                alertLeadTimeMinutes: alertLeadTime?.rawValue,
+                driver: driver,
+                driverMemberID: driverMemberID
             ))
         ))
         try response.requireSuccess()

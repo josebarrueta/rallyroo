@@ -102,10 +102,14 @@ private actor ImportedEventUITestEventStore: EventStore {
     func saveImportedEventSettings(
         for event: FamilyEvent,
         arrivalTime: Date?,
-        alertLeadTime: EventAlertLeadTime?
+        alertLeadTime: EventAlertLeadTime?,
+        driver: String?,
+        driverMemberID: KidID?
     ) async throws -> FamilyEvent {
         self.event.arrivalTime = arrivalTime
         self.event.alertLeadTime = alertLeadTime
+        self.event.driver = driver
+        self.event.driverMemberID = driverMemberID
         return self.event
     }
     func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws { throw CocoaError(.featureUnsupported) }
@@ -394,6 +398,60 @@ private actor ExpenseUITestStore: ExpenseStore {
         entries.removeAll { $0.id == id && $0.version == version }
     }
 }
+
+private actor CalendarSourceUITestStore: CalendarSourceStore {
+    private var source = CalendarSourceConnection(
+        id: UUID(uuidString: "00000000-0000-4000-8000-000000000301")!,
+        ownerMemberID: "local-parent",
+        visibility: .family,
+        name: "Santiago AYSO",
+        participantIDs: [],
+        status: .ready,
+        lastSyncedAt: Date().addingTimeInterval(-7 * 60)
+    )
+
+    func sources() async throws -> [CalendarSourceConnection] { [source] }
+
+    func connect(
+        name: String,
+        url: URL,
+        participantIDs: [KidID],
+        visibility: CalendarSourceVisibility
+    ) async throws -> CalendarSourceConnection { source }
+
+    func update(
+        _ source: CalendarSourceConnection,
+        name: String,
+        visibility: CalendarSourceVisibility
+    ) async throws -> CalendarSourceConnection {
+        self.source = CalendarSourceConnection(
+            id: source.id,
+            ownerMemberID: source.ownerMemberID,
+            visibility: visibility,
+            name: name,
+            participantIDs: source.participantIDs,
+            status: source.status,
+            lastSyncedAt: source.lastSyncedAt,
+            lastError: source.lastError
+        )
+        return self.source
+    }
+
+    func synchronize(_ source: CalendarSourceConnection) async throws -> CalendarSourceConnection {
+        self.source = CalendarSourceConnection(
+            id: source.id,
+            ownerMemberID: source.ownerMemberID,
+            visibility: source.visibility,
+            name: source.name,
+            participantIDs: source.participantIDs,
+            status: .ready,
+            lastSyncedAt: .now
+        )
+        return self.source
+    }
+
+    func delete(_ source: CalendarSourceConnection) async throws {}
+}
 #endif
 
 @main
@@ -473,7 +531,13 @@ struct FamilyActivityCoordinatorApp: App {
             #else
             occurrenceLifecycleStore = nil
             #endif
+            #if DEBUG
+            calendarSourceStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_CALENDAR_SOURCE"] == "1"
+                ? CalendarSourceUITestStore()
+                : nil
+            #else
             calendarSourceStore = nil
+            #endif
             changeMonitor = nil
             deviceRegistrationStore = nil
             scheduleDraftExtractor = nil

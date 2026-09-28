@@ -115,11 +115,13 @@ edited as native Rallyroo events. Exact duplicates are consolidated by external
 identity or normalized title, time, and location; participant IDs and provenance
 are combined.
 
-- `PATCH /v1/imported-events/{id}/settings` with `arrivalTime` and
-  `alertLeadTimeMinutes` lets a parent save Rallyroo-owned settings without
-  mutating the source event. Both fields are nullable; supported alert values
-  match native Events. The event must be visible to the authenticated parent,
-  and arrival cannot follow its source start time.
+- `PATCH /v1/imported-events/{id}/settings` with `arrivalTime`,
+  `alertLeadTimeMinutes`, `driver`, and `driverMemberID` lets a parent save
+  Rallyroo-owned settings without mutating the source event. All fields are
+  nullable; supported alert values match native Events. A named driver and
+  structured Family driver are mutually exclusive, and a kid must be allowed to
+  drive. The event must be visible to the authenticated parent, and arrival
+  cannot follow its source start time.
 
 RFC 5545 defines event start/end fields but no arrival-time field. Rallyroo imports
 `DESCRIPTION` as `notes` and recognizes TeamSnap's narrowly formatted
@@ -220,9 +222,11 @@ Authenticated parents can manage read-only iCalendar subscriptions:
 - `GET /v1/calendar-sources` lists family-shared connections plus personal
   connections owned by the requesting parent, without revealing feed URLs.
 - `PATCH /v1/calendar-sources/{id}` with
-  `{ "visibility": "personal" | "family" }` changes visibility. Only the parent
-  who connected the source can change it.
-- `POST /v1/calendar-sources/{id}/sync` atomically refreshes imported events.
+  `{ "name"?, "visibility": "personal" | "family" }` corrects the Rallyroo
+  display name and changes visibility. Only the parent who connected the source
+  can change it. Renaming does not alter the feed URL.
+- `POST /v1/calendar-sources/{id}/sync` atomically refreshes imported events and
+  is exposed as a visible **Sync now** action in calendar details.
 - `DELETE /v1/calendar-sources/{id}` removes the connection and its imported events.
 
 Personal source metadata, events, provenance, conflict signals, notifications, and

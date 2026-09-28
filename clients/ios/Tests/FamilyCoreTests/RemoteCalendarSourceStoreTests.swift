@@ -46,7 +46,7 @@ final class RemoteCalendarSourceStoreTests: XCTestCase {
         XCTAssertEqual(json["visibility"] as? String, "family")
     }
 
-    func testUpdatesCalendarVisibility() async throws {
+    func testRenamesCalendarAndUpdatesVisibility() async throws {
         let sourceResponse = Data("""
         [{
           "id":"00000000-0000-4000-8000-000000000301",
@@ -64,7 +64,7 @@ final class RemoteCalendarSourceStoreTests: XCTestCase {
           "id":"00000000-0000-4000-8000-000000000301",
           "ownerMemberID":"parent-1",
           "visibility":"personal",
-          "name":"Work",
+          "name":"Corrected Work",
           "participantIDs":["parent-1"],
           "status":"ready",
           "lastSyncedAt":null,
@@ -82,8 +82,13 @@ final class RemoteCalendarSourceStoreTests: XCTestCase {
         let sources = try await store.sources()
         let source = try XCTUnwrap(sources.first)
 
-        let updated = try await store.updateVisibility(source, visibility: .personal)
+        let updated = try await store.update(
+            source,
+            name: "Corrected Work",
+            visibility: .personal
+        )
 
+        XCTAssertEqual(updated.name, "Corrected Work")
         XCTAssertEqual(updated.visibility, .personal)
         let requests = await transport.recordedRequests()
         let request = try XCTUnwrap(requests.last)
@@ -91,6 +96,7 @@ final class RemoteCalendarSourceStoreTests: XCTestCase {
         XCTAssertEqual(request.url.path, "/v1/calendar-sources/00000000-0000-4000-8000-000000000301")
         let body = try XCTUnwrap(request.body)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["name"] as? String, "Corrected Work")
         XCTAssertEqual(json["visibility"] as? String, "personal")
     }
 }
