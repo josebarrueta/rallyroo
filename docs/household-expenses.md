@@ -41,12 +41,16 @@ Expense API; the draft remains transient in the editing sheet. Clear the sheet
 to discard it. The extraction endpoint is rate limited and unavailable when
 Ollama is not configured. Model output is schema-validated and errors never echo
 OCR or financial details. The provider allows enough output tokens for the
-bounded 50-item proposal so long receipts are not cut off mid-JSON; receipts
-with more items may produce an incomplete suggestion and require parent review. If the private provider does not accept Ollama's
+bounded 50-item proposal so long receipts are not cut off mid-JSON. If the
+model returns more than 50 valid line items, the API retains only the first 50;
+it validates all entries (up to 100) before discarding overflow. The editor
+warns that item suggestions may be incomplete and requires comparison with
+the original receipt. If the private provider does not accept Ollama's
 structured-output option, the fallback asks for the exact supported JSON field
 names; malformed output still fails closed. The editor distinguishes local
-photo/OCR failure from provider proposal failure without showing receipt text. The photo picker/camera needs an app update; merging
-backend code alone cannot install UI on a device.
+photo/OCR failure from provider proposal failure without showing receipt text.
+The photo picker/camera needs an app update; merging backend code alone cannot
+install UI on a device.
 
 A receipt photo is transaction evidence, **not** an Expense until a parent
 reviews and confirms the merchant, date, currency, total and category. AI may
