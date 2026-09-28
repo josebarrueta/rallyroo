@@ -1265,9 +1265,12 @@ private struct ExpenseEditorView: View {
                 }
             }
             .sheet(isPresented: $isShowingCamera) {
-                ReceiptCameraPicker { data in
+                ReceiptCameraPicker { data, captured in
                     isShowingCamera = false
                     if let data { Task { await scanReceipt(data) } }
+                    else if captured {
+                        errorMessage = "The camera photo was too large to process. Try a clearer photo or enter the Expense manually; no photo was saved."
+                    }
                 }
             }
             .toolbar {
@@ -1343,13 +1346,20 @@ private struct ExpenseEditorView: View {
     private func scanReceipt(_ data: Data) async {
         guard let receiptDraftStore else { return }
         isExtractingReceipt = true
+        errorMessage = nil
         defer { isExtractingReceipt = false }
+        let text: String
         do {
-            let text = try await ReceiptImageRecognizer.read(data)
+            text = try await ReceiptImageRecognizer.read(data)
+        } catch {
+            errorMessage = "The photo could not be read on this device. Try a clearer photo or enter the Expense manually; no photo was saved."
+            return
+        }
+        do {
             let suggestion = try await receiptDraftStore.propose(ocrText: text)
             applyReceiptSuggestion(suggestion)
         } catch {
-            errorMessage = "Receipt reading is unavailable. Enter the Expense manually; no photo was saved."
+            errorMessage = "Receipt text was read, but the proposal is unavailable. Try again or enter the Expense manually; no photo was saved."
         }
     }
 
@@ -1414,8 +1424,31 @@ private enum ReceiptImageRecognizer {
     }
 }
 
+private enum ReceiptCameraImage {
+    static func boundedJPEG(_ image: UIImage) -> Data? {
+        guard let source = image.cgImage, source.width > 0, source.height > 0,
+              source.width <= 16_000, source.height <= 16_000,
+              Double(source.width) * Double(source.height) <= 100_000_000 else { return nil }
+        // Modern cameras can exceed OCR's 24 MP / 5 MiB limits. Downsample
+        // before encoding; keep enough pixels for small receipt print.
+        let scale = min(1, 4_000 / CGFloat(max(source.width, source.height)))
+        let size = CGSize(width: CGFloat(source.width) * scale, height: CGFloat(source.height) * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let normalized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        for quality: CGFloat in [0.8, 0.65, 0.5] {
+            if let data = normalized.jpegData(compressionQuality: quality), data.count <= 5 * 1024 * 1024 {
+                return data
+            }
+        }
+        return nil
+    }
+}
+
 private struct ReceiptCameraPicker: UIViewControllerRepresentable {
-    let onSelection: (Data?) -> Void
+    let onSelection: (Data?, Bool) -> Void
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
@@ -1425,13 +1458,13 @@ private struct ReceiptCameraPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator(onSelection: onSelection) }
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        let onSelection: (Data?) -> Void
-        init(onSelection: @escaping (Data?) -> Void) { self.onSelection = onSelection }
+        let onSelection: (Data?, Bool) -> Void
+        init(onSelection: @escaping (Data?, Bool) -> Void) { self.onSelection = onSelection }
         func imagePickerController(_ picker: UIImagePickerController,
             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            onSelection((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.65))
+            onSelection((info[.originalImage] as? UIImage).flatMap(ReceiptCameraImage.boundedJPEG), true)
         }
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { onSelection(nil) }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { onSelection(nil, false) }
     }
 }
 
