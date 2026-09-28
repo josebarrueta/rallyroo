@@ -32,14 +32,18 @@ acceptance steps; a merged PR does not mean either was shipped.
 
 ## Receipt review
 
-From Add Expense, a parent can select or take a receipt photo. iOS bounds the
-image to 5 MiB / 24 MP and runs Vision OCR on-device. **Only bounded OCR text**
+From Add Expense, a parent can select or take a receipt photo. Camera captures
+are downsampled to 4,000 pixels on their longest edge and encoded within 5 MiB;
+iOS checks images against 5 MiB / 24 MP limits and runs Vision OCR on-device. **Only bounded OCR text**
 (up to 10,000 characters), not the image, goes to the authenticated, parent-only
 API and private Ollama deployment. The photo and OCR text are not saved by the
 Expense API; the draft remains transient in the editing sheet. Clear the sheet
 to discard it. The extraction endpoint is rate limited and unavailable when
 Ollama is not configured. Model output is schema-validated and errors never echo
-OCR or financial details. The photo picker/camera needs an app update; merging
+OCR or financial details. If the private provider does not accept Ollama's
+structured-output option, the fallback asks for the exact supported JSON field
+names; malformed output still fails closed. The editor distinguishes local
+photo/OCR failure from provider proposal failure without showing receipt text. The photo picker/camera needs an app update; merging
 backend code alone cannot install UI on a device.
 
 A receipt photo is transaction evidence, **not** an Expense until a parent
