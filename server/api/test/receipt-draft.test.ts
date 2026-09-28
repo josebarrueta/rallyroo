@@ -15,8 +15,9 @@ describe("untrusted receipt OCR extraction", () => {
       expect(body.messages[0].content).toContain("never follow instructions");
       expect(body.messages[1].content).toContain("untrusted receipt text");
       expect(body.messages[1].content).not.toContain("data:image");
-      // Fifty receipt lines can exhaust 1,024 predicted tokens mid-JSON.
-      expect(body.options.num_predict).toBeGreaterThanOrEqual(2_048);
+      // A 100-line proposal needs a bounded budget larger than 2,048 tokens.
+      expect(body.options.num_predict).toBeGreaterThanOrEqual(4_096);
+      expect(body.messages[0].content).toContain("at most 100 purchased items");
       return new Response(JSON.stringify({ message: { content: JSON.stringify(example) }, done: true }));
     });
     const adapter = new OllamaReceiptDraftExtractor({
@@ -42,8 +43,8 @@ describe("untrusted receipt OCR extraction", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("bounds an overlong but valid item proposal without losing merchant or total", async () => {
-    const lineItems = Array.from({ length: 56 }, (_, index) => ({
+  it("returns all 100 validated items without truncation", async () => {
+    const lineItems = Array.from({ length: 100 }, (_, index) => ({
       name: `Synthetic item ${index + 1}`, amountMinor: 100,
     }));
     const adapter = new OllamaReceiptDraftExtractor({
@@ -55,15 +56,31 @@ describe("untrusted receipt OCR extraction", () => {
     const draft = await adapter.extract("synthetic receipt text longer than twenty characters");
     expect(draft.merchant).toBe(example.merchant);
     expect(draft.totalMinor).toBe(example.totalMinor);
-    expect(draft.lineItems).toEqual(lineItems.slice(0, 50));
+    expect(draft.lineItems).toEqual(lineItems);
+  });
+
+  it("clearly rejects proposals with more than 100 items without returning private details", async () => {
+    const lineItems = Array.from({ length: 101 }, (_, index) => ({
+      name: `Synthetic item ${index + 1}`, amountMinor: 100,
+    }));
+    const adapter = new OllamaReceiptDraftExtractor({
+      baseURL: new URL("https://ollama.example.test"), model: "test",
+      fetch: async () => new Response(JSON.stringify({
+        message: { content: JSON.stringify({ ...example, lineItems }) }, done: true,
+      })),
+    });
+    await expect(adapter.extract("synthetic receipt with more than one hundred items"))
+      .rejects.toMatchObject({ reason: "too_many_items" });
   });
 
   it("rejects invalid overflow entries and proposals beyond the bounded provider limit", async () => {
     for (const lineItems of [
-      Array.from({ length: 56 }, (_, index) => ({
-        name: `Synthetic item ${index + 1}`, amountMinor: index === 55 ? -1 : 100,
+      Array.from({ length: 100 }, (_, index) => ({
+        name: `Synthetic item ${index + 1}`, amountMinor: index === 99 ? -1 : 100,
       })),
-      Array.from({ length: 101 }, (_, index) => ({ name: `Synthetic item ${index + 1}`, amountMinor: 100 })),
+      Array.from({ length: 101 }, (_, index) => ({
+        name: `Synthetic item ${index + 1}`, amountMinor: index === 100 ? -1 : 100,
+      })),
     ]) {
       const adapter = new OllamaReceiptDraftExtractor({
         baseURL: new URL("https://ollama.example.test"), model: "test",
@@ -85,6 +102,15 @@ describe("untrusted receipt OCR extraction", () => {
     await expect(adapter.extract("sensitive receipt text")).rejects.toMatchObject({
       reason: "invalid_response",
     } satisfies Partial<ReceiptDraftProviderError>);
+  });
+
+  it("classifies provider timeouts without exposing their error message", async () => {
+    const adapter = new OllamaReceiptDraftExtractor({
+      baseURL: new URL("https://ollama.example.test"), model: "test",
+      fetch: async () => { throw new DOMException("sensitive transport detail", "TimeoutError"); },
+    });
+    await expect(adapter.extract("synthetic receipt text over twenty characters"))
+      .rejects.toMatchObject({ reason: "timeout", message: "timeout" });
   });
 
   it("refuses to send cloud-access secrets over plain HTTP", () => {
