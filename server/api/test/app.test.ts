@@ -592,6 +592,9 @@ describe("Rallyroo API", () => {
     for (const amountMinor of [0, -2, 12.1, "19.99", 1e15]) {
       expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, amountMinor } })).statusCode).toBe(400);
     }
+    // A missing optional-looking field is not valid: clients must send explicit null.
+    const { note: _omittedNote, ...withoutNote } = payload;
+    expect((await app.inject({ method: "PUT", url, headers, payload: withoutNote })).statusCode).toBe(400);
     expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, currency: "INVALID" } })).statusCode).toBe(400);
     expect((await app.inject({ method: "PUT", url, headers, payload: { ...payload, currency: "EUR" } })).statusCode).toBe(400);
     const created = await app.inject({ method: "PUT", url, headers, payload });

@@ -1196,6 +1196,15 @@ private struct ExpenseEditorView: View {
                         Section("Optional Pantry candidates") {
                             Text("These were purchased, not necessarily needed again. Nothing is added automatically.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            Button(suggestedItems.allSatisfy(\.isSelected)
+                                ? "Deselect all Pantry items" : "Select all Pantry items") {
+                                let selectAll = suggestedItems.contains { !$0.isSelected }
+                                for index in suggestedItems.indices {
+                                    suggestedItems[index].isSelected = selectAll
+                                    if !selectAll { suggestedItems[index].requestNextTrip = false }
+                                }
+                            }
+                            .accessibilityIdentifier("receipt-select-all-pantry")
                             if suggestedItems.allSatisfy({ $0.amountMinor != nil }) {
                                 let subtotal = suggestedItems.compactMap(\.amountMinor).reduce(0, +)
                                 Text("Suggested item subtotal: $\(subtotal / 100).\(String(format: "%02d", subtotal % 100)). Tax, tips and discounts may differ from the charged total.")
@@ -1206,6 +1215,9 @@ private struct ExpenseEditorView: View {
                                 VStack(alignment: .leading) {
                                     Button {
                                         suggestedItems[index].isSelected.toggle()
+                                        if !suggestedItems[index].isSelected {
+                                            suggestedItems[index].requestNextTrip = false
+                                        }
                                     } label: {
                                         Label("Add \(suggestedItems[index].name) to Pantry",
                                             systemImage: suggestedItems[index].isSelected ? "checkmark.circle.fill" : "circle")
@@ -1340,9 +1352,7 @@ private struct ExpenseEditorView: View {
             await onSaved()
             dismiss()
         } catch {
-            errorMessage = savedExpense == nil
-                ? "The Expense could not be saved. Review the entries and retry."
-                : "The Expense saved, but selected Pantry candidates did not. Resolve any duplicates and retry."
+            errorMessage = ExpenseSaveFeedback.message(for: error, expenseSaved: savedExpense != nil)
         }
     }
 

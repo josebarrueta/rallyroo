@@ -17,8 +17,11 @@ automatic category inference. Listing uses a bounded cursor and a stable date/ID
 ordering; category summaries across pages are deferred until they can be
 computed correctly in the backend.
 
-A client-created UUID makes a create retry idempotent. Reusing it with different
-details is a conflict. Corrections and deletions check the expected version;
+A client-created UUID makes a create retry idempotent. iOS sends explicit JSON
+nulls for empty merchant and note fields, as required by the API's strict draft
+schema; omitting them rejects an otherwise valid Expense. After an uncertain
+network or server result, retry unchanged so the same UUID is reused. Reusing
+it with different details is a conflict. Corrections and deletions check the expected version;
 a repeated successful deletion returns no content, and deleted IDs cannot be
 reused. Expense amounts, categories, merchants and notes are encrypted under
 the Family data key. Only opaque IDs, dates, versions and timestamps are
@@ -61,8 +64,10 @@ misread discounts, tax, tips, line prices or item names: the UI always asks for
 review, never claims that summed line items reconcile to the charged total.
 Missing or unclear USD amounts require manual entry; the user is warned when
 currency is unclear. Line item suggestions default unselected. A parent can
-explicitly select reusable items to add to the Pantry catalog when saving an
-Expense; duplicates may require manual resolution. A **second**, separately
+explicitly select individual items or **Select all Pantry items**, and can undo
+that selection before saving the Expense; nothing is written by selecting.
+Deselecting an item clears its future Shopping request choice. Duplicates may
+require manual resolution. A **second**, separately
 unchecked choice explicitly creates a Family item request for future Shopping.
 That request is evidence for the next parent-reviewed trip, not an automatic
 Buy-list entry. This does not create Stock observations or automatically assume

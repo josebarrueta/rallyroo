@@ -361,7 +361,8 @@ private actor ReceiptUITestStore: ReceiptDraftStore {
         if let rejectionStatus { throw RemoteStoreError.requestFailed(statusCode: rejectionStatus) }
         return ReceiptExpenseDraft(merchant: "Test Market", spentOn: "2026-09-26", totalMinor: 1234,
             currency: "USD", category: "Groceries",
-            lineItems: [ReceiptLineSuggestion(name: "Milk", amountMinor: 499)])
+            lineItems: [ReceiptLineSuggestion(name: "Milk", amountMinor: 499),
+                ReceiptLineSuggestion(name: "Bread", amountMinor: 250)])
     }
 }
 
