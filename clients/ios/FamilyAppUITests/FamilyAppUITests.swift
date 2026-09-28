@@ -66,8 +66,12 @@ final class FamilyAppUITests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.buttons["schedule-household"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
         app.buttons["Expenses"].tap()
-        app.buttons["Add expense"].tap()
+        XCTAssertTrue(app.navigationBars["Expenses"].waitForExistence(timeout: 5))
+        let addExpense = app.buttons["Add expense"]
+        XCTAssertTrue(addExpense.waitForExistence(timeout: 5))
+        addExpense.tap()
         XCTAssertTrue(app.buttons["Choose receipt photo"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "review every field before saving")).firstMatch.exists)
         XCTAssertFalse(app.buttons["Save"].isEnabled)
