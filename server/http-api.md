@@ -270,9 +270,15 @@ per-Family keys.
   `{ "ocrText": "20–10,000 characters" }` returns an **unverified**, transient
   proposal `{ "merchant", "spentOn", "totalMinor", "currency", "category",
   "lineItems": [{ "name", "amountMinor" }] }`. Unknown values are null.
-  It performs no writes, never accepts a photo upload, and returns `503` if
-  extraction is unavailable. Only a separate reviewed Expense or explicit
-  Pantry write persists anything. Receipt image OCR runs on-device.
+  It performs no writes, never accepts a photo upload, and returns at most 100
+  validated item suggestions without silently truncating a larger proposal.
+  Content-free rejection codes: `400 invalid_receipt_text`,
+  `422 receipt_too_many_items` (AI proposed >100), `429` (rate limit),
+  `502 receipt_invalid_proposal` (malformed AI output),
+  `503 receipt_extraction_unavailable`, or `504 receipt_extraction_timeout`.
+  An unexpected extraction failure returns `502 receipt_extraction_failed`.
+  Only a separate reviewed Expense or explicitly selected Pantry write persists
+  anything. Receipt image OCR runs on-device.
 
 ## Family invitations
 

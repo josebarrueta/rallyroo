@@ -10,7 +10,7 @@ export const receiptDraftSchema = z.object({
   lineItems: z.array(z.object({
     name: z.string().trim().min(1).max(120),
     amountMinor: money,
-  }).strict()).max(50),
+  }).strict()).max(100),
 }).strict();
 
 export type ReceiptDraft = z.infer<typeof receiptDraftSchema>;
@@ -20,7 +20,7 @@ export interface ReceiptDraftExtractor {
 }
 
 export class ReceiptDraftProviderError extends Error {
-  constructor(public readonly reason: "unavailable" | "invalid_response") {
+  constructor(public readonly reason: "unavailable" | "invalid_response" | "too_many_items" | "timeout") {
     super(reason);
     this.name = "ReceiptDraftProviderError";
   }

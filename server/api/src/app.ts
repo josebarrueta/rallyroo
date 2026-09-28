@@ -645,8 +645,16 @@ export function buildApp({
       // endpoints can persist parent-reviewed data; never log OCR or raw errors.
       return receiptDraftSchema.parse(await receiptDraftExtractor.extract(parsed.data.ocrText));
     } catch (error) {
-      return reply.code(error instanceof ReceiptDraftProviderError && error.reason === "unavailable" ? 503 : 502)
-        .send({ error: "receipt_extraction_failed" });
+      // Stable codes only: no OCR, provider body, or financial details in responses.
+      if (error instanceof ReceiptDraftProviderError) {
+        switch (error.reason) {
+          case "too_many_items": return reply.code(422).send({ error: "receipt_too_many_items" });
+          case "invalid_response": return reply.code(502).send({ error: "receipt_invalid_proposal" });
+          case "unavailable": return reply.code(503).send({ error: "receipt_extraction_unavailable" });
+          case "timeout": return reply.code(504).send({ error: "receipt_extraction_timeout" });
+        }
+      }
+      return reply.code(502).send({ error: "receipt_extraction_failed" });
     }
   });
 

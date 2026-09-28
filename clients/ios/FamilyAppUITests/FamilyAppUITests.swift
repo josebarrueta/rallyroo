@@ -93,6 +93,28 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Test Market"].waitForExistence(timeout: 5))
     }
 
+    func testRejectedReceiptProposalExplainsTheHundredItemLimitWithoutEnablingSave() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPENSES"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_RECEIPT"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_RECEIPT_REJECT"] = "422"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-household"].tap()
+        XCTAssertTrue(app.navigationBars["Household"].waitForExistence(timeout: 5))
+        app.buttons["Expenses"].tap()
+        XCTAssertTrue(app.navigationBars["Expenses"].waitForExistence(timeout: 5))
+        let addExpense = app.buttons["Add expense"]
+        XCTAssertTrue(addExpense.waitForExistence(timeout: 5))
+        addExpense.tap()
+        app.buttons["Preview test receipt"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "more than 100 items"))
+            .firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Save"].isEnabled)
+        XCTAssertFalse(app.buttons["Add Milk to Pantry"].exists)
+    }
+
     func testParentRecordsAndDeletesManualExpenseFromHousehold() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"

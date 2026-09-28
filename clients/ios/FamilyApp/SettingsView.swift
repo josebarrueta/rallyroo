@@ -1176,9 +1176,12 @@ private struct ExpenseEditorView: View {
                            let receiptDraftStore {
                             Button("Preview test receipt") {
                                 Task {
-                                    if let draft = try? await receiptDraftStore.propose(
-                                        ocrText: "Test Market\nMilk 4.99\nTotal 12.34\nSeptember 26 2026") {
+                                    do {
+                                        let draft = try await receiptDraftStore.propose(
+                                            ocrText: "Test Market\nMilk 4.99\nTotal 12.34\nSeptember 26 2026")
                                         applyReceiptSuggestion(draft)
+                                    } catch {
+                                        errorMessage = ReceiptProposalFeedback.message(for: error)
                                     }
                                 }
                             }
@@ -1359,7 +1362,7 @@ private struct ExpenseEditorView: View {
             let suggestion = try await receiptDraftStore.propose(ocrText: text)
             applyReceiptSuggestion(suggestion)
         } catch {
-            errorMessage = "Receipt text was read, but the proposal is unavailable. Try again or enter the Expense manually; no photo was saved."
+            errorMessage = ReceiptProposalFeedback.message(for: error)
         }
     }
 
@@ -1381,8 +1384,8 @@ private struct ExpenseEditorView: View {
                     isSelected: false, requestNextTrip: false, isSaved: false, isRequested: false)
             }
             receiptNotice = suggestion.currency == "USD"
-                ? "AI proposed these details. Verify the receipt total, tax, date, category and every selected item before saving. Compare with the photo: items may be missed, and only the first 50 suggestions are shown."
-                : "Currency was unclear. Verify that the receipt uses USD and enter the correct total before saving. Compare with the photo: items may be missed, and only the first 50 suggestions are shown."
+                ? "AI proposed these details. Verify the receipt total, tax, date, category and every selected item before saving. Compare with the photo: items may be missed; up to 100 suggestions are shown."
+                : "Currency was unclear. Verify that the receipt uses USD and enter the correct total before saving. Compare with the photo: items may be missed; up to 100 suggestions are shown."
             if suggestion.currency != "USD" { amountText = "" }
             lastAttempt = nil
             pendingID = UUID()

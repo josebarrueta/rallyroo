@@ -24,6 +24,7 @@ import { InMemoryShoppingRepository } from "../src/in-memory-shopping-repository
 import { ShoppingModule } from "../src/shopping-module.js";
 import { ExpenseModule } from "../src/expense-module.js";
 import { InMemoryExpenseRepository } from "../src/in-memory-expense-repository.js";
+import { ReceiptDraftProviderError } from "../src/receipt-draft-extractor.js";
 
 const codeChallenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 const codeVerifier = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq";
@@ -560,6 +561,22 @@ describe("Rallyroo API", () => {
     expect(failed.statusCode).toBe(502);
     expect(failed.body).not.toContain("secret receipt text");
     await invalid.close();
+
+    for (const [reason, statusCode, code] of [
+      ["too_many_items", 422, "receipt_too_many_items"],
+      ["invalid_response", 502, "receipt_invalid_proposal"],
+      ["unavailable", 503, "receipt_extraction_unavailable"],
+      ["timeout", 504, "receipt_extraction_timeout"],
+    ] as const) {
+      const rejecting = buildApp({ identityProvider, repository: repository(),
+        receiptDraftExtractor: { extract: async () => { throw new ReceiptDraftProviderError(reason); } } });
+      const response = await rejecting.inject({ method: "POST", url,
+        headers: { authorization: "Bearer parent-token" }, payload });
+      expect(response.statusCode).toBe(statusCode);
+      expect(response.json()).toEqual({ error: code });
+      expect(response.body).not.toContain(payload.ocrText);
+      await rejecting.close();
+    }
   });
 
   it("keeps categorized financial Expenses parent-only and validates money before writing", async () => {

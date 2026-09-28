@@ -355,8 +355,11 @@ private actor ShoppingUITestStore: ShoppingStore {
 }
 
 private actor ReceiptUITestStore: ReceiptDraftStore {
+    let rejectionStatus: Int?
+    init(rejectionStatus: Int? = nil) { self.rejectionStatus = rejectionStatus }
     func propose(ocrText: String) async throws -> ReceiptExpenseDraft {
-        ReceiptExpenseDraft(merchant: "Test Market", spentOn: "2026-09-26", totalMinor: 1234,
+        if let rejectionStatus { throw RemoteStoreError.requestFailed(statusCode: rejectionStatus) }
+        return ReceiptExpenseDraft(merchant: "Test Market", spentOn: "2026-09-26", totalMinor: 1234,
             currency: "USD", category: "Groceries",
             lineItems: [ReceiptLineSuggestion(name: "Milk", amountMinor: 499)])
     }
@@ -553,7 +556,7 @@ struct FamilyActivityCoordinatorApp: App {
                 ? ExpenseUITestStore()
                 : nil
             receiptDraftStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT"] == "1"
-                ? ReceiptUITestStore() : nil
+                ? ReceiptUITestStore(rejectionStatus: Int(ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT_REJECT"] ?? "")) : nil
             inboxStore = usesDayBriefUITest
                 ? DayBriefUITestInboxStore()
                 : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)

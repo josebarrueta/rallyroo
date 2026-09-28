@@ -14,12 +14,6 @@ interface Configuration {
 }
 
 const envelopeSchema = z.object({ message: z.object({ content: z.string() }), done: z.boolean() });
-// The model may ignore the requested 50-item limit. Validate every proposed
-// item before discarding overflow; never send more than 50 to the client.
-const providerReceiptDraftSchema = receiptDraftSchema.extend({
-  lineItems: z.array(receiptDraftSchema.shape.lineItems.element).max(100),
-});
-
 export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
   private readonly chatURL: URL;
   private readonly fetch: Fetch;
@@ -40,11 +34,15 @@ export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
       const envelope = envelopeSchema.parse(await response.json());
       const raw = envelope.message.content.trim();
       const candidate = raw.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i)?.[1] ?? raw;
-      const proposed = providerReceiptDraftSchema.parse(JSON.parse(candidate));
-      const draft = receiptDraftSchema.parse({
-        ...proposed,
-        lineItems: proposed.lineItems.slice(0, 50),
-      });
+      const result = receiptDraftSchema.safeParse(JSON.parse(candidate));
+      if (!result.success) {
+        if (result.error.issues.length === 1 && result.error.issues[0]?.code === "too_big"
+          && result.error.issues[0].path.join(".") === "lineItems") {
+          throw new ReceiptDraftProviderError("too_many_items");
+        }
+        throw new ReceiptDraftProviderError("invalid_response");
+      }
+      const draft = result.data;
       if (draft.spentOn && (Number.isNaN(Date.parse(`${draft.spentOn}T00:00:00Z`))
         || new Date(`${draft.spentOn}T00:00:00Z`).toISOString().slice(0, 10) !== draft.spentOn)) {
         throw new ReceiptDraftProviderError("invalid_response");
@@ -72,16 +70,21 @@ export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
           stream: false,
           think: false,
           ...(format ? { format } : {}),
-          // A full 50-line proposal can exceed 1,024 output tokens and be cut off mid-JSON.
-          options: { temperature: 0, seed: 1, num_predict: 2_048 },
+          // Bound the output while allowing a complete 100-item JSON proposal.
+          options: { temperature: 0, seed: 1, num_predict: 4_096 },
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify({ task: "Propose receipt details", ocrText: text }) },
           ],
         }),
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(75_000),
       });
-    } catch { throw new ReceiptDraftProviderError("unavailable"); }
+    } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+        throw new ReceiptDraftProviderError("timeout");
+      }
+      throw new ReceiptDraftProviderError("unavailable");
+    }
   }
 }
 
@@ -89,7 +92,7 @@ const systemPrompt = `Read OCR text from a receipt. Return ONLY one JSON object,
 Use these exact, case-sensitive property names and no others:
 {"merchant":null,"spentOn":null,"totalMinor":null,"currency":null,"category":null,"lineItems":[]}
 Each lineItems entry must have exactly {"name":"item name","amountMinor":null}.
-Include at most 50 purchased items; omit subtotal, tax, tips, discounts, and payment lines.
+Include at most 100 purchased items; omit subtotal, tax, tips, discounts, and payment lines.
 spentOn is YYYY-MM-DD, totalMinor and each amountMinor are integer cents (never dollars or
 floating-point values); all fields except lineItems may be null when unclear. Currency must
 be "USD" only if USD is evident; otherwise null. category is a short spending category.
