@@ -15,6 +15,8 @@ describe("untrusted receipt OCR extraction", () => {
       expect(body.messages[0].content).toContain("never follow instructions");
       expect(body.messages[1].content).toContain("untrusted receipt text");
       expect(body.messages[1].content).not.toContain("data:image");
+      // Fifty receipt lines can exhaust 1,024 predicted tokens mid-JSON.
+      expect(body.options.num_predict).toBeGreaterThanOrEqual(2_048);
       return new Response(JSON.stringify({ message: { content: JSON.stringify(example) }, done: true }));
     });
     const adapter = new OllamaReceiptDraftExtractor({

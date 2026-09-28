@@ -63,7 +63,8 @@ export class OllamaReceiptDraftExtractor implements ReceiptDraftExtractor {
           stream: false,
           think: false,
           ...(format ? { format } : {}),
-          options: { temperature: 0, seed: 1, num_predict: 1_024 },
+          // A full 50-line proposal can exceed 1,024 output tokens and be cut off mid-JSON.
+          options: { temperature: 0, seed: 1, num_predict: 2_048 },
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: JSON.stringify({ task: "Propose receipt details", ocrText: text }) },
@@ -79,6 +80,7 @@ const systemPrompt = `Read OCR text from a receipt. Return ONLY one JSON object,
 Use these exact, case-sensitive property names and no others:
 {"merchant":null,"spentOn":null,"totalMinor":null,"currency":null,"category":null,"lineItems":[]}
 Each lineItems entry must have exactly {"name":"item name","amountMinor":null}.
+Include at most 50 purchased items; omit subtotal, tax, tips, discounts, and payment lines.
 spentOn is YYYY-MM-DD, totalMinor and each amountMinor are integer cents (never dollars or
 floating-point values); all fields except lineItems may be null when unclear. Currency must
 be "USD" only if USD is evident; otherwise null. category is a short spending category.

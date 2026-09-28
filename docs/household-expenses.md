@@ -40,7 +40,9 @@ API and private Ollama deployment. The photo and OCR text are not saved by the
 Expense API; the draft remains transient in the editing sheet. Clear the sheet
 to discard it. The extraction endpoint is rate limited and unavailable when
 Ollama is not configured. Model output is schema-validated and errors never echo
-OCR or financial details. If the private provider does not accept Ollama's
+OCR or financial details. The provider allows enough output tokens for the
+bounded 50-item proposal so long receipts are not cut off mid-JSON; receipts
+with more items may produce an incomplete suggestion and require parent review. If the private provider does not accept Ollama's
 structured-output option, the fallback asks for the exact supported JSON field
 names; malformed output still fails closed. The editor distinguishes local
 photo/OCR failure from provider proposal failure without showing receipt text. The photo picker/camera needs an app update; merging
