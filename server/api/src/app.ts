@@ -355,9 +355,9 @@ const calendarSourceSchema = z.object({
   url: z.string()
     .transform((url) => url.replace(/^webcal:/i, "https:"))
     .pipe(z.string().refine(validateCalendarFeedURL, "A valid HTTPS calendar link is required")),
-  participantIDs: z.array(z.string().min(1)).min(1),
+  participantIDs: z.array(z.string().min(1).max(300)).min(1).max(100),
   visibility: z.enum(["personal", "family"]).default("family"),
-});
+}).strict();
 
 interface RouteRateLimit {
   max: number;
@@ -435,13 +435,20 @@ export function buildApp({
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
     ...(notificationCenter ? { notificationCenter } : {}),
   });
-  const app = Fastify({ logger, genReqId: () => randomUUID() });
+  // Shared bound for all JSON routes; sensitive routes can set a smaller limit.
+  const app = Fastify({ logger, bodyLimit: 1 * 1024 * 1024, genReqId: () => randomUUID() });
   fastifyRateLimit(
     app,
     { global: true, max: 120, timeWindow: 60_000 },
     () => {},
   );
   app.decorateRequest("account", null);
+  // Applies to success, authorization/validation errors and provider failures.
+  // Never allow a browser to reinterpret untrusted JSON/text as executable HTML.
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    return payload;
+  });
   const requestStarts = new WeakMap<object, bigint>();
 
   app.addHook("onRequest", async (request, reply) => {
@@ -638,8 +645,6 @@ export function buildApp({
     bodyLimit: 16 * 1024,
     config: { rateLimit: { max: 5, timeWindow: 60_000 } },
   }, async (request, reply) => {
-    // The response is JSON data, never HTML; prevent MIME sniffing by browsers.
-    reply.header("x-content-type-options", "nosniff");
     const account = await requireParent(request, reply);
     if (!account) return;
     const parsed = receiptRequestSchema.safeParse(request.body);

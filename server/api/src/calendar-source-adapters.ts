@@ -202,8 +202,19 @@ async function fetchWithRedirects(
 
 function isPublicAddress(address: string): boolean {
   const parsed = ipaddr.parse(address);
-  if (parsed instanceof ipaddr.IPv6 && parsed.isIPv4MappedAddress()) {
-    return parsed.toIPv4Address().range() === "unicast";
+  if (parsed instanceof ipaddr.IPv6) {
+    if (parsed.isIPv4MappedAddress()) return parsed.toIPv4Address().range() === "unicast";
+    // These globally-routable transition prefixes can encode a *different*
+    // IPv4 destination (including cloud metadata/private addresses). Never
+    // treat the outer IPv6 unicast classification as proof the target is public.
+    for (const [prefix, bits] of [
+      ["64:ff9b::", 96], // well-known NAT64
+      ["64:ff9b:1::", 48], // local-use NAT64
+      ["2002::", 16], // 6to4
+      ["2001::", 32], // Teredo
+    ] as const) {
+      if (parsed.match(ipaddr.parse(prefix), bits)) return false;
+    }
   }
   return parsed.range() === "unicast";
 }

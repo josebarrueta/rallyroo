@@ -579,6 +579,24 @@ describe("Rallyroo API", () => {
     }
   });
 
+  it("marks public and rejected API responses as non-sniffable", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const health = await app.inject({ method: "GET", url: "/health" });
+    const unauthorized = await app.inject({ method: "GET", url: "/v1/household/expenses" });
+    expect(health.statusCode).toBe(200);
+    expect(unauthorized.statusCode).toBe(401);
+    const tooLarge = await app.inject({ method: "POST", url: "/v1/sessions",
+      headers: { "content-type": "application/json" },
+      payload: { oauthToken: "x".repeat(1_048_576) } });
+    expect(tooLarge.statusCode).toBe(413);
+    expect(tooLarge.body).not.toContain("xxxxx");
+    for (const response of [health, unauthorized, tooLarge]) {
+      expect(response.headers["content-type"]).toMatch(/^application\/json/);
+      expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    }
+    await app.close();
+  });
+
   it("bounds receipt request bytes and rejects unexpected shapes without forwarding OCR", async () => {
     const forwarded: string[] = [];
     const app = buildApp({ identityProvider, repository: repository(),
@@ -1724,6 +1742,14 @@ describe("Rallyroo API", () => {
       headers: { authorization: "Bearer parent-token" },
     });
 
+    for (const payload of [
+      { name: "Calendar", url: "https://feeds.example.test/feed.ics", participantIDs: ["kid-1"], fetchURL: "https://127.0.0.1/internal" },
+      { name: "Calendar", url: "https://feeds.example.test/feed.ics", participantIDs: Array(101).fill("kid-1") },
+    ]) {
+      const invalid = await app.inject({ method: "POST", url: "/v1/calendar-sources",
+        headers: { authorization: "Bearer parent-token" }, payload });
+      expect(invalid.statusCode).toBe(400);
+    }
     expect(created.statusCode).toBe(201);
     expect(created.json()).toMatchObject({
       name: "Emma TeamSnap",
@@ -1735,6 +1761,34 @@ describe("Rallyroo API", () => {
     expect(created.json()).not.toHaveProperty("url");
     expect(forbidden.statusCode).toBe(403);
     expect(listed.json()).toEqual([created.json()]);
+    await app.close();
+  });
+
+  it("treats embedded ICS URL and ATTACH properties as data, not fetch instructions", async () => {
+    const fetched: string[] = [];
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url, revealURL: (url) => url,
+      fetchFeed: async (url) => {
+        fetched.push(url);
+        return { body: [
+          "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT",
+          "UID:synthetic-event@example", "SUMMARY:Example practice",
+          "DTSTART:20260912T180000Z", "DTEND:20260912T190000Z",
+          "URL:https://127.0.0.1/internal", "ATTACH:https://169.254.169.254/private",
+          "DESCRIPTION:See https://127.0.0.1/never-opened",
+          "END:VEVENT", "END:VCALENDAR",
+        ].join("\r\n") };
+      },
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+    const response = await app.inject({ method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: { name: "Example", url: "https://feeds.example.test/feed.ics", participantIDs: ["kid-1"] },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().status).toBe("ready");
+    expect(fetched).toEqual(["https://feeds.example.test/feed.ics"]);
     await app.close();
   });
 
