@@ -80,6 +80,28 @@ describe("server-side calendar feed fetch", () => {
     expect(mock.requests).toHaveLength(0);
   });
 
+  it("rejects IPv6 transition/NAT64 DNS answers that could carry a private IPv4 target", async () => {
+    for (const address of [
+      "64:ff9b::a9fe:a9fe", "64:ff9b:1::a9fe:a9fe",
+      "2002:a9fe:a9fe::1", "2001:0::1",
+    ]) {
+      mock.addresses = [{ address, family: 6 }];
+      await expect(fetchPublicCalendarFeed("https://feeds.example.test/schedule.ics"))
+        .rejects.toThrow("public addresses");
+      expect(mock.requests).toHaveLength(0);
+    }
+  });
+
+  it("rejects redirect targets using non-HTTPS schemes without contacting them", async () => {
+    for (const location of ["http://127.0.0.1/private", "file:///etc/passwd", "javascript:alert(1)"]) {
+      mock.responses.push({ status: 302, headers: { location } });
+      await expect(fetchPublicCalendarFeed("https://feeds.example.test/schedule.ics"))
+        .rejects.toThrow("HTTPS link");
+      expect(mock.requests).toHaveLength(1);
+      mock.requests.length = 0;
+    }
+  });
+
   it("rejects non-calendar content types", async () => {
     mock.responses.push({ status: 200, headers: { "content-type": "text/html" }, body: "<html>login</html>" });
     await expect(fetchPublicCalendarFeed("https://feeds.example.test/schedule.ics"))
