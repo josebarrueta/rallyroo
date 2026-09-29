@@ -167,6 +167,38 @@ describe("DayBriefModule.generate", () => {
     expect(brief.body).toBe("8:00 AM Weekly practice (you drive).");
   });
 
+  it("expands a legacy recurring event without a saved time zone in the brief's local time zone", async () => {
+    const recurring = event({
+      id: "legacy-soccer",
+      title: "Soccer Practice",
+      // Wednesday at 5:30 PM in America/Los_Angeles (Thursday in UTC).
+      startTime: "2026-09-24T00:30:00.000Z",
+      endTime: "2026-09-24T02:00:00.000Z",
+      driverMemberID: "parent",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [3],
+        endDate: "2026-10-31T00:30:00.000Z",
+      },
+    });
+    const module = new DayBriefModule(repository({
+      familyEvents: [recurring],
+      importedEvents: [],
+      reminders: [],
+    }));
+
+    const tuesday = await module.generate(account, "2026-09-29", "America/Los_Angeles");
+    const wednesday = await module.generate(account, "2026-09-30", "America/Los_Angeles");
+
+    expect(tuesday.facts.events).toEqual([]);
+    expect(wednesday.facts.events).toMatchObject([{
+      title: "Soccer Practice",
+      startTime: "2026-10-01T00:30:00.000Z",
+      roles: ["driver"],
+    }]);
+  });
+
   it("uses an AI narrative only after constructing authorized facts", async () => {
     let receivedTitles: string[] = [];
     const narrator: DayBriefNarrator = {
