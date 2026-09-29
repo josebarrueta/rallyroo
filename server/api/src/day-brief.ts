@@ -352,7 +352,13 @@ function eventFactsForDay(
   const duration = new Date(event.endTime).getTime() - sourceStart.getTime();
   const expansionHorizon = new Date(`${localDate}T12:00:00.000Z`);
   expansionHorizon.setUTCDate(expansionHorizon.getUTCDate() + 2);
-  return eventOccurrenceStarts(event, expansionHorizon)
+  // Older recurrence records predate the required series time zone. Expand
+  // those in the brief's configured zone, matching the local schedule instead
+  // of interpreting an ISO weekday in UTC and shifting it to the prior day.
+  const eventForExpansion = event.recurrence && !event.recurrence.timeZone
+    ? { ...event, recurrence: { ...event.recurrence, timeZone } }
+    : event;
+  return eventOccurrenceStarts(eventForExpansion, expansionHorizon)
     .filter((start) => localDateFor(start.toISOString(), timeZone) === localDate)
     .map((start) => eventFact(event, roles, start, duration));
 }
