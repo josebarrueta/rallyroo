@@ -65,6 +65,27 @@ final class ReminderOccurrenceExpanderTests: XCTestCase {
         XCTAssertTrue(occurrences.allSatisfy { $0.reminder.recurrenceSeriesID == series.id })
        }
 
+    func testWeeklyReminderWithoutEndDateExpandsThroughRequestedRange() throws {
+        let series = FamilyReminder(
+            title: "Take out trash",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: date(2026, 9, 7, 18),
+            recurrenceFrequency: .weekly,
+            recurrenceWeekdays: [.monday],
+            recurrenceEndDate: nil
+        )
+        let range = DateInterval(start: date(2026, 9, 7, 0), end: date(2026, 9, 29, 0))
+
+        let occurrences = ReminderOccurrenceExpander.occurrences(
+            of: [series], in: range, calendar: fixedCalendar()
+        )
+
+        XCTAssertEqual(occurrences.map(\.occurrenceDueAt), [
+            date(2026, 9, 7, 18), date(2026, 9, 14, 18),
+            date(2026, 9, 21, 18), date(2026, 9, 28, 18),
+        ])
+    }
+
     func testBiweeklyReminderSkipsAlternateWeeks() throws {
         let series = FamilyReminder(
             title: "Trash day",

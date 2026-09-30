@@ -375,9 +375,11 @@ function appendOccurrence(
   start: Date,
   end: Date,
 ): void {
-  if (!event.summary?.trim() || end <= start) {
-    throw new Error("Calendar contains an invalid event");
-  }
+  // Some providers, including TeamSnap, emit informational VEVENT items with
+  // DTSTART equal to DTEND. They cannot become Rallyroo Events because Events
+  // occupy a positive time range, so omit only that item instead of rejecting
+  // the feed's otherwise valid snapshot.
+  if (!event.summary?.trim() || end <= start) return;
   if (result.length >= MAX_IMPORTED_EVENTS) {
     throw new Error("Calendar exceeds the event import limit");
   }

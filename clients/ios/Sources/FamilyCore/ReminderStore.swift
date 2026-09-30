@@ -38,13 +38,13 @@ public struct ReminderRecurrence: Codable, Equatable, Sendable {
     public let frequency: Frequency
     public let interval: Int
     public let weekdays: [Weekday]
-    public let endDate: Date
+    public let endDate: Date?
 
     public init(
         frequency: Frequency = .weekly,
         interval: Int = 1,
         weekdays: [Weekday],
-        endDate: Date
+        endDate: Date? = nil
      ) {
         self.frequency = frequency
         self.interval = max(1, frequency == .biweekly ? interval * 2 : interval)
@@ -168,8 +168,8 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
       /// Builds a `ReminderRecurrence` from this reminder's flat fields.
     public var recurrence: ReminderRecurrence? {
         guard let frequency = recurrenceFrequency,
-           let endDate = recurrenceEndDate,
            !recurrenceWeekdays.isEmpty else { return nil }
+        let endDate = recurrenceEndDate
         return ReminderRecurrence(
             frequency: frequency,
             interval: recurrenceInterval ?? 1,
@@ -247,7 +247,7 @@ public enum ReminderOccurrenceExpander {
         let selected = Set(recurrence.weekdays)
         var result: [Date] = []
         var candidate = source.dueAt
-        while candidate <= recurrence.endDate && candidate <= through {
+        while candidate <= (recurrence.endDate ?? through) && candidate <= through {
               // Calendar weekday: 1=Sunday..7=Saturday; ISO: 1=Monday..7=Sunday
             let iso = calendar.component(.weekday, from: candidate) == 1
                  ? 7

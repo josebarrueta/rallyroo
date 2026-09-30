@@ -20,9 +20,10 @@ struct RemindersView: View {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.secondary)
                 }
-                reminderSection("Overdue", reminders: openReminders.filter { $0.dueAt < startOfToday })
-                reminderSection("Today", reminders: openReminders.filter { Calendar.current.isDateInToday($0.dueAt) })
-                reminderSection("Upcoming", reminders: openReminders.filter { $0.dueAt >= endOfToday })
+                reminderSection("Overdue", reminders: oneTimeOpenReminders.filter { $0.dueAt < startOfToday })
+                reminderSection("Today", reminders: oneTimeOpenReminders.filter { Calendar.current.isDateInToday($0.dueAt) })
+                reminderSection("Upcoming", reminders: oneTimeOpenReminders.filter { $0.dueAt >= endOfToday })
+                reminderSection("Recurring", reminders: recurringOpenReminders)
                 reminderSection("Completed", reminders: reminders.filter { $0.status == .completed })
                 if reminders.isEmpty, errorMessage == nil {
                     VStack(spacing: 8) {
@@ -81,9 +82,11 @@ struct RemindersView: View {
                                 Section("Recurrence") {
                                     LabeledContent("Frequency", value: recurrenceLabel(reminder))
                                     LabeledContent("Days", value: weekdayLabel(reminder.recurrenceWeekdays ?? []))
-                                    if let end = reminder.recurrenceEndDate {
-                                        LabeledContent("Ends", value: end.formatted(.dateTime.month().day()))
-                                    }
+                                    LabeledContent(
+                                        "Ends",
+                                        value: reminder.recurrenceEndDate?.formatted(.dateTime.month().day())
+                                            ?? "Never"
+                                    )
                                 }
                             }
                         }
@@ -136,8 +139,12 @@ struct RemindersView: View {
         )]
     }
 
-    private var openReminders: [FamilyReminder] {
-        reminders.filter { $0.status == .open }
+    private var oneTimeOpenReminders: [FamilyReminder] {
+        reminders.filter { $0.status == .open && !$0.hasRecurrence }
+    }
+
+    private var recurringOpenReminders: [FamilyReminder] {
+        reminders.filter { $0.status == .open && $0.hasRecurrence }
     }
 
     private var startOfToday: Date { Calendar.current.startOfDay(for: .now) }
@@ -225,7 +232,9 @@ private struct ReminderRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(reminder.title)
                     .strikethrough(reminder.status == .completed)
-                Text(reminder.dueAt.formatted(date: .abbreviated, time: .shortened))
+                Text(reminder.hasRecurrence
+                    ? recurrenceSchedule
+                    : reminder.dueAt.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if reminder.hasRecurrence {
@@ -241,6 +250,14 @@ private struct ReminderRow: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var recurrenceSchedule: String {
+        let weekdayNames = reminder.recurrenceWeekdays.map {
+            Calendar.current.shortWeekdaySymbols[$0.rawValue % 7]
+        }.joined(separator: ", ")
+        let time = reminder.dueAt.formatted(date: .omitted, time: .shortened)
+        return "\(weekdayNames) at \(time)"
     }
 
     private var assigneeNames: String {
@@ -265,6 +282,7 @@ private struct ReminderEditorSheet: View {
     @State private var isRecurring = false
     @State private var frequency: ReminderRecurrence.Frequency = .weekly
     @State private var selectedWeekdays: Set<ReminderRecurrence.Weekday> = []
+    @State private var hasEndDate = false
     @State private var endDate = Date.now.addingTimeInterval(60 * 60 * 24 * 90)
     @State private var isSaving = false
     @State private var errorMessage: String?
@@ -287,6 +305,7 @@ private struct ReminderEditorSheet: View {
             _isRecurring = State(initialValue: true)
             _frequency = State(initialValue: reminder.recurrenceFrequency ?? .weekly)
             _selectedWeekdays = State(initialValue: Set(reminder.recurrenceWeekdays ?? []))
+            _hasEndDate = State(initialValue: reminder.recurrenceEndDate != nil)
             _endDate = State(initialValue: reminder.recurrenceEndDate ?? Date.now.addingTimeInterval(60 * 60 * 24 * 90))
         }
     }
@@ -331,7 +350,12 @@ private struct ReminderEditorSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        DatePicker("Ends", selection: $endDate, displayedComponents: [.date])
+                        Toggle("End date", isOn: $hasEndDate)
+                        if hasEndDate {
+                            DatePicker("Ends", selection: $endDate, displayedComponents: [.date])
+                        } else {
+                            LabeledContent("Ends", value: "Never")
+                        }
                     }
                 }
                 if let errorMessage {
@@ -371,7 +395,7 @@ private struct ReminderEditorSheet: View {
                     updated.recurrenceFrequency = frequency
                     updated.recurrenceInterval = 1
                     updated.recurrenceWeekdays = Array(selectedWeekdays).sorted()
-                    updated.recurrenceEndDate = endDate
+                    updated.recurrenceEndDate = hasEndDate ? endDate : nil
                 } else {
                     updated.recurrenceFrequency = nil
                     updated.recurrenceWeekdays = []

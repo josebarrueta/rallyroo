@@ -19,7 +19,9 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
          // Recurring: schedule an alert for each upcoming occurrence.
          // One-time (recurrence == nil): single alert.
         if reminder.hasRecurrence, let recurrence = reminder.recurrence {
-            let range = DateInterval(start: .now, end: recurrence.endDate.addingTimeInterval(60))
+            let schedulingHorizon = recurrence.endDate
+                ?? Calendar.current.date(byAdding: .year, value: 2, to: .now)!
+            let range = DateInterval(start: .now, end: schedulingHorizon.addingTimeInterval(60))
             let occurrences = ReminderOccurrenceExpander.occurrences(of: [reminder], in: range).prefix(30)
             for occ in occurrences {
                 let fireAt = occ.occurrenceDueAt.addingTimeInterval(-Double(leadTime.rawValue * 60))
