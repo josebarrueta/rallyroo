@@ -3,6 +3,7 @@ import { OllamaDayBriefNarrator } from "../src/ollama-day-brief-narrator.js";
 import type { DayBriefNarratorInput } from "../src/day-brief.js";
 
 const input: DayBriefNarratorInput = {
+  firstName: "Alex",
   localDate: "2026-10-05",
   timeZone: "America/Los_Angeles",
   facts: {
@@ -17,8 +18,8 @@ const input: DayBriefNarratorInput = {
     }],
     reminders: [],
   },
-  deterministicTitle: "Your Monday: 1 event, 0 reminders",
-  deterministicBody: "8:00 AM Practice (you drive).",
+  deterministicTitle: "Hello, Alex.",
+  deterministicBody: "Your morning has one commitment, with the rest of the day looking open. 8:00 AM Practice (you drive).",
 };
 
 describe("OllamaDayBriefNarrator", () => {
@@ -46,6 +47,9 @@ describe("OllamaDayBriefNarrator", () => {
     });
     const request = JSON.parse(requests[0]!.body as string);
     expect(request.format).toBeTruthy();
+    expect(request.messages[0].content).toContain("Greet the Member by first name");
+    expect(request.messages[0].content).toContain("Never mention a category with a zero count");
+    expect(request.messages[1].content).toContain('"firstName":"Alex"');
     expect(request.messages[1].content).toContain('"facts"');
     expect(request.messages[1].content).not.toContain("parent-subject");
   });

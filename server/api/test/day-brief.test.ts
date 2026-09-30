@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   Account,
   FamilyEvent,
+  FamilyMember,
   FamilyReminder,
   ScheduleOccurrenceState,
 } from "../src/domain.js";
@@ -54,6 +55,7 @@ function repository(overrides: {
   importedEvents?: FamilyEvent[];
   reminders?: FamilyReminder[];
   occurrenceStates?: ScheduleOccurrenceState[];
+  members?: FamilyMember[];
   preferences?: DayBriefPreferences[];
   saveDayBriefIfAbsent?: (record: DayBriefRecord) => Promise<boolean>;
   dayBrief?: (familyID: string, memberID: string, localDate: string) => Promise<DayBriefRecord | null>;
@@ -100,6 +102,11 @@ function repository(overrides: {
     async importedEventsForMember() { return importedEvents; },
     async remindersForFamily() { return reminders; },
     async occurrenceStatesForFamily() { return overrides.occurrenceStates ?? []; },
+    async membersForFamily() {
+      return overrides.members ?? [{
+        id: "parent", familyID: "family", name: "Alex Morgan", role: "parent", colorTag: "blue",
+      }];
+    },
     async enabledPreferences(limit, after?: Pick<DayBriefPreferences, "familyID" | "memberID">) {
       return (overrides.preferences ?? [])
         .filter((preference) => !after
@@ -129,9 +136,9 @@ describe("DayBriefModule.generate", () => {
       { title: "Dentist", roles: ["personal_calendar"] },
     ]);
     expect(brief.facts.reminders.map(({ title }) => title)).toEqual(["Submit school form"]);
-    expect(brief.title).toBe("Your Monday: 2 events, 1 reminder");
+    expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).toBe(
-      "8:00 AM School drop-off (you drive); 10:00 AM Dentist. Reminder: Submit school form.",
+      "Your morning is busy, with a more relaxed afternoon. 8:00 AM School drop-off (you drive); 10:00 AM Dentist. Reminder: Submit school form.",
     );
   });
 
@@ -164,7 +171,9 @@ describe("DayBriefModule.generate", () => {
       endTime: "2026-10-12T16:00:00.000Z",
       roles: ["driver"],
     }]);
-    expect(brief.body).toBe("8:00 AM Weekly practice (you drive).");
+    expect(brief.body).toBe(
+      "Your morning has one commitment, with the rest of the day looking open. 8:00 AM Weekly practice (you drive).",
+    );
   });
 
   it("expands a legacy recurring event without a saved time zone in the brief's local time zone", async () => {
@@ -215,10 +224,24 @@ describe("DayBriefModule.generate", () => {
     const brief = await module.generate(account, "2026-10-05", "UTC");
 
     expect(receivedTitles).toEqual(["School drop-off", "Dentist"]);
-    expect(brief.title).toBe("A driving-heavy Monday");
+    expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).toBe(
       "You drive to school at 8:00 AM, then have a dentist appointment at 10:00 AM.",
     );
+  });
+
+  it("rejects AI narration that calls attention to an empty category", async () => {
+    const module = new DayBriefModule(repository({ reminders: [] }), undefined, {
+      async narrate() {
+        return { title: "Hello, Alex.", body: "You have zero reminders today." };
+      },
+    });
+
+    const brief = await module.generate(account, "2026-10-05", "UTC");
+
+    expect(brief.title).toBe("Hello, Alex.");
+    expect(brief.body).not.toMatch(/zero|0 events|0 reminders/i);
+    expect(brief.body).toContain("School drop-off");
   });
 
   it("uses stable occurrence identity when a modified occurrence is later skipped", async () => {
@@ -289,7 +312,8 @@ describe("DayBriefModule.generate", () => {
     })).generate(account, "2026-10-12", "America/Los_Angeles");
 
     expect(brief.facts.events).toEqual([]);
-    expect(brief.body).toBe("No events scheduled.");
+    expect(brief.title).toBe("Hello, Alex.");
+    expect(brief.body).toBe("Your day looks open.");
   });
 });
 
@@ -336,7 +360,7 @@ describe("DayBriefModule.dispatchDue", () => {
     expect(await module.dispatchDue(new Date("2026-10-05T07:00:00.000Z")))
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(await notifications.list(account)).toMatchObject([{
-      title: "Your Monday: 0 events, 0 reminders", body: "No events scheduled.",
+      title: "Hello, Alex.", body: "Your day looks open.",
     }]);
   });
 
@@ -486,8 +510,8 @@ describe("DayBriefModule.dispatchDue", () => {
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(await notifications.list(account)).toMatchObject([{
       kind: "day_brief",
-      title: "Your Monday: 0 events, 0 reminders",
-      body: "No events scheduled.",
+      title: "Hello, Alex.",
+      body: "Your day looks open.",
       destination: { kind: "day_brief", id: "2026-10-05" },
     }]);
 
@@ -613,7 +637,7 @@ describe("DayBriefModule.dispatchDue", () => {
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(narrationCount).toBe(1);
     expect(await notifications.list(account)).toMatchObject([{
-      body: "6:30 AM Early practice (you drive).",
+      body: "Your morning has one commitment, with the rest of the day looking open. 6:30 AM Early practice (you drive).",
     }]);
   });
 

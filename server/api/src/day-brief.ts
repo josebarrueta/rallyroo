@@ -1,6 +1,7 @@
 import type {
   Account,
   FamilyEvent,
+  FamilyMember,
   FamilyReminder,
   ScheduleOccurrenceState,
 } from "./domain.js";
@@ -41,6 +42,7 @@ export interface DayBriefRepository {
   importedEventsForMember(familyID: string, memberID: string): Promise<FamilyEvent[]>;
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   occurrenceStatesForFamily(familyID: string): Promise<ScheduleOccurrenceState[]>;
+  membersForFamily(familyID: string): Promise<FamilyMember[]>;
   enabledPreferences(limit: number, after?: DayBriefPreferenceCursor): Promise<DayBriefPreferences[]>;
   saveDayBriefIfAbsent(record: DayBriefRecord): Promise<boolean>;
   dayBrief(familyID: string, memberID: string, localDate: string): Promise<DayBriefRecord | null>;
@@ -77,6 +79,7 @@ export interface DayBrief {
 }
 
 export interface DayBriefNarratorInput {
+  firstName: string;
   localDate: string;
   timeZone: string;
   facts: DayBrief["facts"];
@@ -123,11 +126,12 @@ export class DayBriefModule {
     timeZone: string,
     allowNarration: boolean,
   ): Promise<DayBrief> {
-    const [familyEvents, importedEvents, familyReminders, occurrenceStates] = await Promise.all([
+    const [familyEvents, importedEvents, familyReminders, occurrenceStates, members] = await Promise.all([
       this.repository.eventsForFamily(account.familyID),
       this.repository.importedEventsForMember(account.familyID, account.memberID),
       this.repository.remindersForFamily(account.familyID),
       this.repository.occurrenceStatesForFamily(account.familyID),
+      this.repository.membersForFamily(account.familyID),
     ]);
 
     const events = [
@@ -156,11 +160,9 @@ export class DayBriefModule {
       }))
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt));
 
-    const weekday = new Intl.DateTimeFormat("en-US", {
-      weekday: "long",
-      timeZone,
-    }).format(new Date(`${localDate}T12:00:00Z`));
-    const title = `Your ${weekday}: ${events.length} ${plural(events.length, "event")}, ${reminders.length} ${plural(reminders.length, "reminder")}`;
+    const memberName = members.find((member) => member.id === account.memberID)?.name;
+    const firstName = firstNameFrom(memberName);
+    const title = `Hello, ${firstName}.`;
     const eventSummary = events.map((event) => {
       const time = new Intl.DateTimeFormat("en-US", {
         hour: "numeric",
@@ -172,12 +174,13 @@ export class DayBriefModule {
     const reminderSummary = reminders.length > 0
       ? `Reminder: ${reminders.map((reminder) => reminder.title).join(", ")}.`
       : "";
-    const body = [eventSummary ? `${eventSummary}.` : "No events scheduled.", reminderSummary]
+    const body = [paceSummary(events, reminders, timeZone),
+      eventSummary ? `${eventSummary}.` : "", reminderSummary]
       .filter(Boolean)
       .join(" ");
 
     const brief = { localDate, timeZone, facts: { events, reminders }, title, body };
-    return allowNarration ? this.narrate(brief) : brief;
+    return allowNarration ? this.narrate(brief, firstName) : brief;
   }
 
   async dispatchDue(now = new Date(), limit = 100): Promise<DayBriefDispatchResult> {
@@ -263,7 +266,9 @@ export class DayBriefModule {
           || currentMinute > Math.min(triggerMinute + 30, firstActionableMinute - 1)) continue;
         result.evaluated += 1;
         let brief: DayBrief = existing ?? (this.narrator
-          ? await this.narrate(preliminaryBrief)
+          ? await this.narrate(preliminaryBrief, await this.firstName(
+            preference.familyID, preference.memberID,
+          ))
           : preliminaryBrief);
         if (!existing) {
           const inserted = await this.repository.saveDayBriefIfAbsent({
@@ -297,10 +302,16 @@ export class DayBriefModule {
     return result;
   }
 
-  private async narrate(brief: DayBrief): Promise<DayBrief> {
+  private async firstName(familyID: string, memberID: string): Promise<string> {
+    const members = await this.repository.membersForFamily(familyID);
+    return firstNameFrom(members.find((member) => member.id === memberID)?.name);
+  }
+
+  private async narrate(brief: DayBrief, firstName: string): Promise<DayBrief> {
     if (!this.narrator) return brief;
     try {
       const narrative = await this.narrator.narrate({
+        firstName,
         localDate: brief.localDate,
         timeZone: brief.timeZone,
         facts: brief.facts,
@@ -308,8 +319,11 @@ export class DayBriefModule {
         deterministicBody: brief.body,
       });
       if (narrative.title.trim().length > 0 && narrative.title.length <= 300
-        && narrative.body.trim().length > 0 && narrative.body.length <= 1_000) {
-        return { ...brief, title: narrative.title, body: narrative.body };
+        && narrative.body.trim().length > 0 && narrative.body.length <= 1_000
+        && !mentionsEmptyCategory(narrative.body, brief.facts)) {
+        // Keep the verified personalized greeting stable; AI customizes only
+        // the natural-language summary that follows it.
+        return { ...brief, body: narrative.body };
       }
     } catch {
       // The verified deterministic brief remains useful when AI is unavailable or invalid.
@@ -494,6 +508,46 @@ function localDateFor(instant: string, timeZone: string): string {
   }).format(new Date(instant));
 }
 
-function plural(count: number, singular: string): string {
-  return count === 1 ? singular : `${singular}s`;
+function mentionsEmptyCategory(body: string, facts: DayBrief["facts"]): boolean {
+  const emptyEventMention = facts.events.length === 0
+    && /\b(?:no|zero|0)\s+(?:scheduled\s+)?events?\b/i.test(body);
+  const emptyReminderMention = facts.reminders.length === 0
+    && /\b(?:no|zero|0)\s+(?:open\s+)?reminders?\b/i.test(body);
+  return emptyEventMention || emptyReminderMention;
+}
+
+function firstNameFrom(name: string | undefined): string {
+  return name?.trim().split(/\s+/)[0] || "there";
+}
+
+function paceSummary(
+  events: readonly DayBriefEventFact[],
+  reminders: readonly DayBriefReminderFact[],
+  timeZone: string,
+): string {
+  const hours = [
+    ...events.map((event) => minuteForInstant(event.startTime, timeZone) / 60),
+    ...reminders.map((reminder) => minuteForInstant(reminder.dueAt, timeZone) / 60),
+  ];
+  if (hours.length === 0) return "Your day looks open.";
+  const morning = hours.filter((hour) => hour < 12).length;
+  const afternoon = hours.filter((hour) => hour >= 12 && hour < 17).length;
+  const evening = hours.length - morning - afternoon;
+
+  if (morning >= 2 && afternoon <= 1) {
+    return "Your morning is busy, with a more relaxed afternoon.";
+  }
+  if (morning === 1 && afternoon === 0 && evening === 0) {
+    return "Your morning has one commitment, with the rest of the day looking open.";
+  }
+  if (morning === 0 && afternoon >= 2) {
+    return "Your morning looks relaxed, with a busier afternoon.";
+  }
+  if (morning === 0 && afternoon === 1 && evening === 0) {
+    return "Your morning looks relaxed, with one commitment this afternoon.";
+  }
+  if (evening > morning + afternoon) {
+    return "The earlier part of your day looks lighter, with more happening this evening.";
+  }
+  return "Your plans are spread across the day.";
 }
