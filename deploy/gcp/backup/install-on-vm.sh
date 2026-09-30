@@ -2,7 +2,7 @@
 # Invoked by install-backups.sh on the VM as root; never reruns startup.sh.
 set -Eeuo pipefail
 [[ ${EUID} -eq 0 && $# -eq 1 ]] || { echo 'Install requires sudo and a staged bundle' >&2; exit 1; }
-for tool in kubectl gcloud python3 flock systemctl; do
+for tool in kubectl gcloud python3 flock systemctl timeout; do
   command -v "$tool" >/dev/null || { echo "Missing host tool: $tool" >&2; exit 1; }
 done
 [[ -r /etc/rallyroo/environment ]] || { echo 'Backup environment missing' >&2; exit 1; }

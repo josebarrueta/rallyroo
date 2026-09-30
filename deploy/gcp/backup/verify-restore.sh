@@ -8,6 +8,7 @@ flock -n 9 || { echo 'verify: another backup or restore is running' >&2; exit 1;
 
 work=$(mktemp -d /var/local/rallyroo/.backup-verify.XXXXXXXX)
 pod=''
+remote_archive=''
 database="rallyroo_backup_verify_$$"
 created=0
 cleanup() {
@@ -16,6 +17,10 @@ cleanup() {
     kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
       'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec dropdb -U rallyroo --if-exists "$1"' \
       sh "$database" >/dev/null 2>&1 || { echo 'verify: could not drop isolated database' >&2; status=1; }
+  fi
+  if [[ -n "$pod" && -n "$remote_archive" ]]; then
+    kubectl -n rallyroo exec "$pod" -c postgres -- rm -f "$remote_archive" >/dev/null 2>&1 \
+      || { echo 'verify: could not remove staged archive' >&2; status=1; }
   fi
   rm -rf "$work"
   exit "$status"
@@ -57,16 +62,24 @@ gcloud storage cp "$latest" "$work/restore.dump" >/dev/null 2>&1 || {
 pod=$(kubectl -n rallyroo get pod -l app.kubernetes.io/component=postgres \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || { echo 'verify: postgres unavailable' >&2; exit 1; }
 [[ -n "$pod" ]] || { echo 'verify: postgres unavailable' >&2; exit 1; }
+# Avoid Kubernetes stdin streaming for binary custom archives; it can hang or
+# truncate the payload. Restore the exact downloaded file staged in the pod.
+remote_archive="/tmp/rallyroo-backup-verify-$$.dump"
+timeout 60 kubectl -n rallyroo cp "$work/restore.dump" "rallyroo/$pod:$remote_archive" -c postgres \
+  >/dev/null 2>&1 || { echo 'verify: could not stage archive' >&2; exit 1; }
 # Create and restore into an isolated database on the same PostgreSQL server.
 kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
   'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec createdb -U rallyroo -T template0 "$1"' \
   sh "$database" >/dev/null 2>&1 || { echo 'verify: could not create isolated database' >&2; exit 1; }
 created=1
-kubectl -n rallyroo exec -i "$pod" -c postgres -- sh -ec \
-  'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec pg_restore --exit-on-error --no-owner --no-privileges -U rallyroo -d "$1"' \
-  sh "$database" <"$work/restore.dump" >/dev/null 2>&1 || {
+timeout 300 kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
+  'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec pg_restore --exit-on-error --no-owner --no-privileges -U rallyroo -d "$1" "$2"' \
+  sh "$database" "$remote_archive" >/dev/null 2>&1 || {
   echo 'verify: restore failed' >&2; exit 1;
 }
+kubectl -n rallyroo exec "$pod" -c postgres -- rm -f "$remote_archive" >/dev/null 2>&1 \
+  || { echo 'verify: could not remove staged archive' >&2; exit 1; }
+remote_archive=''
 # The production database always has application tables; an empty restore is not useful.
 count=$(kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
   'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec psql -U rallyroo -d "$1" -Atqc "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = '\''public'\''"' \

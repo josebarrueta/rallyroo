@@ -13,6 +13,10 @@ for unit in backup/*.service backup/*.timer; do
 done
 grep -Fq 'OnCalendar=*-*-* 04:00:00 UTC' backup/rallyroo-backup.timer
 grep -Fq 'OnCalendar=*-*-01 06:00:00 UTC' backup/rallyroo-backup-verify.timer
+# Binary custom archives must be staged as files; kubectl stdin streaming can hang.
+grep -Fq 'kubectl -n rallyroo cp' backup/run-backup.sh
+grep -Fq 'kubectl -n rallyroo cp' backup/verify-restore.sh
+! grep -Eq 'kubectl .* exec -i' backup/run-backup.sh backup/verify-restore.sh
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
@@ -36,17 +40,20 @@ for name in ('run-backup.sh', 'verify-restore.sh'):
     (root / name).write_text(text)
 PY
 printf '#!/usr/bin/env bash\nexit 0\n' >"$scratch/bin/flock"
+printf '#!/usr/bin/env bash\nshift\nexec "$@"\n' >"$scratch/bin/timeout"
 cat >"$scratch/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 case " $* " in
   *' get pod '*) printf 'postgres-test';;
   *' pg_dump '*) [[ "${FAIL_DUMP:-}" != 1 ]] || exit 1; printf 'PGDMPtest-archive';;
-  *' pg_restore --list '*) grep -aq '^PGDMP' || exit 1;;
+  *' cp '*) [[ "${FAIL_COPY:-}" != 1 ]] || exit 1; printf 'copied\n' >>"$MOCK_CALLS";;
+  *' pg_restore --list /tmp/'*) printf 'validated\n' >>"$MOCK_CALLS";;
   *' createdb '*) printf 'createdb\n' >>"$MOCK_CALLS";;
-  *' pg_restore --exit-on-error '*) [[ "${FAIL_RESTORE:-}" != 1 ]] || exit 1; grep -aq '^PGDMP' || exit 1; printf 'restored\n' >>"$MOCK_CALLS";;
+  *' pg_restore --exit-on-error '*) [[ "${FAIL_RESTORE:-}" != 1 ]] || exit 1; printf 'restored\n' >>"$MOCK_CALLS";;
   *' psql '*) printf '2\n';;
   *' dropdb '*) printf 'dropdb\n' >>"$MOCK_CALLS";;
+  *' rm -f /tmp/'*) :;;
   *) exit 1;;
 esac
 MOCK
@@ -109,7 +116,7 @@ bash "$scratch/verify-restore.sh" >/dev/null
 bash "$scratch/run-backup.sh" >/dev/null
 [[ $(find "$scratch/storage" -type f | wc -l | tr -d ' ') == 3 ]]
 [[ ! -f "$scratch/storage/preupgrade/one-off.dump" ]]
-for failure in FAIL_DUMP FAIL_UPLOAD FAIL_DOWNLOAD FAIL_LIST; do
+for failure in FAIL_DUMP FAIL_COPY FAIL_UPLOAD FAIL_DOWNLOAD FAIL_LIST; do
   count_before=$(find "$scratch/storage" -type f | wc -l | tr -d ' ')
   if env "$failure=1" bash "$scratch/run-backup.sh" >/dev/null 2>&1; then
     echo "Expected backup failure: $failure" >&2; exit 1
