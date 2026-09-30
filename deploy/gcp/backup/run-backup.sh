@@ -10,11 +10,19 @@ flock -n 9 || { echo 'backup: another backup or restore is running' >&2; exit 1;
 
 work=$(mktemp -d /var/local/rallyroo/.backup.XXXXXXXX)
 uploaded=''
+pod=''
+remote_archive=''
 cleanup() {
   local status=$?
   if [[ -n "$uploaded" ]]; then
     gcloud storage rm "$uploaded" >/dev/null 2>&1 || {
       echo 'backup: could not remove unverified upload' >&2
+      status=1
+    }
+  fi
+  if [[ -n "$pod" && -n "$remote_archive" ]]; then
+    kubectl -n rallyroo exec "$pod" -c postgres -- rm -f "$remote_archive" >/dev/null 2>&1 || {
+      echo 'backup: could not remove staged archive' >&2
       status=1
     }
   fi
@@ -31,13 +39,20 @@ pod=$(kubectl -n rallyroo get pod -l app.kubernetes.io/component=postgres \
 [[ -n "$pod" ]] || { echo 'backup: postgres unavailable' >&2; exit 1; }
 
 # The password never leaves the container or appears in kubectl arguments.
-kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
+timeout 120 kubectl -n rallyroo exec "$pod" -c postgres -- sh -ec \
   'PGPASSWORD="$(cat /run/secrets/postgres/password)"; export PGPASSWORD; exec pg_dump -U rallyroo -d rallyroo -Fc -Z 6' \
   >"$archive" 2>/dev/null || { echo 'backup: pg_dump failed' >&2; exit 1; }
 [[ -s "$archive" ]] || { echo 'backup: empty archive' >&2; exit 1; }
-# Confirm the local custom archive is readable before uploading.
-kubectl -n rallyroo exec -i "$pod" -c postgres -- pg_restore --list \
-  <"$archive" >/dev/null 2>&1 || { echo 'backup: invalid archive' >&2; exit 1; }
+# Kubernetes stdin streaming can hang or truncate binary custom archives. Stage
+# the file in the PostgreSQL pod and validate that exact file before uploading.
+remote_archive="/tmp/${name}"
+timeout 60 kubectl -n rallyroo cp "$archive" "rallyroo/$pod:$remote_archive" -c postgres \
+  >/dev/null 2>&1 || { echo 'backup: could not stage archive for validation' >&2; exit 1; }
+timeout 60 kubectl -n rallyroo exec "$pod" -c postgres -- pg_restore --list "$remote_archive" \
+  >/dev/null 2>&1 || { echo 'backup: invalid archive' >&2; exit 1; }
+kubectl -n rallyroo exec "$pod" -c postgres -- rm -f "$remote_archive" >/dev/null 2>&1 \
+  || { echo 'backup: could not remove staged archive' >&2; exit 1; }
+remote_archive=''
 
 uploaded="${prefix}${name}"
 gcloud storage cp "$archive" "$uploaded" >/dev/null 2>&1 || {
