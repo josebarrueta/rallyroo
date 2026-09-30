@@ -31,6 +31,10 @@ export class RallyrooDayBriefRepository implements DayBriefRepository, DayBriefP
     return this.schedule.occurrenceStatesForFamily(familyID);
   }
 
+  membersForFamily(familyID: string) {
+    return this.schedule.membersForFamily(familyID);
+  }
+
   preferences(familyID: string, memberID: string) {
     return this.persistence.preferences(familyID, memberID);
   }

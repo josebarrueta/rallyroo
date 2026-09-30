@@ -26,7 +26,7 @@ The Day brief belongs to one Member. It can include:
 - Open or overdue Reminders assigned to the Member.
 - Meaningful free periods between commitments.
 
-A push notification presents the most important facts concisely. Tapping it opens a full Day brief with an at-a-glance section, chronological timeline, attention-needed section, and meaningful open periods.
+A push notification greets the Member by first name and presents the most important facts concisely. Empty Event and Reminder categories are omitted rather than reported as zero. The summary describes the pace of the Member's morning, afternoon, or evening only from verified commitments. Tapping it opens a full Day brief with an at-a-glance section, chronological timeline, attention-needed section, and meaningful open periods.
 
 ### Delivery policy
 
@@ -62,6 +62,8 @@ AI receives only the facts authorized for that Member and returns a bounded stru
 
 - Choose which verified facts deserve the notification's limited space.
 - Describe the day's pace.
+- Personalize wording with the recipient's first name.
+- Omit empty Event and Reminder categories.
 - Group related driving responsibilities.
 - Highlight verified conflicts or tight transitions.
 
