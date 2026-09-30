@@ -25,6 +25,7 @@ The Day brief belongs to one Member. It can include:
 - Overlaps, tight transitions, and missing actionable details.
 - Open or overdue Reminders assigned to the Member.
 - Meaningful free periods between commitments.
+- A bounded Apple Weather forecast for an accessible saved place named Home.
 
 A push notification greets the Member by first name and presents the most important facts concisely. Empty Event and Reminder categories are omitted rather than reported as zero. The summary describes the pace of the Member's morning, afternoon, or evening only from verified commitments. Tapping it opens a full Day brief with an at-a-glance section, chronological timeline, attention-needed section, and meaningful open periods.
 
@@ -58,7 +59,7 @@ Therefore the first release uses explicit Member delivery settings and lets iOS 
 
 The module constructs a structured `DayBriefFacts` value deterministically before invoking AI. The facts include stable source references so every statement can be traced to an authorized Event, Reminder, Travel plan, or conflict.
 
-AI receives only the facts authorized for that Member and returns a bounded structured response. The response is validated before use. AI may:
+AI receives only the facts authorized for that Member and returns a bounded structured response. WeatherKit receives only Home coordinates; Rallyroo adds the verified weather sentence deterministically rather than asking AI to interpret raw forecast payloads. If Home or WeatherKit is unavailable, weather is omitted without suppressing the brief. The detailed iOS brief links the Apple Weather attribution required for displayed weather data. The response is validated before use. AI may:
 
 - Choose which verified facts deserve the notification's limited space.
 - Describe the day's pace.

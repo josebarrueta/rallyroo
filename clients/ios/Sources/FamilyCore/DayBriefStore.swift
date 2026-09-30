@@ -71,13 +71,41 @@ public struct DayBriefReminderFact: Codable, Equatable, Sendable {
   }
 }
 
+public struct DayBriefWeatherAttribution: Codable, Equatable, Sendable {
+  public let serviceName: String
+  public let legalPageURL: URL
+
+  public init(serviceName: String, legalPageURL: URL) {
+    self.serviceName = serviceName
+    self.legalPageURL = legalPageURL
+  }
+}
+
+public struct DayBriefWeatherFact: Codable, Equatable, Sendable {
+  public let source: String
+  public let locationLabel: String
+  public let conditionCode: String
+  public let lowTemperatureCelsius: Double
+  public let highTemperatureCelsius: Double
+  public let morningTemperatureCelsius: Double?
+  public let afternoonTemperatureCelsius: Double?
+  public let precipitationChance: Double
+  public let attribution: DayBriefWeatherAttribution
+}
+
 public struct DayBriefFacts: Codable, Equatable, Sendable {
   public let events: [DayBriefEventFact]
   public let reminders: [DayBriefReminderFact]
+  public let weather: DayBriefWeatherFact?
 
-  public init(events: [DayBriefEventFact], reminders: [DayBriefReminderFact]) {
+  public init(
+    events: [DayBriefEventFact],
+    reminders: [DayBriefReminderFact],
+    weather: DayBriefWeatherFact? = nil
+  ) {
     self.events = events
     self.reminders = reminders
+    self.weather = weather
   }
 }
 

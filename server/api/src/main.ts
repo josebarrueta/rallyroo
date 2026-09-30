@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { APNSPushNotificationProvider } from "./apns-push-notification-provider.js";
+import { AppleWeatherKitDayBriefProvider } from "./apple-weatherkit-day-brief-provider.js";
 import { buildApp } from "./app.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
@@ -144,11 +145,34 @@ const googleRoutesAPIKey = configuredSecret("GOOGLE_ROUTES_API_KEY");
 const routingProvider = googleRoutesAPIKey
   ? new GoogleRoutingProvider(googleRoutesAPIKey)
   : new UnavailableRoutingProvider();
+const weatherKitTeamID = configuredSecret("WEATHERKIT_TEAM_ID");
+const weatherKitServiceID = configuredSecret("WEATHERKIT_SERVICE_ID");
+const weatherKitKeyID = configuredSecret("WEATHERKIT_KEY_ID");
+const weatherKitPrivateKey = configuredSecret("WEATHERKIT_PRIVATE_KEY");
+const weatherKitValues = [
+  weatherKitTeamID, weatherKitServiceID, weatherKitKeyID, weatherKitPrivateKey,
+];
+if (weatherKitValues.some(Boolean) && !weatherKitValues.every(Boolean)) {
+  throw new Error("WeatherKit credentials must be configured together");
+}
+const dayBriefWeather = weatherKitTeamID && weatherKitServiceID && weatherKitKeyID
+  && weatherKitPrivateKey
+  ? new AppleWeatherKitDayBriefProvider({
+    repository,
+    cache,
+    teamID: weatherKitTeamID,
+    serviceID: weatherKitServiceID,
+    keyID: weatherKitKeyID,
+    privateKey: weatherKitPrivateKey,
+    ...(googlePlacesAPIKey ? { googlePlacesAPIKey } : {}),
+  })
+  : undefined;
 const dayBriefs = new DayBriefModule(
   dayBriefRepository,
   notificationCenter,
   ollamaConfiguration ? new OllamaDayBriefNarrator(ollamaConfiguration) : undefined,
   googleRoutesAPIKey ? new DayBriefTravelTiming(repository, routingProvider, calendarSources) : undefined,
+  dayBriefWeather,
 );
 const invitationEmailSender: InvitationEmailSender = resendAPIKey && process.env.INVITATION_EMAIL_FROM
   ? new ResendInvitationEmailSender({

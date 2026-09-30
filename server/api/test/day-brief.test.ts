@@ -10,6 +10,7 @@ import {
   DayBriefModule,
   type DayBriefNarrator,
   type DayBriefPreferences,
+  type DayBriefWeatherProvider,
   type DayBriefRecord,
   type DayBriefRepository,
 } from "../src/day-brief.js";
@@ -140,6 +141,88 @@ describe("DayBriefModule.generate", () => {
     expect(brief.body).toBe(
       "Your morning is busy, with a more relaxed afternoon. 8:00 AM School drop-off (you drive); 10:00 AM Dentist. Reminder: Submit school form.",
     );
+  });
+
+  it("includes a verified Home forecast in the human summary and AI facts", async () => {
+    let narratedWeather: unknown;
+    const weather: DayBriefWeatherProvider = {
+      async forecast() {
+        return {
+          source: "apple_weather",
+          locationLabel: "Home",
+          conditionCode: "MostlyClear",
+          lowTemperatureCelsius: 12,
+          highTemperatureCelsius: 24,
+          morningTemperatureCelsius: 13,
+          afternoonTemperatureCelsius: 22,
+          precipitationChance: 0.1,
+          attribution: {
+            serviceName: "Weather",
+            legalPageURL: "https://weather.example/legal",
+          },
+        };
+      },
+    };
+    const narrator: DayBriefNarrator = {
+      async narrate(input) {
+        narratedWeather = input.facts.weather;
+        return { title: input.deterministicTitle, body: "Your schedule starts early today." };
+      },
+    };
+
+    const brief = await new DayBriefModule(
+      repository(), undefined, narrator, undefined, weather,
+    ).generate(account, "2026-10-05", "America/Los_Angeles");
+
+    expect(brief.facts.weather).toMatchObject({
+      locationLabel: "Home", conditionCode: "MostlyClear", highTemperatureCelsius: 24,
+    });
+    expect(narratedWeather).toEqual(brief.facts.weather);
+    expect(brief.body).toContain(
+      "It will warm up this afternoon, with mostly clear skies and a high near 75°F.",
+    );
+  });
+
+  it("rejects AI weather wording so it cannot invent or alter the verified forecast", async () => {
+    const weather: DayBriefWeatherProvider = {
+      async forecast() {
+        return {
+          source: "apple_weather", locationLabel: "Home", conditionCode: "Clear",
+          lowTemperatureCelsius: 10, highTemperatureCelsius: 20,
+          precipitationChance: 0,
+          attribution: { serviceName: "Weather", legalPageURL: "https://weather.example/legal" },
+        };
+      },
+    };
+    const narrator: DayBriefNarrator = {
+      async narrate(input) {
+        return {
+          title: input.deterministicTitle,
+          body: "Expect heavy rain and a high near 95°F before your schedule starts.",
+        };
+      },
+    };
+
+    const brief = await new DayBriefModule(
+      repository(), undefined, narrator, undefined, weather,
+    ).generate(account, "2026-10-05", "America/Los_Angeles");
+
+    expect(brief.body).toContain("Around Home, expect clear skies and a high near 68°F.");
+    expect(brief.body).not.toContain("heavy rain");
+    expect(brief.body).not.toContain("95°F");
+  });
+
+  it("keeps generating a Day Brief when weather lookup fails", async () => {
+    const weather: DayBriefWeatherProvider = {
+      async forecast() { throw new Error("WeatherKit unavailable"); },
+    };
+
+    const brief = await new DayBriefModule(
+      repository(), undefined, undefined, undefined, weather,
+    ).generate(account, "2026-10-05", "America/Los_Angeles");
+
+    expect(brief.facts.weather).toBeUndefined();
+    expect(brief.title).toBe("Hello, Alex.");
   });
 
   it("expands a recurring driving duty into the requested local day", async () => {
