@@ -1843,6 +1843,52 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("imports valid TeamSnap events when the feed also contains a zero-duration item", async () => {
+    const calendarSources = new CalendarSourceModule({
+      repository: new InMemoryCalendarSourceRepository(),
+      protectURL: (url) => url,
+      revealURL: (url) => url,
+      fetchFeed: async () => ({ body: [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:valid@example",
+        "SUMMARY:Valid practice",
+        "DTSTART:20260912T180000Z",
+        "DTEND:20260912T190000Z",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:zero-duration@example",
+        "SUMMARY:TeamSnap zero-duration item",
+        "DTSTART:20260913T180000Z",
+        "DTEND:20260913T180000Z",
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n") }),
+    });
+    const app = buildApp({ identityProvider, repository: repository(), calendarSources });
+
+    const connected = await app.inject({
+      method: "POST", url: "/v1/calendar-sources",
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        name: "TeamSnap", url: "https://ical.example/team.ics",
+        participantIDs: ["kid-1"], visibility: "family",
+      },
+    });
+    const schedule = await app.inject({
+      method: "GET", url: "/v1/events",
+      headers: { authorization: "Bearer parent-token" },
+    });
+
+    expect(connected.statusCode).toBe(201);
+    expect(connected.json().status).toBe("ready");
+    expect(schedule.json().map((event: { title: string }) => event.title)).toContain("Valid practice");
+    expect(schedule.json().map((event: { title: string }) => event.title))
+      .not.toContain("TeamSnap zero-duration item");
+    await app.close();
+  });
+
   it("reads TeamSnap arrival times embedded in calendar descriptions", async () => {
     const calendarSources = new CalendarSourceModule({
       repository: new InMemoryCalendarSourceRepository(),

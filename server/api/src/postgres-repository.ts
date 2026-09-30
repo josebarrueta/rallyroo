@@ -4532,7 +4532,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
 }
 
 function reminderFromRow(row: ReminderRow): FamilyReminder {
-  const isSeriesTemplate = row.recurrence_weekdays.length > 0 && row.recurrence_end_date !== null;
+  const isSeriesTemplate = row.recurrence_weekdays.length > 0;
   return {
     familyID: row.family_id,
     id: row.id,
@@ -4547,7 +4547,8 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     recurrenceFrequency: isSeriesTemplate ? row.recurrence_frequency : null,
     recurrenceInterval: isSeriesTemplate ? row.recurrence_interval : null,
     recurrenceWeekdays: isSeriesTemplate ? row.recurrence_weekdays : [],
-    recurrenceEndDate: isSeriesTemplate ? asISOString(row.recurrence_end_date!) : null,
+    recurrenceEndDate: isSeriesTemplate && row.recurrence_end_date
+      ? asISOString(row.recurrence_end_date) : null,
     recurrenceSeriesID: row.recurrence_series_id,
   };
 }
