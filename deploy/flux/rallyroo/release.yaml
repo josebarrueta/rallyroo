@@ -43,6 +43,7 @@ spec:
       sf511: rallyroo-sf511
       observability: rallyroo-observability
       ollamaAccess: rallyroo-ollama-access
+      weatherKit: rallyroo-weatherkit
     runtimeConfig:
       enabled: true
       logLevel: info

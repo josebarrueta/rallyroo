@@ -25,6 +25,7 @@ providerSecrets:
   sf511: ""
   observability: ""
   ollamaAccess: ""
+  weatherKit: ""
 
 runtimeConfig:
   # Production enables this through Flux. Local development continues reading

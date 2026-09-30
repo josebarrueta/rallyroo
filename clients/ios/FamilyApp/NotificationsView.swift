@@ -208,6 +208,15 @@ private struct DayBriefDetailView: View {
                     }
                 }
             }
+            if let attribution = brief.facts.weather?.attribution {
+                Section {
+                    Link(destination: attribution.legalPageURL) {
+                        Label(attribution.serviceName, systemImage: "cloud.sun")
+                    }
+                } footer: {
+                    Text("Weather data and source attribution")
+                }
+            }
         }
         .navigationTitle(brief.title)
         .navigationBarTitleDisplayMode(.inline)

@@ -36,7 +36,8 @@ helm template rallyroo "$CHART" --values "$VALUES" --is-upgrade \
   --set providerSecrets.apns=rallyroo-apns \
   --set providerSecrets.sf511=rallyroo-sf511 \
   --set providerSecrets.observability=rallyroo-observability \
-  --set providerSecrets.ollamaAccess=rallyroo-ollama-access >"$rendered"
+  --set providerSecrets.ollamaAccess=rallyroo-ollama-access \
+  --set providerSecrets.weatherKit=rallyroo-weatherkit >"$rendered"
 helm package "$CHART" --destination "$tmp" --version "0.1.1+deadbeef" >/dev/null
 helm template rallyroo "$tmp/rallyroo-0.1.1+deadbeef.tgz" \
   --values "$VALUES" --is-upgrade >"$flux_rendered"
@@ -114,6 +115,13 @@ grep -q 'value: /run/secrets/ollama-access/client-id' "$rendered"
 grep -q 'name: OLLAMA_CF_ACCESS_CLIENT_SECRET_FILE' "$rendered"
 grep -q 'value: /run/secrets/ollama-access/client-secret' "$rendered"
 grep -q 'secretName: rallyroo-ollama-access' "$rendered"
+grep -q 'name: WEATHERKIT_TEAM_ID_FILE' "$rendered"
+grep -q 'value: /run/secrets/weatherkit/team-id' "$rendered"
+grep -q 'name: WEATHERKIT_SERVICE_ID_FILE' "$rendered"
+grep -q 'name: WEATHERKIT_KEY_ID_FILE' "$rendered"
+grep -q 'name: WEATHERKIT_PRIVATE_KEY_FILE' "$rendered"
+grep -q 'value: /run/secrets/weatherkit/private-key' "$rendered"
+grep -q 'secretName: rallyroo-weatherkit' "$rendered"
 if grep -Eq 'name: rallyroo-site|server_name rallyroo\.dev|mountPath: /usr/share/nginx/html|Privacy Policy' "$rendered"; then
   echo "The API chart must not package or serve the public website" >&2
   exit 1

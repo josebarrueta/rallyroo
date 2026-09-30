@@ -67,12 +67,37 @@ export interface DayBriefReminderFact {
   dueAt: string;
 }
 
+export interface DayBriefWeatherFact {
+  source: "apple_weather";
+  locationLabel: "Home";
+  conditionCode: string;
+  lowTemperatureCelsius: number;
+  highTemperatureCelsius: number;
+  morningTemperatureCelsius?: number;
+  afternoonTemperatureCelsius?: number;
+  precipitationChance: number;
+  attribution: {
+    serviceName: "Weather";
+    legalPageURL: string;
+  };
+}
+
+export interface DayBriefWeatherProvider {
+  forecast(
+    familyID: string,
+    memberID: string,
+    localDate: string,
+    timeZone: string,
+  ): Promise<DayBriefWeatherFact | null>;
+}
+
 export interface DayBrief {
   localDate: string;
   timeZone: string;
   facts: {
     events: DayBriefEventFact[];
     reminders: DayBriefReminderFact[];
+    weather?: DayBriefWeatherFact;
   };
   title: string;
   body: string;
@@ -114,6 +139,7 @@ export class DayBriefModule {
     private readonly notificationCenter?: NotificationCenterModule,
     private readonly narrator?: DayBriefNarrator,
     private readonly travelTiming?: DayBriefVerifiedLeaveTimeProvider,
+    private readonly weather?: DayBriefWeatherProvider,
   ) {}
 
   async generate(account: Account, localDate: string, timeZone: string): Promise<DayBrief> {
@@ -160,6 +186,15 @@ export class DayBriefModule {
       }))
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt));
 
+    let weather: DayBriefWeatherFact | null = null;
+    if (this.weather) {
+      try {
+        weather = await this.weather.forecast(
+          account.familyID, account.memberID, localDate, timeZone,
+        );
+      } catch { /* Weather is optional and never suppresses the Day Brief. */ }
+    }
+
     const memberName = members.find((member) => member.id === account.memberID)?.name;
     const firstName = firstNameFrom(memberName);
     const title = `Hello, ${firstName}.`;
@@ -174,12 +209,17 @@ export class DayBriefModule {
     const reminderSummary = reminders.length > 0
       ? `Reminder: ${reminders.map((reminder) => reminder.title).join(", ")}.`
       : "";
-    const body = [paceSummary(events, reminders, timeZone),
+    const body = [weather ? weatherSummary(weather) : "", paceSummary(events, reminders, timeZone),
       eventSummary ? `${eventSummary}.` : "", reminderSummary]
       .filter(Boolean)
       .join(" ");
 
-    const brief = { localDate, timeZone, facts: { events, reminders }, title, body };
+    const facts: DayBrief["facts"] = {
+      events,
+      reminders,
+      ...(weather ? { weather } : {}),
+    };
+    const brief = { localDate, timeZone, facts, title, body };
     return allowNarration ? this.narrate(brief, firstName) : brief;
   }
 
@@ -320,10 +360,14 @@ export class DayBriefModule {
       });
       if (narrative.title.trim().length > 0 && narrative.title.length <= 300
         && narrative.body.trim().length > 0 && narrative.body.length <= 1_000
-        && !mentionsEmptyCategory(narrative.body, brief.facts)) {
+        && !mentionsEmptyCategory(narrative.body, brief.facts)
+        && !mentionsWeather(narrative.body)) {
         // Keep the verified personalized greeting stable; AI customizes only
         // the natural-language summary that follows it.
-        return { ...brief, body: narrative.body };
+        const body = brief.facts.weather
+          ? `${weatherSummary(brief.facts.weather)} ${narrative.body}`
+          : narrative.body;
+        return { ...brief, body };
       }
     } catch {
       // The verified deterministic brief remains useful when AI is unavailable or invalid.
@@ -506,6 +550,50 @@ function localDateFor(instant: string, timeZone: string): string {
     day: "2-digit",
     timeZone,
   }).format(new Date(instant));
+}
+
+function weatherSummary(weather: DayBriefWeatherFact): string {
+  const high = fahrenheit(weather.highTemperatureCelsius);
+  const condition = weatherCondition(weather.conditionCode);
+  const warmsUp = weather.morningTemperatureCelsius !== undefined
+    && weather.afternoonTemperatureCelsius !== undefined
+    && weather.afternoonTemperatureCelsius - weather.morningTemperatureCelsius >= 4;
+  if (weather.precipitationChance >= 0.5) {
+    const precipitation = precipitationDescription(weather.conditionCode);
+    return `${precipitation} is likely around Home today, with a high near ${high}°F.`;
+  }
+  if (warmsUp) {
+    return `It will warm up this afternoon, with ${condition} and a high near ${high}°F.`;
+  }
+  return `Around Home, expect ${condition} and a high near ${high}°F.`;
+}
+
+function precipitationDescription(conditionCode: string): string {
+  const code = conditionCode.toLocaleLowerCase("en-US");
+  if (/snow|flurr|blizzard/.test(code)) return "Snow";
+  if (/sleet|freezing|wintry/.test(code)) return "Wintry precipitation";
+  if (/rain|drizzl|shower|thunder/.test(code)) return "Rain";
+  return "Precipitation";
+}
+
+function fahrenheit(celsius: number): number {
+  return Math.round(celsius * 9 / 5 + 32);
+}
+
+function weatherCondition(code: string): string {
+  const words = code.replaceAll(/([a-z])([A-Z])/g, "$1 $2").toLocaleLowerCase("en-US");
+  const descriptions: Record<string, string> = {
+    clear: "clear skies",
+    mostlyclear: "mostly clear skies",
+    partlycloudy: "partly cloudy skies",
+    mostlycloudy: "mostly cloudy skies",
+    cloudy: "cloudy skies",
+  };
+  return descriptions[code.toLocaleLowerCase("en-US")] ?? words;
+}
+
+function mentionsWeather(body: string): boolean {
+  return /\b(?:weather|forecast|rain(?:y|ing)?|showers?|drizzl(?:e|ing)|snow(?:y|ing)?|sleet|hail|thunder(?:storm)?s?|storms?|tornado(?:es)?|hurricanes?|sunny|sunshine|cloud(?:y|s)?|overcast|fog(?:gy)?|wind(?:y)?|temperatures?|precipitation|humid(?:ity)?|degrees?)\b|\d\s*°\s*[cf]?\b|\b(?:high|low)\s+(?:of|near)\s+\d/iu.test(body);
 }
 
 function mentionsEmptyCategory(body: string, facts: DayBrief["facts"]): boolean {

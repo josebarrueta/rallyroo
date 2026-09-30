@@ -35,7 +35,7 @@ spec:
         checksum/runtime-config: {{ include (print $.Template.BasePath "/runtime-config.yaml") . | sha256sum }}
       {{- end }}
     spec:
-      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess }}
+      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess .Values.providerSecrets.weatherKit }}
       securityContext:
         fsGroup: 1000
       {{- end }}
@@ -138,6 +138,16 @@ spec:
             - name: OLLAMA_CF_ACCESS_CLIENT_SECRET_FILE
               value: /run/secrets/ollama-access/client-secret
             {{- end }}
+            {{- if .Values.providerSecrets.weatherKit }}
+            - name: WEATHERKIT_TEAM_ID_FILE
+              value: /run/secrets/weatherkit/team-id
+            - name: WEATHERKIT_SERVICE_ID_FILE
+              value: /run/secrets/weatherkit/service-id
+            - name: WEATHERKIT_KEY_ID_FILE
+              value: /run/secrets/weatherkit/key-id
+            - name: WEATHERKIT_PRIVATE_KEY_FILE
+              value: /run/secrets/weatherkit/private-key
+            {{- end }}
           ports:
             - name: http
               containerPort: 3000
@@ -155,7 +165,7 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}
-          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess }}
+          {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess .Values.providerSecrets.weatherKit }}
           volumeMounts:
             {{- if .Values.postgres.credentialsSecret }}
             {{- include "rallyroo.postgresPasswordVolumeMount" . | nindent 12 }}
@@ -210,8 +220,13 @@ spec:
               mountPath: /run/secrets/ollama-access
               readOnly: true
             {{- end }}
+            {{- if .Values.providerSecrets.weatherKit }}
+            - name: weatherkit-credentials
+              mountPath: /run/secrets/weatherkit
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess }}
+      {{- if or .Values.postgres.credentialsSecret .Values.providerSecrets.stytch .Values.providerSecrets.calendarEncryption .Values.providerSecrets.familyDataEncryption .Values.providerSecrets.googlePlaces .Values.providerSecrets.googleRoutes .Values.providerSecrets.resendInvitations .Values.providerSecrets.apns .Values.providerSecrets.sf511 .Values.providerSecrets.observability .Values.providerSecrets.ollamaAccess .Values.providerSecrets.weatherKit }}
       volumes:
         {{- if .Values.postgres.credentialsSecret }}
         {{- include "rallyroo.postgresPasswordVolume" . | nindent 8 }}
@@ -309,5 +324,20 @@ spec:
                 path: client-id
               - key: OLLAMA_CF_ACCESS_CLIENT_SECRET
                 path: client-secret
+        {{- end }}
+        {{- if .Values.providerSecrets.weatherKit }}
+        - name: weatherkit-credentials
+          secret:
+            secretName: {{ .Values.providerSecrets.weatherKit }}
+            defaultMode: 288
+            items:
+              - key: WEATHERKIT_TEAM_ID
+                path: team-id
+              - key: WEATHERKIT_SERVICE_ID
+                path: service-id
+              - key: WEATHERKIT_KEY_ID
+                path: key-id
+              - key: WEATHERKIT_PRIVATE_KEY
+                path: private-key
         {{- end }}
       {{- end }}

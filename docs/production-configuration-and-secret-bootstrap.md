@@ -60,6 +60,7 @@ Kubernetes Secret keys.
 | `rallyroo-google-routes` | `GOOGLE_ROUTES_API_KEY` | Google Cloud |
 | `rallyroo-resend-invitations` | `RESEND_API_KEY` | Resend, Sending access |
 | `rallyroo-apns` | `APNS_PRIVATE_KEY`, `APNS_KEY_ID` | Apple Developer |
+| `rallyroo-weatherkit` | `WEATHERKIT_TEAM_ID`, `WEATHERKIT_SERVICE_ID`, `WEATHERKIT_KEY_ID`, `WEATHERKIT_PRIVATE_KEY` | Apple Developer WeatherKit |
 | `rallyroo-sf511` | `SF511_API_KEY` | 511 SF Bay Open Data |
 | `rallyroo-calendar-encryption` | `CALENDAR_SOURCE_ENCRYPTION_KEY` | Rallyroo-generated |
 | `rallyroo-family-data-encryption` | `FAMILY_DATA_ENCRYPTION_KEY` | Rallyroo-generated |
