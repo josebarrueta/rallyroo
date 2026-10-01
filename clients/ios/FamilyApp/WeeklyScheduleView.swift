@@ -479,18 +479,25 @@ struct WeeklyScheduleView: View {
                     Text(viewport.anchorDate.formatted(.dateTime.month(.wide).year()))
                         .font(.title3.bold())
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    LazyVGrid(
-                        columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 7),
-                        spacing: 8
-                    ) {
-                        ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
-                            Text(symbol)
-                                .font(.caption2.bold())
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("schedule-month-weekday-\(index)")
+                    // Keep this grid eager and deterministically sized. A LazyVGrid inside
+                    // List can repeatedly change its preferred cell height during UIKit's
+                    // collection-view layout pass and trigger a recursive-layout trap.
+                    VStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
+                                Text(symbol)
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .accessibilityIdentifier("schedule-month-weekday-\(index)")
+                            }
                         }
-                        ForEach(viewport.visibleDates, id: \.self) { day in
-                            monthDayButton(day)
+                        ForEach(Array(monthWeeks.enumerated()), id: \.offset) { _, week in
+                            HStack(spacing: 4) {
+                                ForEach(week, id: \.self) { day in
+                                    monthDayButton(day)
+                                }
+                            }
                         }
                     }
                 }
@@ -579,6 +586,13 @@ struct WeeklyScheduleView: View {
         let firstParticipant = occurrence.event.participantIDs.first
         let colorTag = viewModel.members.first(where: { $0.id == firstParticipant })?.colorTag
         return Color(familyColorTag: colorTag)
+    }
+
+    private var monthWeeks: [[Date]] {
+        let dates = viewport.visibleDates
+        return stride(from: 0, to: dates.count, by: 7).map { start in
+            Array(dates[start..<min(start + 7, dates.count)])
+        }
     }
 
     private var weekdaySymbols: [String] {
