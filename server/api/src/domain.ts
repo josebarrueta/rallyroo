@@ -90,7 +90,7 @@ export interface ScheduleOccurrenceState {
   completedByMemberID: string | null;
 }
 
-export type ReminderFrequency = "weekly" | "biweekly";
+export type ReminderFrequency = "weekly" | "biweekly" | "monthly" | "yearly";
 export type ReminderWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface FamilyReminder {
@@ -109,6 +109,7 @@ export interface FamilyReminder {
   recurrenceInterval?: number | null;
   recurrenceWeekdays?: number[] | null;
   recurrenceEndDate?: string | null;
+  recurrenceTimeZone?: string | null;
   recurrenceSeriesID?: string | null;
 }
 

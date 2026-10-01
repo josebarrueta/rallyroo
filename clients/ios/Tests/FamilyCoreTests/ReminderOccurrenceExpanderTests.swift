@@ -86,6 +86,91 @@ final class ReminderOccurrenceExpanderTests: XCTestCase {
         ])
     }
 
+    func testMonthlyReminderUsesTheLastValidDayWithoutDrifting() throws {
+        let series = FamilyReminder(
+            title: "Pay credit card",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: date(2027, 1, 31, 9),
+            recurrenceFrequency: .monthly,
+            recurrenceTimeZone: "America/Los_Angeles"
+        )
+        let range = DateInterval(start: date(2027, 1, 1, 0), end: date(2027, 5, 1, 0))
+
+        let occurrences = ReminderOccurrenceExpander.occurrences(
+            of: [series], in: range, calendar: fixedCalendar()
+        )
+
+        XCTAssertEqual(occurrences.map(\.occurrenceDueAt), [
+            date(2027, 1, 31, 9),
+            date(2027, 2, 28, 9),
+            date(2027, 3, 31, 9),
+            date(2027, 4, 30, 9),
+        ])
+    }
+
+    func testMonthlyReminderRespectsItsEndDate() throws {
+        let series = FamilyReminder(
+            title: "Subscription",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: date(2027, 1, 31, 9),
+            recurrenceFrequency: .monthly,
+            recurrenceEndDate: date(2027, 3, 1, 0),
+            recurrenceTimeZone: "America/Los_Angeles"
+        )
+        let range = DateInterval(start: date(2027, 1, 1, 0), end: date(2027, 5, 1, 0))
+
+        let occurrences = ReminderOccurrenceExpander.occurrences(
+            of: [series], in: range, calendar: fixedCalendar()
+        )
+
+        XCTAssertEqual(occurrences.map(\.occurrenceDueAt), [
+            date(2027, 1, 31, 9), date(2027, 2, 28, 9),
+        ])
+    }
+
+    func testMonthlyReminderKeepsLocalTimeAcrossDaylightSavingTime() throws {
+        let timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let series = FamilyReminder(
+            title: "Monthly check-in",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: date(2027, 2, 10, 9),
+            recurrenceFrequency: .monthly,
+            recurrenceTimeZone: timeZone.identifier
+        )
+        let range = DateInterval(start: date(2027, 2, 1, 0), end: date(2027, 5, 1, 0))
+
+        let dueTimes = ReminderOccurrenceExpander.occurrences(
+            of: [series], in: range, calendar: Calendar(identifier: .gregorian)
+        ).map(\.occurrenceDueAt)
+
+        XCTAssertEqual(dueTimes.count, 3)
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = timeZone
+        XCTAssertEqual(dueTimes.map { localCalendar.component(.hour, from: $0) }, [9, 9, 9])
+        XCTAssertEqual(timeZone.secondsFromGMT(for: dueTimes[0]), -8 * 3_600)
+        XCTAssertEqual(timeZone.secondsFromGMT(for: dueTimes[2]), -7 * 3_600)
+    }
+
+    func testYearlyLeapDayReminderUsesFebruary28ThenReturnsToFebruary29() throws {
+        let series = FamilyReminder(
+            title: "Birthday",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: date(2028, 2, 29, 9),
+            recurrenceFrequency: .yearly,
+            recurrenceTimeZone: "America/Los_Angeles"
+        )
+        let range = DateInterval(start: date(2028, 1, 1, 0), end: date(2033, 1, 1, 0))
+
+        let occurrences = ReminderOccurrenceExpander.occurrences(
+            of: [series], in: range, calendar: fixedCalendar()
+        )
+
+        XCTAssertEqual(occurrences.map(\.occurrenceDueAt), [
+            date(2028, 2, 29, 9), date(2029, 2, 28, 9), date(2030, 2, 28, 9),
+            date(2031, 2, 28, 9), date(2032, 2, 29, 9),
+        ])
+    }
+
     func testBiweeklyReminderSkipsAlternateWeeks() throws {
         let series = FamilyReminder(
             title: "Trash day",

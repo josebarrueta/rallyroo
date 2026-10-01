@@ -1078,6 +1078,47 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     await reader.close();
   });
 
+  it("persists monthly reminder recurrence and its time zone", async () => {
+    const writer = buildApp({ identityProvider, repository: repositoryForTest() });
+    const session = await writer.inject({
+      method: "POST",
+      url: "/v1/sessions",
+      payload: { oauthToken: "oauth-token", codeVerifier: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopq" },
+    });
+    const reminderID = "abcdefab-cdef-4abc-8def-abcdefabc305";
+
+    const saved = await writer.inject({
+      method: "PUT",
+      url: `/v1/reminders/${reminderID}`,
+      headers: { authorization: "Bearer integration-token" },
+      payload: {
+        id: reminderID,
+        title: "Pay credit card",
+        assigneeIDs: [session.json().accountID],
+        dueAt: "2027-01-31T17:00:00Z",
+        recurrenceFrequency: "monthly",
+        recurrenceTimeZone: "America/Los_Angeles",
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+    await writer.close();
+
+    const reader = buildApp({ identityProvider, repository: repositoryForTest() });
+    const reminders = await reader.inject({
+      method: "GET",
+      url: "/v1/reminders",
+      headers: { authorization: "Bearer integration-token" },
+    });
+    expect(reminders.json()).toContainEqual(expect.objectContaining({
+      id: reminderID,
+      recurrenceFrequency: "monthly",
+      recurrenceWeekdays: [],
+      recurrenceTimeZone: "America/Los_Angeles",
+      recurrenceSeriesID: reminderID,
+    }));
+    await reader.close();
+  });
+
   it("claims a due reminder once across concurrent notification workers", async () => {
     const data = repositoryForTest();
     const account = await data.provisionParentAccount("notification-worker-parent", "Notifier");
