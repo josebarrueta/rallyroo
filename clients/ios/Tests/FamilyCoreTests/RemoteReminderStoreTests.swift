@@ -98,6 +98,38 @@ final class RemoteReminderStoreTests: XCTestCase {
         XCTAssertEqual(savedJSON["recurrenceFrequency"] as? String, "weekly")
       }
 
+    func testSavesAndListsMonthlySeriesWithItsTimeZone() async throws {
+        let reminder = FamilyReminder(
+            id: UUID(uuidString: "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC203")!,
+            title: "Pay credit card",
+            assigneeIDs: [KidID(rawValue: "parent-1")],
+            dueAt: Date(timeIntervalSince1970: 1_800_000_000),
+            recurrenceFrequency: .monthly,
+            recurrenceTimeZone: "America/Los_Angeles"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let transport = ReminderHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: try encoder.encode(reminder)),
+            HTTPResponse(statusCode: 200, body: try encoder.encode([reminder])),
+        ])
+        let store: any ReminderStore = RemoteReminderStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: transport
+        )
+
+        try await store.save(reminder)
+        let results = try await store.reminders()
+
+        XCTAssertEqual(results.first?.recurrenceFrequency, .monthly)
+        XCTAssertEqual(results.first?.recurrenceTimeZone, "America/Los_Angeles")
+        XCTAssertTrue(results.first?.hasRecurrence == true)
+        let requests = await transport.recordedRequests()
+        let savedBody = try XCTUnwrap(requests.first?.body)
+        let savedJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: savedBody) as? [String: Any])
+        XCTAssertEqual(savedJSON["recurrenceFrequency"] as? String, "monthly")
+        XCTAssertEqual(savedJSON["recurrenceTimeZone"] as? String, "America/Los_Angeles")
+    }
+
     func testOccurrencesExpandsSeriesLocally() async throws {
         let series = FamilyReminder(
             id: UUID(uuidString: "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC202")!,

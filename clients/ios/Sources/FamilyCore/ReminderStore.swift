@@ -21,6 +21,8 @@ public struct ReminderRecurrence: Codable, Equatable, Sendable {
     public enum Frequency: String, Codable, CaseIterable, Sendable {
         case weekly
         case biweekly
+        case monthly
+        case yearly
      }
 
     public enum Weekday: Int, Codable, CaseIterable, Comparable, Sendable {
@@ -39,20 +41,24 @@ public struct ReminderRecurrence: Codable, Equatable, Sendable {
     public let interval: Int
     public let weekdays: [Weekday]
     public let endDate: Date?
+    public let timeZone: String?
 
     public init(
         frequency: Frequency = .weekly,
         interval: Int = 1,
-        weekdays: [Weekday],
-        endDate: Date? = nil
+        weekdays: [Weekday] = [],
+        endDate: Date? = nil,
+        timeZone: String? = nil
      ) {
         self.frequency = frequency
         self.interval = max(1, frequency == .biweekly ? interval * 2 : interval)
         self.weekdays = Array(Set(weekdays)).sorted()
         self.endDate = endDate
+        self.timeZone = timeZone
      }
 
-     /// Effective interval in weeks (biweekly stores 2 in `interval`).
+     /// Effective interval in the selected frequency's calendar unit.
+     /// Biweekly stores two weeks in `interval`.
     public var effectiveInterval: Int { interval }
 }
 
@@ -68,12 +74,13 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
     public var completedByMemberID: KidID?
     public var alertLeadTime: ReminderAlertLeadTime?
 
-     /// Recurrence fields. When `recurrenceFrequency` is non-nil and
-     /// `recurrenceWeekdays` is non-empty, this reminder is a series template.
+     /// Recurrence fields. Weekly frequencies also require at least one weekday;
+     /// monthly and yearly frequencies derive their calendar anchor from `dueAt`.
     public var recurrenceFrequency: ReminderRecurrence.Frequency?
     public var recurrenceInterval: Int?
     public var recurrenceWeekdays: [ReminderRecurrence.Weekday]
     public var recurrenceEndDate: Date?
+    public var recurrenceTimeZone: String?
 
      /// For series linkage; set to `id` for series templates.
     public var recurrenceSeriesID: UUID?
@@ -82,6 +89,7 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
         case id, title, assigneeIDs, dueAt, status, completedAt, completedByMemberID
         case alertLeadTime = "alertLeadTimeMinutes"
         case recurrenceFrequency, recurrenceInterval, recurrenceWeekdays, recurrenceEndDate
+        case recurrenceTimeZone
         case recurrenceSeriesID
      }
 
@@ -105,6 +113,7 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
             forKey: .recurrenceWeekdays
         ) ?? []
         recurrenceEndDate = try container.decodeIfPresent(Date.self, forKey: .recurrenceEndDate)
+        recurrenceTimeZone = try container.decodeIfPresent(String.self, forKey: .recurrenceTimeZone)
         recurrenceSeriesID = try container.decodeIfPresent(UUID.self, forKey: .recurrenceSeriesID)
     }
 
@@ -121,6 +130,7 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
         recurrenceInterval: Int? = 1,
         recurrenceWeekdays: [ReminderRecurrence.Weekday] = [],
         recurrenceEndDate: Date? = nil,
+        recurrenceTimeZone: String? = nil,
         recurrenceSeriesID: UUID? = nil
     ) {
         self.id = id
@@ -135,6 +145,7 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
         self.recurrenceInterval = recurrenceInterval
         self.recurrenceWeekdays = recurrenceWeekdays
         self.recurrenceEndDate = recurrenceEndDate
+        self.recurrenceTimeZone = recurrenceTimeZone
         self.recurrenceSeriesID = recurrenceSeriesID ?? (recurrenceFrequency != nil ? id : nil)
     }
 
@@ -156,25 +167,29 @@ public struct FamilyReminder: Codable, Equatable, Identifiable, Sendable {
             recurrenceFrequency: recurrence.frequency,
             recurrenceInterval: recurrence.frequency == .biweekly ? recurrence.interval / 2 : recurrence.interval,
             recurrenceWeekdays: recurrence.weekdays,
-            recurrenceEndDate: recurrence.endDate
+            recurrenceEndDate: recurrence.endDate,
+            recurrenceTimeZone: recurrence.timeZone
         )
     }
 
       /// Non-nil when this reminder is a series template (has recurrence enabled).
     public var hasRecurrence: Bool {
-        recurrenceFrequency != nil && !recurrenceWeekdays.isEmpty
+        guard let frequency = recurrenceFrequency else { return false }
+        switch frequency {
+        case .weekly, .biweekly: return !recurrenceWeekdays.isEmpty
+        case .monthly, .yearly: return true
+        }
     }
 
       /// Builds a `ReminderRecurrence` from this reminder's flat fields.
     public var recurrence: ReminderRecurrence? {
-        guard let frequency = recurrenceFrequency,
-           !recurrenceWeekdays.isEmpty else { return nil }
-        let endDate = recurrenceEndDate
+        guard let frequency = recurrenceFrequency, hasRecurrence else { return nil }
         return ReminderRecurrence(
             frequency: frequency,
             interval: recurrenceInterval ?? 1,
             weekdays: recurrenceWeekdays,
-            endDate: endDate
+            endDate: recurrenceEndDate,
+            timeZone: recurrenceTimeZone
         )
     }
 }
@@ -213,7 +228,7 @@ public enum ReminderOccurrenceExpander {
             return [occurrence(source: source, dueAt: source.dueAt)]
           }
 
-        let dueTimes = weeklyDueTimes(from: source, through: range.end, calendar: calendar)
+        let dueTimes = recurringDueTimes(from: source, through: range.end, calendar: calendar)
         return dueTimes
              .filter { $0 >= range.start && $0 < range.end }
              .map { occurrence(source: source, dueAt: $0) }
@@ -225,6 +240,7 @@ public enum ReminderOccurrenceExpander {
         concrete.recurrenceFrequency = nil
         concrete.recurrenceWeekdays = []
         concrete.recurrenceEndDate = nil
+        concrete.recurrenceTimeZone = nil
         concrete.recurrenceSeriesID = source.recurrenceSeriesID ?? source.id
         concrete.status = .open
         concrete.completedAt = nil
@@ -235,6 +251,26 @@ public enum ReminderOccurrenceExpander {
             sourceReminder: source
          )
      }
+
+    static func recurringDueTimes(
+        from source: FamilyReminder,
+        through: Date,
+        calendar: Calendar
+    ) -> [Date] {
+        guard let recurrence = source.recurrence else { return [] }
+        var recurrenceCalendar = calendar
+        if let identifier = recurrence.timeZone, let timeZone = TimeZone(identifier: identifier) {
+            recurrenceCalendar.timeZone = timeZone
+        }
+        switch recurrence.frequency {
+        case .weekly, .biweekly:
+            return weeklyDueTimes(from: source, through: through, calendar: recurrenceCalendar)
+        case .monthly:
+            return calendarDueTimes(from: source, through: through, component: .month, calendar: recurrenceCalendar)
+        case .yearly:
+            return calendarDueTimes(from: source, through: through, component: .year, calendar: recurrenceCalendar)
+        }
+    }
 
      /// Generates concrete due times for selected weekdays in each matching week.
     static func weeklyDueTimes(
@@ -266,6 +302,49 @@ public enum ReminderOccurrenceExpander {
           }
         return result
      }
+
+    private static func calendarDueTimes(
+        from source: FamilyReminder,
+        through: Date,
+        component: Calendar.Component,
+        calendar: Calendar
+    ) -> [Date] {
+        guard let recurrence = source.recurrence else { return [] }
+        let anchor = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second, .nanosecond],
+            from: source.dueAt
+        )
+        guard let anchorDay = anchor.day, let anchorMonth = anchor.month,
+              let anchorYear = anchor.year else { return [] }
+
+        var result: [Date] = []
+        var offset = 0
+        let limit = min(recurrence.endDate ?? through, through)
+        while true {
+            let targetYear = component == .year ? anchorYear + offset : nil
+            let targetMonth = component == .year ? anchorMonth : nil
+            let monthBase: Date?
+            if component == .month {
+                monthBase = calendar.date(byAdding: .month, value: offset, to: calendar.date(
+                    from: DateComponents(year: anchorYear, month: anchorMonth, day: 1)
+                )!)
+            } else {
+                monthBase = calendar.date(from: DateComponents(year: targetYear, month: targetMonth, day: 1))
+            }
+            guard let monthBase,
+                  let days = calendar.range(of: .day, in: .month, for: monthBase)?.count else { break }
+            var target = calendar.dateComponents([.year, .month], from: monthBase)
+            target.day = min(anchorDay, days)
+            target.hour = anchor.hour
+            target.minute = anchor.minute
+            target.second = anchor.second
+            target.nanosecond = anchor.nanosecond
+            guard let candidate = calendar.date(from: target), candidate <= limit else { break }
+            if candidate >= source.dueAt { result.append(candidate) }
+            offset += max(1, recurrence.interval)
+        }
+        return result
+    }
 }
 
 // MARK: - ReminderStoreError & Protocols

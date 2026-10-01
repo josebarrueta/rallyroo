@@ -94,6 +94,95 @@ describe("recurring reminder API", () => {
     await app.close();
      });
 
+  it("saves and lists a monthly reminder with its recurrence time zone", async () => {
+    const data = repository();
+    const app = buildApp({ identityProvider, repository: data });
+    const reminderID = "abcdefab-cdef-4abc-8def-abcdefabc206";
+
+    const saved = await app.inject({
+      method: "PUT",
+      url: `/v1/reminders/${reminderID}`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: reminderID,
+        title: "Pay credit card",
+        assigneeIDs: ["parent-1"],
+        dueAt: "2027-01-31T17:00:00Z",
+        recurrenceFrequency: "monthly",
+        recurrenceTimeZone: "America/Los_Angeles",
+      },
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/reminders",
+      headers: { authorization: "Bearer parent-token" },
+    });
+
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({
+      recurrenceFrequency: "monthly",
+      recurrenceWeekdays: [],
+      recurrenceTimeZone: "America/Los_Angeles",
+    });
+    expect(listed.json()).toContainEqual(expect.objectContaining({
+      id: reminderID,
+      recurrenceFrequency: "monthly",
+      recurrenceTimeZone: "America/Los_Angeles",
+    }));
+    await app.close();
+  });
+
+  it("requires a stable time zone for monthly and yearly reminders", async () => {
+    const app = buildApp({ identityProvider, repository: repository() });
+    const reminderID = "abcdefab-cdef-4abc-8def-abcdefabc207";
+
+    const response = await app.inject({
+      method: "PUT",
+      url: `/v1/reminders/${reminderID}`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: reminderID,
+        title: "Birthday",
+        assigneeIDs: ["parent-1"],
+        dueAt: "2028-02-29T17:00:00Z",
+        recurrenceFrequency: "yearly",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+
+    const invalidTimeZone = await app.inject({
+      method: "PUT",
+      url: `/v1/reminders/${reminderID}`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: reminderID,
+        title: "Birthday",
+        assigneeIDs: ["parent-1"],
+        dueAt: "2028-02-29T17:00:00Z",
+        recurrenceFrequency: "yearly",
+        recurrenceTimeZone: "Local/Somewhere",
+      },
+    });
+    expect(invalidTimeZone.statusCode).toBe(400);
+
+    const missingWeekday = await app.inject({
+      method: "PUT",
+      url: `/v1/reminders/${reminderID}`,
+      headers: { authorization: "Bearer parent-token" },
+      payload: {
+        id: reminderID,
+        title: "Weekly task",
+        assigneeIDs: ["parent-1"],
+        dueAt: "2028-02-29T17:00:00Z",
+        recurrenceFrequency: "weekly",
+        recurrenceWeekdays: [],
+      },
+    });
+    expect(missingWeekday.statusCode).toBe(400);
+    await app.close();
+  });
+
   it("kid cannot create or delete reminders", async () => {
     const data = repository();
     const app = buildApp({ identityProvider, repository: data });

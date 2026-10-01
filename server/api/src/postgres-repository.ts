@@ -223,7 +223,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
                   completed_at, completed_by_member_id, alert_lead_time_minutes,
                   created_by_member_id,
                   recurrence_frequency, recurrence_interval, recurrence_weekdays,
-                  recurrence_end_date, recurrence_series_id
+                  recurrence_end_date, recurrence_time_zone, recurrence_series_id
            FROM family_reminders WHERE title NOT LIKE 'rr1.%'
            ORDER BY family_id, id FOR UPDATE SKIP LOCKED LIMIT $1`,
           [remaining()],
@@ -2253,7 +2253,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
               completed_at, completed_by_member_id, alert_lead_time_minutes,
               created_by_member_id,
               recurrence_frequency, recurrence_interval, recurrence_weekdays,
-              recurrence_end_date, recurrence_series_id
+              recurrence_end_date, recurrence_time_zone, recurrence_series_id
        FROM family_reminders WHERE family_id = $1 ORDER BY due_at`,
       [familyID],
     );
@@ -2271,8 +2271,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          family_id, id, title, assignee_ids, due_at, status, completed_at,
          completed_by_member_id, alert_lead_time_minutes, created_by_member_id,
          recurrence_frequency, recurrence_interval, recurrence_weekdays,
-         recurrence_end_date, recurrence_series_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         recurrence_end_date, recurrence_time_zone, recurrence_series_id
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, assignee_ids=EXCLUDED.assignee_ids,
          due_at=EXCLUDED.due_at, status=EXCLUDED.status,
@@ -2283,15 +2283,17 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          recurrence_interval=EXCLUDED.recurrence_interval,
          recurrence_weekdays=EXCLUDED.recurrence_weekdays,
          recurrence_end_date=EXCLUDED.recurrence_end_date,
+         recurrence_time_zone=EXCLUDED.recurrence_time_zone,
          recurrence_series_id=EXCLUDED.recurrence_series_id,
          notification_claimed_at=NULL, notification_sent_at=NULL, updated_at=now()`,
       [
         reminder.familyID, reminder.id, protectedTitle, reminder.assigneeIDs,
         reminder.dueAt, reminder.status, reminder.completedAt,
         reminder.completedByMemberID, reminder.alertLeadTimeMinutes,
-        reminder.createdByMemberID, reminder.recurrenceFrequency ?? "weekly",
+        reminder.createdByMemberID, reminder.recurrenceFrequency ?? null,
         reminder.recurrenceInterval ?? 1, reminder.recurrenceWeekdays ?? [],
-        reminder.recurrenceEndDate ?? null, reminder.recurrenceSeriesID ?? null,
+        reminder.recurrenceEndDate ?? null, reminder.recurrenceTimeZone ?? null,
+        reminder.recurrenceSeriesID ?? null,
       ],
     );
   }
@@ -2328,7 +2330,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
                  reminder.alert_lead_time_minutes, reminder.created_by_member_id,
                  reminder.recurrence_frequency, reminder.recurrence_interval,
                  reminder.recurrence_weekdays, reminder.recurrence_end_date,
-                 reminder.recurrence_series_id`,
+                 reminder.recurrence_time_zone, reminder.recurrence_series_id`,
       [now.toISOString(), limit],
     );
     return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
@@ -4400,6 +4402,7 @@ interface ReminderRow {
   recurrence_interval: number | null;
   recurrence_weekdays: number[];
   recurrence_end_date: Date | string | null;
+  recurrence_time_zone: string | null;
   recurrence_series_id: string | null;
 }
 
@@ -4532,7 +4535,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
 }
 
 function reminderFromRow(row: ReminderRow): FamilyReminder {
-  const isSeriesTemplate = row.recurrence_weekdays.length > 0;
+  const isSeriesTemplate = row.recurrence_frequency !== null;
   return {
     familyID: row.family_id,
     id: row.id,
@@ -4549,6 +4552,7 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     recurrenceWeekdays: isSeriesTemplate ? row.recurrence_weekdays : [],
     recurrenceEndDate: isSeriesTemplate && row.recurrence_end_date
       ? asISOString(row.recurrence_end_date) : null,
+    recurrenceTimeZone: isSeriesTemplate ? row.recurrence_time_zone : null,
     recurrenceSeriesID: row.recurrence_series_id,
   };
 }

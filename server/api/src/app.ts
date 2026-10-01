@@ -137,10 +137,28 @@ const reminderSchema = z.object({
   alertLeadTimeMinutes: z.union([
     z.literal(0), z.literal(5), z.literal(15), z.literal(60), z.literal(1440), z.null(),
   ]).default(null),
-   recurrenceFrequency: z.union([z.literal("weekly"), z.literal("biweekly"), z.null()]).default(null),
+  recurrenceFrequency: z.enum(["weekly", "biweekly", "monthly", "yearly"]).nullable().default(null),
   recurrenceInterval: z.union([z.number().int().min(1).max(4), z.null()]).default(null),
   recurrenceWeekdays: z.array(z.number().int().min(1).max(7)).max(7).default([]),
   recurrenceEndDate: z.union([z.string().datetime(), z.null()]).default(null),
+  recurrenceTimeZone: timeZoneSchema.nullable().default(null),
+}).superRefine((reminder, context) => {
+  if ((reminder.recurrenceFrequency === "weekly" || reminder.recurrenceFrequency === "biweekly")
+    && reminder.recurrenceWeekdays.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["recurrenceWeekdays"],
+      message: "weekly recurrence requires at least one weekday",
+    });
+  }
+  if ((reminder.recurrenceFrequency === "monthly" || reminder.recurrenceFrequency === "yearly")
+    && !reminder.recurrenceTimeZone) {
+    context.addIssue({
+      code: "custom",
+      path: ["recurrenceTimeZone"],
+      message: "monthly and yearly recurrence requires a time zone",
+    });
+  }
 });
 
 const locationSearchSchema = z.object({ q: z.string().trim().min(2).max(200) });
@@ -1310,6 +1328,8 @@ export function buildApp({
     }
     const existing = (await repository.remindersForFamily(account.familyID))
       .find((reminder) => reminder.id.toLowerCase() === reminderID);
+    const recurrenceFrequency = parsed.data.recurrenceFrequency;
+    const usesWeekdays = recurrenceFrequency === "weekly" || recurrenceFrequency === "biweekly";
     const reminder: FamilyReminder = {
       ...parsed.data,
       id: reminderID,
@@ -1318,6 +1338,11 @@ export function buildApp({
       completedAt: existing?.completedAt ?? null,
       completedByMemberID: existing?.completedByMemberID ?? null,
       createdByMemberID: existing?.createdByMemberID ?? account.memberID,
+      recurrenceInterval: recurrenceFrequency ? parsed.data.recurrenceInterval ?? 1 : null,
+      recurrenceWeekdays: usesWeekdays ? parsed.data.recurrenceWeekdays : [],
+      recurrenceEndDate: recurrenceFrequency ? parsed.data.recurrenceEndDate : null,
+      recurrenceTimeZone: recurrenceFrequency ? parsed.data.recurrenceTimeZone : null,
+      recurrenceSeriesID: recurrenceFrequency ? reminderID : null,
     };
     await repository.saveReminder(reminder);
     await repository.markFamilyChanged(account.familyID);

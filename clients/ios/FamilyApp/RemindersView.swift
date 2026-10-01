@@ -80,8 +80,8 @@ struct RemindersView: View {
                             LabeledContent("Status", value: reminder.status == .completed ? "Completed" : "Open")
                             if reminder.hasRecurrence {
                                 Section("Recurrence") {
-                                    LabeledContent("Frequency", value: recurrenceLabel(reminder))
-                                    LabeledContent("Days", value: weekdayLabel(reminder.recurrenceWeekdays ?? []))
+                                    LabeledContent("Frequency", value: reminder.recurrenceFrequencyLabel)
+                                    LabeledContent("Schedule", value: reminder.recurrenceScheduleLabel)
                                     LabeledContent(
                                         "Ends",
                                         value: reminder.recurrenceEndDate?.formatted(.dateTime.month().day())
@@ -150,19 +150,6 @@ struct RemindersView: View {
     private var startOfToday: Date { Calendar.current.startOfDay(for: .now) }
     private var endOfToday: Date {
         Calendar.current.date(byAdding: .day, value: 1, to: startOfToday)!
-    }
-
-    private func recurrenceLabel(_ reminder: FamilyReminder) -> String {
-        guard let freq = reminder.recurrenceFrequency else { return "One-time" }
-        return freq == .biweekly ? "Biweekly" : "Weekly"
-    }
-
-    private func weekdayLabel(_ days: [ReminderRecurrence.Weekday]) -> String {
-        let names: [ReminderRecurrence.Weekday: String] = [
-            .monday: "Mon", .tuesday: "Tue", .wednesday: "Wed",
-            .thursday: "Thu", .friday: "Fri", .saturday: "Sat", .sunday: "Sun",
-        ]
-        return days.map { names[$0] ?? "" }.joined(separator: ", ")
     }
 
     @MainActor
@@ -239,7 +226,7 @@ private struct ReminderRow: View {
                     .foregroundStyle(.secondary)
                 if reminder.hasRecurrence {
                     Label(
-                        "Repeats \(reminder.recurrenceFrequency == .biweekly ? "biweekly" : "weekly")",
+                        "Repeats \(reminder.recurrenceFrequencyLabel.lowercased())",
                         systemImage: "arrow.triangle.2.circlepath"
                     )
                     .font(.caption2)
@@ -252,13 +239,7 @@ private struct ReminderRow: View {
         }
     }
 
-    private var recurrenceSchedule: String {
-        let weekdayNames = reminder.recurrenceWeekdays.map {
-            Calendar.current.shortWeekdaySymbols[$0.rawValue % 7]
-        }.joined(separator: ", ")
-        let time = reminder.dueAt.formatted(date: .omitted, time: .shortened)
-        return "\(weekdayNames) at \(time)"
-    }
+    private var recurrenceSchedule: String { reminder.recurrenceScheduleLabel }
 
     private var assigneeNames: String {
         reminder.assigneeIDs.compactMap { id in
@@ -304,7 +285,7 @@ private struct ReminderEditorSheet: View {
         if reminder.hasRecurrence {
             _isRecurring = State(initialValue: true)
             _frequency = State(initialValue: reminder.recurrenceFrequency ?? .weekly)
-            _selectedWeekdays = State(initialValue: Set(reminder.recurrenceWeekdays ?? []))
+            _selectedWeekdays = State(initialValue: Set(reminder.recurrenceWeekdays))
             _hasEndDate = State(initialValue: reminder.recurrenceEndDate != nil)
             _endDate = State(initialValue: reminder.recurrenceEndDate ?? Date.now.addingTimeInterval(60 * 60 * 24 * 90))
         }
@@ -337,18 +318,34 @@ private struct ReminderEditorSheet: View {
                     Toggle("Repeats", isOn: $isRecurring)
                     if isRecurring {
                         Picker("Frequency", selection: $frequency) {
-                            Text("Weekly").tag(ReminderRecurrence.Frequency.weekly)
-                            Text("Biweekly").tag(ReminderRecurrence.Frequency.biweekly)
+                            ForEach(ReminderRecurrence.Frequency.allCases, id: \.self) { option in
+                                Text(option.displayName).tag(option)
+                            }
                         }
-                        .pickerStyle(.segmented)
 
-                        LabeledContent("Weekdays") {
-                            DayOfWeekPicker(selected: $selectedWeekdays)
-                                .frame(maxWidth: 300)
+                        if frequency == .weekly || frequency == .biweekly {
+                            LabeledContent("Weekdays") {
+                                DayOfWeekPicker(selected: $selectedWeekdays)
+                                    .frame(maxWidth: 300)
+                            }
+                            Text(weekdayNames(selectedWeekdays))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if frequency == .monthly {
+                            LabeledContent("Schedule", value: "Monthly on day \(calendarDay)")
+                            if calendarDay > 28 {
+                                Text("Uses the last day in shorter months.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            LabeledContent("Schedule", value: "Yearly on \(yearlyDateLabel)")
+                            if calendarMonth == 2 && calendarDay == 29 {
+                                Text("Uses February 28 in non-leap years.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        Text(weekdayNames(selectedWeekdays))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
 
                         Toggle("End date", isOn: $hasEndDate)
                         if hasEndDate {
@@ -373,7 +370,9 @@ private struct ReminderEditorSheet: View {
                             title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 || assigneeIDs.isEmpty
                                 || isSaving
-                                || (isRecurring && selectedWeekdays.isEmpty)
+                                || (isRecurring
+                                    && (frequency == .weekly || frequency == .biweekly)
+                                    && selectedWeekdays.isEmpty)
                         )
                 }
             }
@@ -391,15 +390,20 @@ private struct ReminderEditorSheet: View {
                 updated.assigneeIDs = Array(assigneeIDs)
                 updated.dueAt = dueAt
                 updated.alertLeadTime = alertChoice.leadTime
-                if isRecurring, !selectedWeekdays.isEmpty {
+                if isRecurring {
                     updated.recurrenceFrequency = frequency
                     updated.recurrenceInterval = 1
-                    updated.recurrenceWeekdays = Array(selectedWeekdays).sorted()
+                    updated.recurrenceWeekdays = frequency == .weekly || frequency == .biweekly
+                        ? Array(selectedWeekdays).sorted()
+                        : []
                     updated.recurrenceEndDate = hasEndDate ? endDate : nil
+                    updated.recurrenceTimeZone = originalReminder.recurrenceTimeZone
+                        ?? TimeZone.autoupdatingCurrent.identifier
                 } else {
                     updated.recurrenceFrequency = nil
                     updated.recurrenceWeekdays = []
                     updated.recurrenceEndDate = nil
+                    updated.recurrenceTimeZone = nil
                 }
                 try await onSave(updated)
                 dismiss()
@@ -408,6 +412,22 @@ private struct ReminderEditorSheet: View {
                 errorMessage = "The reminder could not be saved."
             }
         }
+    }
+
+    private var recurrenceCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: originalReminder.recurrenceTimeZone ?? "")
+            ?? .autoupdatingCurrent
+        return calendar
+    }
+
+    private var calendarDay: Int { recurrenceCalendar.component(.day, from: dueAt) }
+    private var calendarMonth: Int { recurrenceCalendar.component(.month, from: dueAt) }
+    private var yearlyDateLabel: String {
+        let formatter = DateFormatter()
+        formatter.timeZone = recurrenceCalendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate("MMMMd")
+        return formatter.string(from: dueAt)
     }
 
     private func weekdayNames(_ days: Set<ReminderRecurrence.Weekday>) -> String {
@@ -459,6 +479,49 @@ private struct DayButton: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private extension ReminderRecurrence.Frequency {
+    var displayName: String {
+        switch self {
+        case .weekly: "Weekly"
+        case .biweekly: "Biweekly"
+        case .monthly: "Monthly"
+        case .yearly: "Yearly"
+        }
+    }
+}
+
+private extension FamilyReminder {
+    var recurrenceFrequencyLabel: String {
+        recurrenceFrequency?.displayName ?? "One-time"
+    }
+
+    var recurrenceScheduleLabel: String {
+        guard let frequency = recurrenceFrequency else {
+            return dueAt.formatted(date: .abbreviated, time: .shortened)
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: recurrenceTimeZone ?? "") ?? .autoupdatingCurrent
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeZone = calendar.timeZone
+        timeFormatter.timeStyle = .short
+        let time = timeFormatter.string(from: dueAt)
+        switch frequency {
+        case .weekly, .biweekly:
+            let weekdays = recurrenceWeekdays.map {
+                calendar.shortWeekdaySymbols[$0.rawValue % 7]
+            }.joined(separator: ", ")
+            return "\(weekdays) at \(time)"
+        case .monthly:
+            return "Day \(calendar.component(.day, from: dueAt)) at \(time)"
+        case .yearly:
+            let dateFormatter = DateFormatter()
+            dateFormatter.timeZone = calendar.timeZone
+            dateFormatter.setLocalizedDateFormatFromTemplate("MMMMd")
+            return "\(dateFormatter.string(from: dueAt)) at \(time)"
+        }
     }
 }
 
