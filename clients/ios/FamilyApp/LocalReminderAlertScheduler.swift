@@ -4,6 +4,7 @@ import Foundation
 
 actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
     nonisolated(unsafe) private let notificationCenter = UNUserNotificationCenter.current()
+    private let pendingAlertCapacity = 60
 
     // MARK: - Reminder
 
@@ -69,13 +70,14 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
             1,
             (dueAt.addingTimeInterval(-Double(leadTime.rawValue * 60))).timeIntervalSinceNow
         )
-        try await notificationCenter.add(
-            UNNotificationRequest(
-                identifier: occurrenceIdentifier(for: reminder, dueAt: dueAt),
-                content: content,
-                trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-            )
+        let request = UNNotificationRequest(
+            identifier: occurrenceIdentifier(for: reminder, dueAt: dueAt),
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
         )
+        try await addPrioritized(request, fireAt: dueAt.addingTimeInterval(
+            -Double(leadTime.rawValue * 60)
+        ))
     }
 
     // MARK: - Event
@@ -108,16 +110,15 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
                 "notificationID": UUID().uuidString,
                 "notificationKind": "event_occurrence",
             ]
-            try await notificationCenter.add(
-                UNNotificationRequest(
-                    identifier: identifier(for: event, occurrenceStart: occurrence.event.startTime),
-                    content: content,
-                    trigger: UNTimeIntervalNotificationTrigger(
-                        timeInterval: max(1, fireAt.timeIntervalSinceNow),
-                        repeats: false
-                    )
+            let request = UNNotificationRequest(
+                identifier: identifier(for: event, occurrenceStart: occurrence.event.startTime),
+                content: content,
+                trigger: UNTimeIntervalNotificationTrigger(
+                    timeInterval: max(1, fireAt.timeIntervalSinceNow),
+                    repeats: false
                 )
             )
+            try await addPrioritized(request, fireAt: fireAt)
         }
      }
 
@@ -128,6 +129,36 @@ actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
             .filter { $0.hasPrefix(prefix) }
         notificationCenter.removePendingNotificationRequests(withIdentifiers: identifiers)
      }
+
+    private func addPrioritized(_ request: UNNotificationRequest, fireAt: Date) async throws {
+        let pending = await notificationCenter.pendingNotificationRequests()
+        let slots = pending.map { pendingRequest in
+            LocalAlertSlot(
+                identifier: pendingRequest.identifier,
+                fireAt: nextTriggerDate(for: pendingRequest.trigger) ?? .distantFuture
+            )
+        }
+        let admission = LocalAlertQueuePlanner.admission(
+            pending: slots,
+            adding: LocalAlertSlot(identifier: request.identifier, fireAt: fireAt),
+            capacity: pendingAlertCapacity
+        )
+        guard admission.shouldSchedule else { return }
+        if let identifier = admission.identifierToRemove {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
+        }
+        try await notificationCenter.add(request)
+    }
+
+    private func nextTriggerDate(for trigger: UNNotificationTrigger?) -> Date? {
+        if let trigger = trigger as? UNTimeIntervalNotificationTrigger {
+            return trigger.nextTriggerDate()
+        }
+        if let trigger = trigger as? UNCalendarNotificationTrigger {
+            return trigger.nextTriggerDate()
+        }
+        return nil
+    }
 
     // MARK: - Identifiers
 
