@@ -302,12 +302,21 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Lincoln Elementary"].exists)
     }
 
+    func testScheduleCreateMenuOpensEventEditor() {
+        let app = localApp()
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        openAddEvent(in: app)
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
+    }
+
     func testEventAlertAppearsOnlyAfterSelectingAParticipant() {
         let app = localApp()
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
         XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["At start"].exists)
         app.buttons["Cancel"].tap()
@@ -324,7 +333,7 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
 
         let arriveBy = app.switches["event-arrive-by"]
         XCTAssertTrue(arriveBy.waitForExistence(timeout: 5))
@@ -342,7 +351,7 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
         app.textFields["Title"].tap()
         app.textFields["Title"].typeText("No notification options")
         app.buttons["Save"].tap()
@@ -371,7 +380,7 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
         app.textFields["Title"].tap()
         app.textFields["Title"].typeText("Recurring scope test")
         app.staticTexts["Never"].tap()
@@ -401,7 +410,7 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
         XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
 
         app.textFields["Title"].tap()
@@ -424,7 +433,7 @@ final class FamilyAppUITests: XCTestCase {
         app.launch()
 
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        app.buttons["Add"].tap()
+        openAddEvent(in: app)
         app.textFields["Title"].tap()
         app.textFields["Title"].typeText("Coordinate destination")
         let locationField = app.textFields["Location or latitude, longitude"]
@@ -578,7 +587,7 @@ final class FamilyAppUITests: XCTestCase {
         let firstLaunch = localApp()
         firstLaunch.launch()
         XCTAssertTrue(firstLaunch.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        firstLaunch.buttons["Add"].tap()
+        openAddEvent(in: firstLaunch)
         firstLaunch.textFields["Title"].tap()
         firstLaunch.textFields["Title"].typeText("Must not survive relaunch")
         firstLaunch.buttons["Save"].tap()
@@ -694,6 +703,17 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["sync-calendar-now"].waitForExistence(timeout: 5))
         app.buttons["sync-calendar-now"].tap()
         XCTAssertTrue(app.navigationBars["Calendars"].waitForExistence(timeout: 5))
+    }
+
+    private func openAddEvent(in app: XCUIApplication) {
+        let createMenu = app.buttons["schedule-create-menu"]
+        XCTAssertTrue(createMenu.waitForExistence(timeout: 5))
+        createMenu.tap()
+
+        let addEvent = app.buttons["Add Event"]
+        XCTAssertTrue(addEvent.waitForExistence(timeout: 5))
+        addEvent.tap()
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
     }
 
     private func addFamilyMember(named name: String, in app: XCUIApplication) {

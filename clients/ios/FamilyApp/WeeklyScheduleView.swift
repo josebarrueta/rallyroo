@@ -710,12 +710,20 @@ struct WeeklyScheduleView: View {
                 Image(systemName: "line.3.horizontal.decrease.circle")
              }
             if allowsEditing && !viewModel.isShowingCachedEvents {
-                if scheduleDraftExtractor != nil, reminderStore != nil {
-                    Button("Create with AI", systemImage: "sparkles") {
-                        isCapturingSchedule = true
-                     }
-                 }
-                Button { isAddingEvent = true } label: { Image(systemName: "plus") }
+                Menu {
+                    Button("Add Event", systemImage: "calendar.badge.plus") {
+                        isAddingEvent = true
+                    }
+                    if scheduleDraftExtractor != nil, reminderStore != nil {
+                        Button("Create with AI", systemImage: "sparkles") {
+                            isCapturingSchedule = true
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Add")
+                .accessibilityIdentifier("schedule-create-menu")
              }
          }
      }
