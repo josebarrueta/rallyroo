@@ -587,7 +587,7 @@ final class FamilyAppUITests: XCTestCase {
         let firstLaunch = localApp()
         firstLaunch.launch()
         XCTAssertTrue(firstLaunch.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
-        firstLaunch.buttons["Add"].tap()
+        openAddEvent(in: firstLaunch)
         firstLaunch.textFields["Title"].tap()
         firstLaunch.textFields["Title"].typeText("Must not survive relaunch")
         firstLaunch.buttons["Save"].tap()
