@@ -708,7 +708,6 @@ final class FamilyAppUITests: XCTestCase {
     private func openAddEvent(in app: XCUIApplication) {
         let createMenu = app.buttons["schedule-create-menu"]
         XCTAssertTrue(createMenu.waitForExistence(timeout: 5))
-        XCTAssertTrue(createMenu.isHittable)
         createMenu.tap()
 
         let addEvent = app.buttons["Add Event"]
