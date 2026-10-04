@@ -301,7 +301,7 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Hello, José."].exists)
         XCTAssertTrue(app.staticTexts["Your morning has one commitment, with the rest of the day looking open."].exists)
         XCTAssertFalse(app.staticTexts["You drive to School drop-off at 8:15 AM."].exists)
-        reveal(app.staticTexts["Weather at Home"], in: app)
+        reveal(app.descendants(matching: .any)["day-brief-weather"], in: app)
         XCTAssertTrue(app.staticTexts["Clear skies"].exists)
         XCTAssertTrue(app.staticTexts["High 68°F · Low 50°F"].exists)
         reveal(app.descendants(matching: .any)["day-brief-weather-sources"], in: app)

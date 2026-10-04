@@ -221,6 +221,7 @@ private struct DayBriefDetailView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("day-brief-weather")
                 } header: {
                     Text("Weather at \(weather.locationLabel)")
                 } footer: {
