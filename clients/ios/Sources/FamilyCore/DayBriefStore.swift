@@ -91,6 +91,28 @@ public struct DayBriefWeatherFact: Codable, Equatable, Sendable {
   public let afternoonTemperatureCelsius: Double?
   public let precipitationChance: Double
   public let attribution: DayBriefWeatherAttribution
+
+  public init(
+    source: String,
+    locationLabel: String,
+    conditionCode: String,
+    lowTemperatureCelsius: Double,
+    highTemperatureCelsius: Double,
+    morningTemperatureCelsius: Double? = nil,
+    afternoonTemperatureCelsius: Double? = nil,
+    precipitationChance: Double,
+    attribution: DayBriefWeatherAttribution
+  ) {
+    self.source = source
+    self.locationLabel = locationLabel
+    self.conditionCode = conditionCode
+    self.lowTemperatureCelsius = lowTemperatureCelsius
+    self.highTemperatureCelsius = highTemperatureCelsius
+    self.morningTemperatureCelsius = morningTemperatureCelsius
+    self.afternoonTemperatureCelsius = afternoonTemperatureCelsius
+    self.precipitationChance = precipitationChance
+    self.attribution = attribution
+  }
 }
 
 public struct DayBriefFacts: Codable, Equatable, Sendable {
@@ -114,6 +136,7 @@ public struct DayBrief: Codable, Equatable, Sendable {
   public let timeZone: String
   public let facts: DayBriefFacts
   public let title: String
+  public let summary: String?
   public let body: String
   public let generatedAt: Date?
 
@@ -122,6 +145,7 @@ public struct DayBrief: Codable, Equatable, Sendable {
     timeZone: String,
     facts: DayBriefFacts,
     title: String,
+    summary: String? = nil,
     body: String,
     generatedAt: Date? = nil
   ) {
@@ -129,6 +153,7 @@ public struct DayBrief: Codable, Equatable, Sendable {
     self.timeZone = timeZone
     self.facts = facts
     self.title = title
+    self.summary = summary
     self.body = body
     self.generatedAt = generatedAt
   }

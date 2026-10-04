@@ -27,7 +27,7 @@ The Day brief belongs to one Member. It can include:
 - Meaningful free periods between commitments.
 - A bounded Apple Weather forecast for an accessible saved place named Home.
 
-A push notification greets the Member by first name and presents the most important facts concisely. Empty Event and Reminder categories are omitted rather than reported as zero. The summary describes the pace of the Member's morning, afternoon, or evening only from verified commitments. Tapping it opens a full Day brief with an at-a-glance section, chronological timeline, attention-needed section, and meaningful open periods.
+A push notification uses the stable title “Your Day Brief” and a concise preview containing counts, the first Event time, and the forecast high when available. It does not expose Event or Reminder titles on the lock screen. Empty Event and Reminder categories are omitted rather than reported as zero. Tapping it opens a full Day brief whose At a glance section describes only the pace of the day; Event titles and times belong in the chronological Timeline, and verified Home weather appears in its own card.
 
 ### Delivery policy
 
@@ -59,10 +59,9 @@ Therefore the first release uses explicit Member delivery settings and lets iOS 
 
 The module constructs a structured `DayBriefFacts` value deterministically before invoking AI. The facts include stable source references so every statement can be traced to an authorized Event, Reminder, Travel plan, or conflict.
 
-AI receives only the facts authorized for that Member and returns a bounded structured response. WeatherKit receives only Home coordinates; Rallyroo adds the verified weather sentence deterministically rather than asking AI to interpret raw forecast payloads. If Home or WeatherKit is unavailable, weather is omitted without suppressing the brief. The detailed iOS brief links the Apple Weather attribution required for displayed weather data. The response is validated before use. AI may:
+AI receives only the facts authorized for that Member and returns a bounded structured response. WeatherKit receives only Home coordinates; Rallyroo presents verified weather as structured data rather than asking AI to interpret raw forecast payloads. If Home or WeatherKit is unavailable, weather is omitted without suppressing the brief. The detailed iOS brief labels Apple’s required attribution link explicitly as weather data sources and legal information. The response is validated before use. AI may:
 
-- Choose which verified facts deserve the notification's limited space.
-- Describe the day's pace.
+- Describe the day's pace without repeating Timeline or Reminder details.
 - Personalize wording with the recipient's first name.
 - Omit empty Event and Reminder categories.
 - Group related driving responsibilities.
@@ -71,6 +70,7 @@ AI receives only the facts authorized for that Member and returns a bounded stru
 AI may not:
 
 - Invent preparation tasks, travel estimates, assignments, or schedule details.
+- Repeat Event or Reminder titles, exact clock times, or weather details in At a glance.
 - omit a fact marked mandatory by deterministic policy.
 - infer private calendar information belonging to another Member.
 - change delivery recipients or times.

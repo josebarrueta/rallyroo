@@ -100,6 +100,9 @@ export interface DayBrief {
     weather?: DayBriefWeatherFact;
   };
   title: string;
+  /** High-level in-app overview without Timeline, Reminder, or weather details. */
+  summary?: string;
+  /** Backward-compatible narrative for clients that do not render structured weather. */
   body: string;
 }
 
@@ -198,19 +201,8 @@ export class DayBriefModule {
     const memberName = members.find((member) => member.id === account.memberID)?.name;
     const firstName = firstNameFrom(memberName);
     const title = `Hello, ${firstName}.`;
-    const eventSummary = events.map((event) => {
-      const time = new Intl.DateTimeFormat("en-US", {
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone,
-      }).format(new Date(event.startTime));
-      return `${time} ${event.title}${event.roles.includes("driver") ? " (you drive)" : ""}`;
-    }).join("; ");
-    const reminderSummary = reminders.length > 0
-      ? `Reminder: ${reminders.map((reminder) => reminder.title).join(", ")}.`
-      : "";
-    const body = [weather ? weatherSummary(weather) : "", paceSummary(events, reminders, timeZone),
-      eventSummary ? `${eventSummary}.` : "", reminderSummary]
+    const summary = paceSummary(events, reminders, timeZone);
+    const body = [weather ? weatherSummary(weather) : "", summary]
       .filter(Boolean)
       .join(" ");
 
@@ -219,7 +211,7 @@ export class DayBriefModule {
       reminders,
       ...(weather ? { weather } : {}),
     };
-    const brief = { localDate, timeZone, facts, title, body };
+    const brief = { localDate, timeZone, facts, title, summary, body };
     return allowNarration ? this.narrate(brief, firstName) : brief;
   }
 
@@ -329,8 +321,8 @@ export class DayBriefModule {
           recipientMemberIDs: [preference.memberID],
           kind: "day_brief",
           deduplicationKey: `${preference.memberID}:${localDate}`,
-          title: brief.title,
-          body: brief.body,
+          title: "Your Day Brief",
+          body: notificationPreview(brief),
           destination: { kind: "day_brief", id: localDate },
           occurredAt: now,
         });
@@ -361,13 +353,14 @@ export class DayBriefModule {
       if (narrative.title.trim().length > 0 && narrative.title.length <= 300
         && narrative.body.trim().length > 0 && narrative.body.length <= 1_000
         && !mentionsEmptyCategory(narrative.body, brief.facts)
-        && !mentionsWeather(narrative.body)) {
+        && !mentionsWeather(narrative.body)
+        && !repeatsTimelineDetails(narrative.body, brief.facts)) {
         // Keep the verified personalized greeting stable; AI customizes only
-        // the natural-language summary that follows it.
-        const body = brief.facts.weather
-          ? `${weatherSummary(brief.facts.weather)} ${narrative.body}`
-          : narrative.body;
-        return { ...brief, body };
+        // the high-level summary. Structured sections present the details.
+        const body = [brief.facts.weather ? weatherSummary(brief.facts.weather) : "", narrative.body]
+          .filter(Boolean)
+          .join(" ");
+        return { ...brief, summary: narrative.body, body };
       }
     } catch {
       // The verified deterministic brief remains useful when AI is unavailable or invalid.
@@ -552,6 +545,29 @@ function localDateFor(instant: string, timeZone: string): string {
   }).format(new Date(instant));
 }
 
+function notificationPreview(brief: DayBrief): string {
+  const sentences: string[] = [];
+  const eventCount = brief.facts.events.length;
+  const reminderCount = brief.facts.reminders.length;
+  if (eventCount > 0) {
+    const firstTime = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: brief.timeZone,
+    }).format(new Date(brief.facts.events[0]!.startTime));
+    sentences.push(`${eventCount} ${eventCount === 1 ? "event" : "events"} today, starting at ${firstTime}.`);
+  } else if (reminderCount === 0) {
+    sentences.push("Your day looks open.");
+  }
+  if (reminderCount > 0) {
+    sentences.push(`${reminderCount} ${reminderCount === 1 ? "reminder" : "reminders"}.`);
+  }
+  if (brief.facts.weather) {
+    sentences.push(`High ${fahrenheit(brief.facts.weather.highTemperatureCelsius)}°F.`);
+  }
+  return sentences.join(" ");
+}
+
 function weatherSummary(weather: DayBriefWeatherFact): string {
   const high = fahrenheit(weather.highTemperatureCelsius);
   const condition = weatherCondition(weather.conditionCode);
@@ -594,6 +610,14 @@ function weatherCondition(code: string): string {
 
 function mentionsWeather(body: string): boolean {
   return /\b(?:weather|forecast|rain(?:y|ing)?|showers?|drizzl(?:e|ing)|snow(?:y|ing)?|sleet|hail|thunder(?:storm)?s?|storms?|tornado(?:es)?|hurricanes?|sunny|sunshine|cloud(?:y|s)?|overcast|fog(?:gy)?|wind(?:y)?|temperatures?|precipitation|humid(?:ity)?|degrees?)\b|\d\s*°\s*[cf]?\b|\b(?:high|low)\s+(?:of|near)\s+\d/iu.test(body);
+}
+
+function repeatsTimelineDetails(body: string, facts: DayBrief["facts"]): boolean {
+  const normalized = body.toLocaleLowerCase("en-US");
+  const repeatsTitle = [...facts.events, ...facts.reminders]
+    .some((fact) => normalized.includes(fact.title.trim().toLocaleLowerCase("en-US")));
+  const repeatsClockTime = /\b(?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b/i.test(body);
+  return repeatsTitle || repeatsClockTime;
 }
 
 function mentionsEmptyCategory(body: string, facts: DayBrief["facts"]): boolean {

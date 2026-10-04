@@ -926,10 +926,24 @@ private actor DayBriefUITestStore: DayBriefStore {
                         roles: [.driver]
                     )
                 ],
-                reminders: []
+                reminders: [],
+                weather: DayBriefWeatherFact(
+                    source: "apple_weather",
+                    locationLabel: "Home",
+                    conditionCode: "Clear",
+                    lowTemperatureCelsius: 10,
+                    highTemperatureCelsius: 20,
+                    morningTemperatureCelsius: 12,
+                    afternoonTemperatureCelsius: 19,
+                    precipitationChance: 0.1,
+                    attribution: DayBriefWeatherAttribution(
+                        serviceName: "Weather",
+                        legalPageURL: URL(string: "https://weather.example/legal")!
+                    )
+                )
             ),
-            title: "Sunday at a glance",
-            body: "You drive to school drop-off this morning."
+            title: "Hello, José.",
+            body: "You drive to School drop-off at 8:15 AM."
         )
     }
 }
@@ -939,8 +953,8 @@ private actor DayBriefUITestInboxStore: NotificationInboxStore {
         InboxNotification(
             id: UUID(uuidString: "00000000-0000-4000-8000-000000000001")!,
             kind: .dayBrief,
-            title: "Your Day Brief",
-            body: "You have one driving responsibility.",
+            title: "Hello, José.",
+            body: "It will warm up this afternoon. 8:15 AM School drop-off at Lincoln Elementary.",
             destination: .init(kind: .dayBrief, id: "2026-09-21"),
             occurredAt: Date(timeIntervalSince1970: 1_790_000_000),
             readAt: nil
