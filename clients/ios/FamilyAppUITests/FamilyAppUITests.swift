@@ -293,11 +293,19 @@ final class FamilyAppUITests: XCTestCase {
         app.tabBars.buttons["Alerts"].tap()
         let alert = app.staticTexts["Your Day Brief"]
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Tap to view your weather, timeline, and reminders."].exists)
+        XCTAssertFalse(app.staticTexts["It will warm up this afternoon. 8:15 AM School drop-off at Lincoln Elementary."].exists)
         alert.tap()
 
-        XCTAssertTrue(app.navigationBars["Sunday at a glance"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["You drive to school drop-off this morning."].exists)
-        XCTAssertTrue(app.staticTexts["School drop-off"].exists)
+        XCTAssertTrue(app.navigationBars["Day Brief"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Hello, José."].exists)
+        XCTAssertTrue(app.staticTexts["Your morning has one commitment, with the rest of the day looking open."].exists)
+        XCTAssertFalse(app.staticTexts["You drive to School drop-off at 8:15 AM."].exists)
+        reveal(app.descendants(matching: .any)["day-brief-weather"], in: app)
+        XCTAssertTrue(app.staticTexts["Clear skies"].exists)
+        XCTAssertTrue(app.staticTexts["High 68°F · Low 50°F"].exists)
+        reveal(app.descendants(matching: .any)["day-brief-weather-sources"], in: app)
+        reveal(app.staticTexts["School drop-off"], in: app)
         XCTAssertTrue(app.staticTexts["You drive"].exists)
         XCTAssertTrue(app.staticTexts["Lincoln Elementary"].exists)
     }
@@ -703,6 +711,13 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["sync-calendar-now"].waitForExistence(timeout: 5))
         app.buttons["sync-calendar-now"].tap()
         XCTAssertTrue(app.navigationBars["Calendars"].waitForExistence(timeout: 5))
+    }
+
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<3 where !element.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
     }
 
     private func openAddEvent(in app: XCUIApplication) {

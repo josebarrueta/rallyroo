@@ -139,11 +139,12 @@ describe("DayBriefModule.generate", () => {
     expect(brief.facts.reminders.map(({ title }) => title)).toEqual(["Submit school form"]);
     expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).toBe(
-      "Your morning is busy, with a more relaxed afternoon. 8:00 AM School drop-off (you drive); 10:00 AM Dentist. Reminder: Submit school form.",
+      "Your morning is busy, with a more relaxed afternoon.",
     );
+    expect(brief.body).not.toMatch(/School drop-off|Dentist|Submit school form|8:00 AM/);
   });
 
-  it("includes a verified Home forecast in the human summary and AI facts", async () => {
+  it("includes a verified Home forecast in structured facts for the weather card", async () => {
     let narratedWeather: unknown;
     const weather: DayBriefWeatherProvider = {
       async forecast() {
@@ -178,8 +179,10 @@ describe("DayBriefModule.generate", () => {
       locationLabel: "Home", conditionCode: "MostlyClear", highTemperatureCelsius: 24,
     });
     expect(narratedWeather).toEqual(brief.facts.weather);
-    expect(brief.body).toContain(
-      "It will warm up this afternoon, with mostly clear skies and a high near 75°F.",
+    expect(brief.summary).toBe("Your schedule starts early today.");
+    expect(brief.summary).not.toMatch(/75°F|clear skies/i);
+    expect(brief.body).toBe(
+      "It will warm up this afternoon, with mostly clear skies and a high near 75°F. Your schedule starts early today.",
     );
   });
 
@@ -207,9 +210,12 @@ describe("DayBriefModule.generate", () => {
       repository(), undefined, narrator, undefined, weather,
     ).generate(account, "2026-10-05", "America/Los_Angeles");
 
+    expect(brief.facts.weather).toMatchObject({
+      locationLabel: "Home", conditionCode: "Clear", highTemperatureCelsius: 20,
+    });
+    expect(brief.summary).toBe("Your morning is busy, with a more relaxed afternoon.");
     expect(brief.body).toContain("Around Home, expect clear skies and a high near 68°F.");
-    expect(brief.body).not.toContain("heavy rain");
-    expect(brief.body).not.toContain("95°F");
+    expect(brief.body).not.toMatch(/heavy rain|95°F/);
   });
 
   it("keeps generating a Day Brief when weather lookup fails", async () => {
@@ -255,7 +261,7 @@ describe("DayBriefModule.generate", () => {
       roles: ["driver"],
     }]);
     expect(brief.body).toBe(
-      "Your morning has one commitment, with the rest of the day looking open. 8:00 AM Weekly practice (you drive).",
+      "Your morning has one commitment, with the rest of the day looking open.",
     );
   });
 
@@ -291,14 +297,14 @@ describe("DayBriefModule.generate", () => {
     }]);
   });
 
-  it("uses an AI narrative only after constructing authorized facts", async () => {
+  it("uses a high-level AI narrative only after constructing authorized facts", async () => {
     let receivedTitles: string[] = [];
     const narrator: DayBriefNarrator = {
       async narrate(input) {
         receivedTitles = input.facts.events.map((event) => event.title);
         return {
           title: "A driving-heavy Monday",
-          body: "You drive to school at 8:00 AM, then have a dentist appointment at 10:00 AM.",
+          body: "Your morning is full, then the day eases up.",
         };
       },
     };
@@ -309,8 +315,24 @@ describe("DayBriefModule.generate", () => {
     expect(receivedTitles).toEqual(["School drop-off", "Dentist"]);
     expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).toBe(
-      "You drive to school at 8:00 AM, then have a dentist appointment at 10:00 AM.",
+      "Your morning is full, then the day eases up.",
     );
+  });
+
+  it("rejects AI narration that repeats details already shown in the Timeline", async () => {
+    const module = new DayBriefModule(repository(), undefined, {
+      async narrate(input) {
+        return {
+          title: input.deterministicTitle,
+          body: "School drop-off starts at 8:00 AM before the Dentist appointment.",
+        };
+      },
+    });
+
+    const brief = await module.generate(account, "2026-10-05", "UTC");
+
+    expect(brief.body).toBe("Your morning is busy, with a more relaxed afternoon.");
+    expect(brief.body).not.toMatch(/School drop-off|Dentist|8:00 AM/);
   });
 
   it("rejects AI narration that calls attention to an empty category", async () => {
@@ -324,7 +346,7 @@ describe("DayBriefModule.generate", () => {
 
     expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).not.toMatch(/zero|0 events|0 reminders/i);
-    expect(brief.body).toContain("School drop-off");
+    expect(brief.body).toBe("Your morning is busy, with a more relaxed afternoon.");
   });
 
   it("uses stable occurrence identity when a modified occurrence is later skipped", async () => {
@@ -401,6 +423,34 @@ describe("DayBriefModule.generate", () => {
 });
 
 describe("DayBriefModule.dispatchDue", () => {
+  it("records a compact notification preview without repeating Event titles", async () => {
+    const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
+    const weather: DayBriefWeatherProvider = {
+      async forecast() {
+        return {
+          source: "apple_weather", locationLabel: "Home", conditionCode: "Clear",
+          lowTemperatureCelsius: 10, highTemperatureCelsius: 20,
+          precipitationChance: 0,
+          attribution: { serviceName: "Weather", legalPageURL: "https://weather.example/legal" },
+        };
+      },
+    };
+    const module = new DayBriefModule(repository({
+      preferences: [{
+        familyID: "family", memberID: "parent", enabled: true, timeZone: "UTC",
+        weekdayTime: "07:00", weekendHolidayTime: "08:30",
+        earlyEventLeadMinutes: 60, holidayRegion: "US",
+      }],
+    }), notifications, undefined, undefined, weather);
+
+    expect(await module.dispatchDue(new Date("2026-10-05T07:00:00.000Z")))
+      .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
+    expect(await notifications.list(account)).toMatchObject([{
+      title: "Your Day Brief",
+      body: "2 events today, starting at 8:00 AM. 1 reminder. High 68°F.",
+    }]);
+  });
+
   it("records one inbox brief and makes one push attempt under concurrent dispatch", async () => {
     let pushAttempts = 0;
     const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository(), {
@@ -443,7 +493,7 @@ describe("DayBriefModule.dispatchDue", () => {
     expect(await module.dispatchDue(new Date("2026-10-05T07:00:00.000Z")))
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(await notifications.list(account)).toMatchObject([{
-      title: "Hello, Alex.", body: "Your day looks open.",
+      title: "Your Day Brief", body: "Your day looks open.",
     }]);
   });
 
@@ -487,7 +537,9 @@ describe("DayBriefModule.dispatchDue", () => {
 
     expect(await module.dispatchDue(new Date("2026-10-05T07:01:00.000Z")))
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
-    expect(await notifications.list(account)).toMatchObject([{ title: "Saved brief" }]);
+    expect(await notifications.list(account)).toMatchObject([{
+      title: "Your Day Brief", body: "Your day looks open.",
+    }]);
   });
 
   it("does not read the Family schedule after the morning delivery window closes", async () => {
@@ -593,7 +645,7 @@ describe("DayBriefModule.dispatchDue", () => {
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(await notifications.list(account)).toMatchObject([{
       kind: "day_brief",
-      title: "Hello, Alex.",
+      title: "Your Day Brief",
       body: "Your day looks open.",
       destination: { kind: "day_brief", id: "2026-10-05" },
     }]);
@@ -720,7 +772,8 @@ describe("DayBriefModule.dispatchDue", () => {
       .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
     expect(narrationCount).toBe(1);
     expect(await notifications.list(account)).toMatchObject([{
-      body: "Your morning has one commitment, with the rest of the day looking open. 6:30 AM Early practice (you drive).",
+      title: "Your Day Brief",
+      body: "1 event today, starting at 6:30 AM.",
     }]);
   });
 
