@@ -656,6 +656,43 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Delete skipped"].exists)
     }
 
+    func testRecurringOccurrenceDeleteSheetWorksAtMaximumAccessibilityTextSize() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"] = "1"
+        app.launchArguments += [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let skipped = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Skipped practice")
+        ).firstMatch
+        XCTAssertTrue(skipped.waitForExistence(timeout: 5))
+        skipped.press(forDuration: 1)
+        app.buttons["Delete skipped"].tap()
+
+        XCTAssertTrue(app.navigationBars["Delete occurrence"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Skipped practice"].exists)
+        let thisOccurrence = app.buttons["occurrence-scope-this-occurrence"]
+        let thisWeekdayFuture = app.buttons["occurrence-scope-this-weekday-future"]
+        let allFuture = app.buttons["occurrence-scope-all-future"]
+        XCTAssertTrue(thisOccurrence.exists)
+        XCTAssertTrue(thisWeekdayFuture.exists)
+        XCTAssertTrue(allFuture.exists)
+
+        let confirm = app.buttons["confirm-occurrence-action"]
+        allFuture.tap()
+        XCTAssertEqual(confirm.label, "Delete all future occurrences")
+        thisWeekdayFuture.tap()
+        XCTAssertEqual(confirm.label, "Delete this weekday and future occurrences")
+        thisOccurrence.tap()
+        XCTAssertEqual(confirm.label, "Delete only this occurrence")
+        confirm.tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+    }
+
     func testImportedEventOpensReadOnlyDetailsAndSavesRallyrooSettings() throws {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_IMPORTED_EVENT"] = "1"
