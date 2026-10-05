@@ -332,7 +332,6 @@ struct WeeklyScheduleView: View {
              .sheet(item: $lifecycleAction) { action in
                 LifecycleScopeSheet(
                     action: action,
-                    members: viewModel.members,
                     onChoose: { scope in
                         Task {
                             switch action {
@@ -345,7 +344,8 @@ struct WeeklyScheduleView: View {
                     },
                     onDismiss: { lifecycleAction = nil }
                  )
-                 .presentationDetents([.medium])
+                 .presentationDetents([.medium, .large])
+                 .presentationDragIndicator(.visible)
              }
              .alert("Event status", isPresented: Binding(
                 get: { scheduleUpdateNotice != nil },
@@ -751,128 +751,170 @@ struct WeeklyScheduleView: View {
 
 struct LifecycleScopeSheet: View {
     enum ScopeChoice: String, CaseIterable, Identifiable {
-        case thisOccurrence = "Just this one"
-        case thisWeekdayFuture = "This weekday and future"
-        case allFuture = "All future"
+        case thisOccurrence
+        case thisWeekdayFuture
+        case allFuture
+
         var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .thisOccurrence: "Just this occurrence"
+            case .thisWeekdayFuture: "This weekday and future"
+            case .allFuture: "All future occurrences"
+            }
+        }
+
         var detail: String {
             switch self {
-            case .thisOccurrence: return "Only this occurrence"
-            case .thisWeekdayFuture: return "This weekday and all future ones"
-            case .allFuture: return "Every remaining occurrence"
-             }
-         }
-      }
+            case .thisOccurrence: "Keep the rest of the recurring series"
+            case .thisWeekdayFuture: "Apply to this weekday from now on"
+            case .allFuture: "Apply to every remaining occurrence"
+            }
+        }
+
+        var accessibilityIdentifier: String {
+            switch self {
+            case .thisOccurrence: "occurrence-scope-this-occurrence"
+            case .thisWeekdayFuture: "occurrence-scope-this-weekday-future"
+            case .allFuture: "occurrence-scope-all-future"
+            }
+        }
+    }
 
     let action: WeeklyScheduleView.OccurrenceAction
-    let members: [FamilyMember]
     let onChoose: (OccurrenceScope) -> Void
     let onDismiss: () -> Void
 
     @State private var selectedScope: ScopeChoice = .thisOccurrence
-    @State private var title: String = ""
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Image(systemName: action.isDelete ? "trash" : "calendar.badge.minus")
-                         .font(.title2)
-                         .foregroundStyle(action.isDelete ? .red : AppTheme.purple)
-                    Text(titleForAction)
-                         .font(.title3.bold())
-                 }
-                 .padding(.top, 8)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    eventSummary
 
-                if action.isRecurring {
-                    Picker(
-                        "Apply to",
-                        selection: $selectedScope
-                     ) {
-                        ForEach(WeekDayScope.allCases) { choice in
-                            VStack(alignment: .leading) {
-                                Text(choice.title).font(.body)
-                                Text(choice.detail).font(.caption).foregroundStyle(.secondary)
-                             }
-                             .tag(choice)
-                         }
+                    if action.isRecurring {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(action.isDelete ? "What should be deleted?" : "What should be skipped?")
+                                .font(.headline)
+
+                            ForEach(ScopeChoice.allCases) { choice in
+                                scopeButton(choice)
+                            }
+                        }
+                    } else {
+                        Text("This affects only this occurrence.")
+                            .foregroundStyle(.secondary)
                     }
-                     .pickerStyle(.inline)
-                 } else {
-                    Text("This will affect just this occurrence.")
-                         .font(.caption)
-                         .foregroundStyle(.secondary)
-                 }
 
-                Spacer()
+                    Text("Past occurrences will remain unchanged.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
 
-                Button(
-                    action.isDelete ? "Cancel" : "Undo",
-                    role: .cancel
-                 ) { onDismiss() }
-
-                Button(
-                    action.isDelete
-                        ? "Delete \(titleForScope)"
-                        : "Skip \(titleForScope)",
-                    role: action.isDelete ? .destructive : nil
-                 ) {
-                    onChoose(toScope)
-                    onDismiss()
-                 }
-                  .font(.headline)
+                    confirmationButton
+                }
+                .padding()
             }
-            .padding()
             .navigationTitle(action.isDelete ? "Delete occurrence" : "Skip occurrence")
             .navigationBarTitleDisplayMode(.inline)
-         }
-      }
-
-     private var titleForAction: String {
-        action.occurrence.sourceEvent.title
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) { onDismiss() }
+                }
+            }
         }
+    }
 
-     private var titleForScope: String {
-        switch toScope {
-        case .thisOccurrence: return "this one"
-        case .thisWeekdayFuture: return "this weekday & future"
-        case .allFuture: return "all future"
-         }
-         }
+    private var eventSummary: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: action.isDelete ? "trash" : "calendar.badge.minus")
+                .font(.title2)
+                .foregroundStyle(action.isDelete ? .red : AppTheme.purple)
+                .frame(width: 36, height: 36)
+                .background(
+                    Circle().fill((action.isDelete ? Color.red : AppTheme.purple).opacity(0.1))
+                )
 
-     private var toScope: OccurrenceScope {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(action.occurrence.sourceEvent.title)
+                    .font(.title3.bold())
+                Text(action.occurrence.event.startTime.formatted(date: .abbreviated, time: .shortened))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func scopeButton(_ choice: ScopeChoice) -> some View {
+        Button {
+            selectedScope = choice
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: selectedScope == choice ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(selectedScope == choice ? AppTheme.purple : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(choice.title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(choice.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .multilineTextAlignment(.leading)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(selectedScope == choice ? AppTheme.purple.opacity(0.1) : Color.secondary.opacity(0.08))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(selectedScope == choice ? AppTheme.purple : Color.clear, lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(choice.accessibilityIdentifier)
+        .accessibilityValue(selectedScope == choice ? "Selected" : "Not selected")
+    }
+
+    private var confirmationButton: some View {
+        Button(role: action.isDelete ? .destructive : nil) {
+            onChoose(toScope)
+            onDismiss()
+        } label: {
+            Text(confirmationTitle)
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(action.isDelete ? .red : AppTheme.purple)
+        .controlSize(.large)
+        .accessibilityIdentifier("confirm-occurrence-action")
+    }
+
+    private var confirmationTitle: String {
+        let verb = action.isDelete ? "Delete" : "Skip"
+        switch selectedScope {
+        case .thisOccurrence: return "\(verb) only this occurrence"
+        case .thisWeekdayFuture: return "\(verb) this weekday and future occurrences"
+        case .allFuture: return "\(verb) all future occurrences"
+        }
+    }
+
+    private var toScope: OccurrenceScope {
         switch selectedScope {
         case .thisOccurrence: return .thisOccurrence
         case .thisWeekdayFuture: return .thisWeekdayFuture
         case .allFuture: return .allFuture
-         }
-         }
- }
-
- // MARK: - Weekday scope choices
-
-private enum WeekDayScope: String, CaseIterable, Identifiable {
-     case justThis = "Just this one"
-     case weekdayFuture = "This weekday and future"
-     case allFuture = "All future"
-
-     var id: String { rawValue }
-
-     var title: String {
-        switch self {
-        case .justThis: return "Just this occurrence"
-        case .weekdayFuture: return "This weekday and future"
-        case .allFuture: return "All future occurrences"
-         }
-         }
-
-     var detail: String {
-        switch self {
-        case .justThis: return "Only this occurrence is affected"
-        case .weekdayFuture: return "This weekday and all future occurrences"
-        case .allFuture: return "Every remaining occurrence"
-         }
-         }
+        }
+    }
 }
 
  // MARK: - Row & helpers
