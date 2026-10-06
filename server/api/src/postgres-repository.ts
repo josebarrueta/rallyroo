@@ -2412,6 +2412,23 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
   }
 
+  async markAllInboxRecordsRead(familyID: string, memberID: string, readAt: Date): Promise<void> {
+    await this.pool.query(
+      `UPDATE member_notification_inbox SET read_at = $3
+       WHERE family_id = $1 AND member_id = $2 AND read_at IS NULL AND deleted_at IS NULL`,
+      [familyID, memberID, readAt.toISOString()],
+    );
+  }
+
+  async unreadInboxCount(familyID: string, memberID: string): Promise<number> {
+    const result = await this.pool.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM member_notification_inbox
+       WHERE family_id = $1 AND member_id = $2 AND read_at IS NULL AND deleted_at IS NULL`,
+      [familyID, memberID],
+    );
+    return Number(result.rows[0]!.count);
+  }
+
   async claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]) {
     const result = await this.pool.query<MemberInboxRow & { attempt_count: number; claimed_at: Date | string }>(
       `WITH due AS (

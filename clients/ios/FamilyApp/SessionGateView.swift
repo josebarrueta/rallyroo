@@ -65,6 +65,7 @@ final class SessionGateViewModel: ObservableObject {
 
     func restoreSession() async {
         session = try? await authentication.currentSession()
+        if session == nil { await onSessionEnded() }
         isLoading = false
     }
 
@@ -134,16 +135,17 @@ struct SignOutAction {
 
 private struct SignInView: View {
     @ObservedObject var viewModel: SessionGateViewModel
-    @State private var hasConfirmedAdultAccount = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
+            ScrollView {
+            VStack(spacing: 20) {
                 Image("FamilyHero")
                     .resizable()
                     .scaledToFit()
-                    .frame(maxHeight: 220)
+                    .frame(maxHeight: 140)
                     .clipShape(RoundedRectangle(cornerRadius: 28))
+                    .accessibilityHidden(true)
                 VStack(spacing: 6) {
                     Text("Welcome to Rallyroo")
                         .font(.largeTitle.bold())
@@ -153,20 +155,22 @@ private struct SignInView: View {
                 }
                 let code = viewModel.invitationCode.trimmingCharacters(in: .whitespacesAndNewlines)
                 if code.isEmpty {
-                    VStack(spacing: 14) {
-                        Text("Signing in without an invitation creates a new family for you.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        Toggle("I am 18 or older", isOn: $hasConfirmedAdultAccount)
+                    VStack(spacing: 8) {
+                        Text("Continue to create a new Family. You'll be its organizer.")
                             .font(.subheadline.weight(.semibold))
+                        Text("Family organizers must be 18 or older. Children join through a parent or guardian-authorized invitation.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
                     }
+                    .multilineTextAlignment(.center)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("new-family-guidance")
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         Label("Family invitation ready", systemImage: "person.2.badge.plus")
                             .font(.headline)
                             .foregroundStyle(AppTheme.purple)
-                        Text("Continue with Apple or Google to securely join the family that invited you.")
+                        Text("Continue with Apple or Google to securely join the Family that invited you.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         Button("Ignore this invitation") { viewModel.clearInvitation() }
@@ -175,6 +179,7 @@ private struct SignInView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     .background(AppTheme.purple.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityIdentifier("family-invitation-status")
                 }
                 VStack(spacing: 12) {
                     AppleOAuthButton {
@@ -186,7 +191,8 @@ private struct SignInView: View {
                         }
                     }
                     .frame(height: 48)
-                    .disabled(code.isEmpty && !hasConfirmedAdultAccount)
+                    .accessibilityLabel(code.isEmpty ? "Continue with Apple" : "Accept invitation with Apple")
+                    .accessibilityIdentifier("sign-in-apple")
 
                     Button {
                         Task {
@@ -203,8 +209,8 @@ private struct SignInView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(OAuthButtonStyle(background: AppTheme.coral))
-                    .font(.title3)
-                    .disabled(code.isEmpty && !hasConfirmedAdultAccount)
+                    .font(.body)
+                    .accessibilityIdentifier("sign-in-google")
                 }
                 if let errorMessage = viewModel.errorMessage {
                     Text(errorMessage)
@@ -212,11 +218,30 @@ private struct SignInView: View {
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                 }
-                Spacer()
+                VStack(spacing: 8) {
+                    Text("By continuing, you agree to the Terms and acknowledge the Privacy Policy.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    ViewThatFits {
+                        HStack(spacing: 24) { legalLinks }
+                        VStack(spacing: 12) { legalLinks }
+                    }
+                }
             }
             .padding(24)
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+            }
             .background(AppTheme.background.ignoresSafeArea())
         }
+    }
+
+    @ViewBuilder private var legalLinks: some View {
+        Link("Terms", destination: URL(string: "https://rallyroo.dev/terms")!)
+            .accessibilityLabel("Terms of Service")
+        Link("Privacy", destination: URL(string: "https://rallyroo.dev/privacy")!)
+            .accessibilityLabel("Privacy Policy")
     }
 }
 
@@ -225,7 +250,9 @@ private struct OAuthButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, minHeight: 48)
             .foregroundStyle(.white)
             .background(background.opacity(configuration.isPressed ? 0.8 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .circular))

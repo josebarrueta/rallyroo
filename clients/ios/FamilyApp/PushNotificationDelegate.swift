@@ -26,7 +26,8 @@ final class PushNotificationDelegate: NSObject, UIApplicationDelegate, @preconcu
     ) {
         postLocalInboxRecord(from: notification)
         NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
-        completionHandler([.banner, .sound, .badge])
+        // Foreground badge writes come from the inbox reconciliation, not a possibly stale push.
+        completionHandler([.banner, .sound])
     }
 
     func userNotificationCenter(

@@ -1,10 +1,12 @@
 import XCTest
+import UIKit
 
 @MainActor
 final class FamilyAppUITests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
     }
 
     func testLoginDoesNotAskForAManualInvitationCode() {
@@ -19,9 +21,148 @@ final class FamilyAppUITests: XCTestCase {
         let googleButton = app.buttons["Continue with Google"]
         XCTAssertTrue(appleButton.exists)
         XCTAssertTrue(googleButton.exists)
+        XCTAssertTrue(appleButton.isEnabled)
+        XCTAssertTrue(googleButton.isEnabled)
+        XCTAssertFalse(app.switches["I am 18 or older"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["new-family-guidance"].exists)
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["Terms of Service"].exists)
+        XCTAssertTrue(app.buttons["Privacy Policy"].exists)
         XCTAssertEqual(appleButton.frame.width, googleButton.frame.width, accuracy: 1)
         XCTAssertEqual(appleButton.frame.height, googleButton.frame.height, accuracy: 1)
         XCTAssertFalse(app.textFields["Invitation code (optional)"].exists)
+    }
+
+    func testInvitationDeepLinkKeepsBothOAuthControlsEnabledAndCanBeIgnored() throws {
+        guard #available(iOS 16.4, *) else { throw XCTSkip("Opening URLs requires iOS 16.4") }
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "remote"
+        app.launchEnvironment["RALLYROO_REMOTE_BASE_URL"] = "http://127.0.0.1:3199"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 10))
+        app.open(URL(string: "rallyroo://invite?code=public-ui-test-invitation")!)
+        XCTAssertTrue(app.staticTexts["Family invitation ready"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Accept invitation with Apple"].isEnabled)
+        XCTAssertTrue(app.buttons["Accept invitation with Google"].isEnabled)
+        XCTAssertFalse(app.switches["I am 18 or older"].exists)
+        app.buttons["Ignore this invitation"].tap()
+        XCTAssertTrue(app.buttons["Continue with Apple"].isEnabled)
+        XCTAssertTrue(app.buttons["Continue with Google"].isEnabled)
+    }
+
+    func testSignInControlsAndErrorsRemainReachableWithAccessibilityTextInLandscape() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "remote"
+        app.launchEnvironment["RALLYROO_REMOTE_BASE_URL"] = "http://127.0.0.1:3199"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 10))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let google = app.buttons["sign-in-google"]
+        centerSignInControl(google, in: app)
+        XCTAssertTrue(google.isEnabled)
+        XCTAssertTrue(google.isHittable)
+        google.tap()
+        // Cancel the real system OAuth session to exercise the public error path.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        if springboard.buttons["Cancel"].waitForExistence(timeout: 3) {
+            springboard.buttons["Cancel"].tap()
+        } else if app.buttons["Cancel"].waitForExistence(timeout: 3) {
+            app.buttons["Cancel"].tap()
+        }
+        let error = app.staticTexts["We couldn't sign you in. Please try again."]
+        XCTAssertTrue(error.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !error.isHittable { app.swipeUp() }
+        XCTAssertTrue(error.isHittable)
+        let terms = app.buttons["Terms of Service"]
+        for _ in 0..<8 where !terms.isHittable { app.swipeUp() }
+        XCTAssertTrue(terms.isHittable)
+        let apple = app.buttons["sign-in-apple"]
+        centerSignInControl(apple, in: app)
+        XCTAssertTrue(apple.isEnabled)
+        XCTAssertTrue(apple.isHittable)
+    }
+
+    private func centerSignInControl(_ element: XCUIElement, in app: XCUIApplication) {
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<20 {
+            let center = element.frame.midY
+            if element.isHittable && center > 100 && center < app.frame.height - 70 { return }
+            let goingUp = center > app.frame.height - 70
+            scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: goingUp ? 0.7 : 0.4))
+                .press(forDuration: 0.05, thenDragTo: scroll.coordinate(
+                    withNormalizedOffset: CGVector(dx: 0.5, dy: goingUp ? 0.4 : 0.7)
+                ))
+        }
+    }
+
+    func testAlertsTabBadgeClearsWhenTheUnreadAlertIsRead() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let alerts = app.tabBars.buttons["Alerts"]
+        alerts.tap()
+        XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        // iOS 26 does not expose native badge digits to XCTest. Verify the rendered
+        // badge alongside the readable count, using only the public tab-bar image.
+        XCTAssertTrue(try visibleTabBarHasBadge(in: app))
+        let brief = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Your Day Brief")).firstMatch
+        XCTAssertTrue(brief.waitForExistence(timeout: 5))
+        brief.tap()
+        XCTAssertTrue(app.navigationBars["Day Brief"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
+        XCTAssertFalse(try visibleTabBarHasBadge(in: app))
+    }
+
+    func testMarkAllAlertsReadClearsTheVisibleBadge() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        app.buttons["Mark all read"].tap()
+        XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
+        XCTAssertFalse(try visibleTabBarHasBadge(in: app))
+    }
+
+    func testDeletingTheUnreadAlertClearsTheVisibleBadge() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        let brief = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Your Day Brief")).firstMatch
+        brief.swipeLeft()
+        app.buttons["Delete"].tap()
+        XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
+        XCTAssertFalse(try visibleTabBarHasBadge(in: app))
+    }
+
+    private func visibleTabBarHasBadge(in app: XCUIApplication) throws -> Bool {
+        let image = try XCTUnwrap(app.tabBars.firstMatch.screenshot().image.cgImage)
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(
+                data: buffer.baseAddress, width: image.width, height: image.height,
+                bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+        // The native red badge is the only red surface in this fixture's tab bar.
+        // Avoid single-glyph OCR, which is unreliable for small SE badge digits.
+        let redPixels = stride(from: 0, to: pixels.count, by: 4).filter {
+            pixels[$0] > 170 && pixels[$0 + 1] < 110 && pixels[$0 + 2] < 110 && pixels[$0 + 3] > 200
+        }.count
+        return redPixels > 20
     }
 
     func testUserCanSignOutFromSettings() {
@@ -32,6 +173,7 @@ final class FamilyAppUITests: XCTestCase {
         app.tabBars.buttons["Settings"].tap()
 
         let signOut = app.buttons["Sign Out"]
+        for _ in 0..<6 where !signOut.exists { app.swipeUp() }
         XCTAssertTrue(signOut.waitForExistence(timeout: 5))
         signOut.tap()
 

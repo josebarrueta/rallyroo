@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Account } from "./domain.js";
-import type { PushNotificationProvider } from "./push-notification-provider.js";
+import { boundedNotificationBadge, type PushNotificationProvider } from "./push-notification-provider.js";
 
 export type NotificationKind =
   | "event_occurrence"
@@ -50,10 +50,12 @@ export interface ClaimedNotificationDelivery {
 export interface NotificationCenterRepository {
   saveInboxRecordsIfAbsent(records: MemberInboxRecord[]): Promise<MemberInboxRecord[]>;
   inboxRecords(familyID: string, memberID: string, limit: number): Promise<MemberInboxRecord[]>;
+  unreadInboxCount(familyID: string, memberID: string): Promise<number>;
   markInboxRecordRead(
     familyID: string, memberID: string, recordID: string, readAt: Date,
   ): Promise<boolean>;
   deleteInboxRecord(familyID: string, memberID: string, recordID: string): Promise<boolean>;
+  markAllInboxRecordsRead(familyID: string, memberID: string, readAt: Date): Promise<void>;
   claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]): Promise<ClaimedNotificationDelivery[]>;
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
   completeNotificationDelivery(recordID: string, claimedAt: Date, outcome: "delivered" | "no_recipient", completedAt: Date): Promise<void>;
@@ -146,6 +148,9 @@ export class NotificationCenterModule {
             destinationID: claim.record.destination.id,
           },
           collapseID: claim.record.id,
+          badge: boundedNotificationBadge(await this.repository.unreadInboxCount(
+            claim.record.familyID, claim.record.memberID,
+          )),
         });
         await this.repository.completeNotificationDelivery(
           claim.record.id, claim.claimedAt, "delivered", new Date(),
@@ -173,6 +178,10 @@ export class NotificationCenterModule {
     return this.repository.inboxRecords(account.familyID, account.memberID, limit);
   }
 
+  async unreadCount(account: Account): Promise<number> {
+    return this.repository.unreadInboxCount(account.familyID, account.memberID);
+  }
+
   async prune(now = new Date(), limit = 100): Promise<number> {
     return this.repository.pruneNotificationInbox(now, Math.min(Math.max(limit, 1), 500));
   }
@@ -180,6 +189,11 @@ export class NotificationCenterModule {
   async delete(account: Account, recordID: string): Promise<boolean> {
     if (!recordID) throw new Error("invalid_notification_delete");
     return this.repository.deleteInboxRecord(account.familyID, account.memberID, recordID);
+  }
+
+  async markAllRead(account: Account, readAt = new Date()): Promise<void> {
+    if (Number.isNaN(readAt.getTime())) throw new Error("invalid_notification_read");
+    return this.repository.markAllInboxRecordsRead(account.familyID, account.memberID, readAt);
   }
 
   async markRead(account: Account, recordID: string, readAt = new Date()): Promise<boolean> {
