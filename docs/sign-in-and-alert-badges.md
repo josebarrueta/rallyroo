@@ -1,12 +1,12 @@
 # Sign-in guidance and unread Alert badges (#182, #185)
 
-## Organizer acknowledgment: proposed option 2
+## Organizer acknowledgment: option 2
 
 The implementation uses an **adult-organizer statement without a checkbox**. Creating a Family still requires an organizer aged 18 or older under the existing Terms. The signed-out screen explains that continuing without an invitation creates a Family for the signer to organize, and that children join through a parent/guardian-authorized invitation. Both OAuth controls remain enabled. Continuing acknowledges the linked Terms and Privacy Policy; no new age field or purported age-verification evidence is collected.
 
 This removes only the existing client-side checkbox, not the eligibility requirement. OAuth, invitation redemption, guardian authorization collection and stored consent evidence, session handling, sign-out, and deletion API behavior are unchanged. Existing Privacy and Terms language is consistent with this approach, so policy text has not been relaxed or rewritten.
 
-**Approval dependency:** this is a proposed product implementation, not a claim of legal review. The product owner/legal reviewer must explicitly approve option 2 before #182 is closed or this UX is released. If durable age acknowledgment is required, that needs a separate reviewed API/storage design; the old toggle never supplied durable evidence.
+**Merge authorization:** after reviewing the proposed option 2 and its remaining checks, the product owner requested that PR #189 be marked ready and merged once its build is green. This is product-owner authorization to merge the implementation, not a claim of completed legal review. Existing adult eligibility and guardian-consent commitments remain unchanged. If legal review requires durable age acknowledgment, that needs a separate reviewed API/storage design; the old toggle never supplied durable evidence. Manual accessibility and physical-device release verification remain outstanding.
 
 The sign-in screen scrolls, decorative imagery is hidden from VoiceOver, Google text can wrap without a fixed-height clip, and legal links can stack at large text sizes. UI tests exercise the real signed-out screen and invitation URL, enabled Apple/Google controls, and reachable controls/error/legal links at accessibility text size.
 
