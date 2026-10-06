@@ -750,6 +750,50 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Calendars"].waitForExistence(timeout: 5))
     }
 
+    func testSharedScreenshotColdLaunchSingleEventReviewAndExplicitSave() {
+        let app = localApp()
+        app.launch()
+        addFamilyMember(named: "Alex", in: app)
+        app.terminate()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "0"
+        app.launchEnvironment["RALLYROO_UI_TEST_SCREENSHOT"] = "single"
+        app.launch()
+
+        XCTAssertTrue(app.navigationBars["Review screenshot"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Creating Event drafts… This can take up to 60 seconds."].waitForExistence(timeout: 5))
+        let title = app.textFields["Event or Reminder title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textViews["Schedule description"].exists)
+        XCTAssertTrue(app.buttons["Add Event"].exists)
+        title.tap()
+        title.typeText(" edited")
+        app.swipeUp()
+        let member = app.switches["Alex"]
+        reveal(member, in: app)
+        member.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(member.value as? String, "1")
+        XCTAssertTrue(app.buttons["Add Event"].isEnabled)
+        app.buttons["Add Event"].tap()
+        XCTAssertTrue(app.navigationBars["Review screenshot"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["School play edited"].waitForExistence(timeout: 5))
+    }
+
+    func testSharedScreenshotMixedBatchReviewAtAccessibilitySize() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SCREENSHOT"] = "batch"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Review screenshot"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Creating Event drafts… This can take up to 60 seconds."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Add selected"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.textViews["Schedule description"].exists)
+        let reminder = app.switches["Reminder"]
+        reveal(reminder, in: app)
+        XCTAssertTrue(reminder.exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<3 where !element.exists {
             app.swipeUp()

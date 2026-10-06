@@ -6,6 +6,42 @@ import FamilyCore
 private enum AppTab: Hashable { case schedule, reminders, family, alerts, settings }
 
 #if DEBUG
+// Exercise the real queue, inbox, Vision OCR and review UI without a remote AI service.
+private struct ScreenshotUITestExtractor: ScheduleDraftExtractor {
+    let batch: Bool
+
+    func extract(text: String, inputType: ScheduleDraftInputType, timeZone: String) async throws -> [ScheduleDraft] {
+        try await Task.sleep(for: .seconds(8))
+        guard inputType == .image, text.contains("School play") else { return [] }
+        let start = Calendar.current.startOfDay(for: .now).addingTimeInterval(18 * 3600)
+        let event = ScheduleDraft(
+            kind: .event, title: "School play", memberIDs: [], startTime: start,
+            endTime: start.addingTimeInterval(3600), dueAt: nil, location: "School hall",
+            alertLeadTimeMinutes: 15, clarification: nil, confidence: 0.9
+        )
+        guard batch else { return [event] }
+        return [event, ScheduleDraft(
+            kind: .reminder, title: "Bring tickets", memberIDs: [], startTime: nil,
+            endTime: nil, dueAt: start, location: nil, alertLeadTimeMinutes: 0,
+            clarification: nil, confidence: 0.9
+        )]
+    }
+
+    @MainActor static func enqueueScreenshot() throws {
+        let queue = try SharedScheduleCaptureQueue.appGroup()
+        while try queue.dequeueOldest() != nil {}
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 300)).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 600, height: 300))
+            ("School play\nFriday at 6 PM\nSchool hall" as NSString).draw(
+                in: CGRect(x: 30, y: 30, width: 540, height: 240),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 36), .foregroundColor: UIColor.black]
+            )
+        }
+        if let data = image.pngData() { try queue.enqueue(data) }
+    }
+}
+
 private actor OccurrenceLifecycleUITestEventStore: EventStore {
     private let events: [FamilyEvent]
 
@@ -544,7 +580,16 @@ struct FamilyActivityCoordinatorApp: App {
             #endif
             changeMonitor = nil
             deviceRegistrationStore = nil
+            #if DEBUG
+            if let captureMode = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SCREENSHOT"] {
+                scheduleDraftExtractor = ScreenshotUITestExtractor(batch: captureMode == "batch")
+                try? ScreenshotUITestExtractor.enqueueScreenshot()
+            } else {
+                scheduleDraftExtractor = nil
+            }
+            #else
             scheduleDraftExtractor = nil
+            #endif
             commuterStore = nil
             travelPlanningStore = nil
             #if DEBUG

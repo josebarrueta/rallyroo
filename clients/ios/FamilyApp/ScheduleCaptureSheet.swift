@@ -14,6 +14,8 @@ struct ScheduleCaptureSheet: View {
     @StateObject private var intake: ScheduleDraftIntake
     @State private var isShowingNotifyPrompt = false
     @State private var didConsumeInitialImage = false
+    @State private var isEditingSource = false
+    @State private var notifyFamily = false
      @State private var speechLanguage: SpeechLanguage = .english
 
      enum SpeechLanguage: String, CaseIterable, Identifiable {
@@ -55,7 +57,8 @@ struct ScheduleCaptureSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Describe your schedule") {
+                if showsSourceEditor {
+                Section(intake.inputType == .image ? "Correct screenshot text" : "Describe your schedule") {
                     TextEditor(text: $intake.inputText)
                         .frame(minHeight: 110)
                         .accessibilityLabel("Schedule description")
@@ -77,7 +80,7 @@ struct ScheduleCaptureSheet: View {
                         .buttonStyle(.bordered)
                         .disabled(intake.isWorking)
                     }
-                    scheduleLanguagePicker
+                    if intake.inputType != .image { scheduleLanguagePicker }
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -88,33 +91,46 @@ struct ScheduleCaptureSheet: View {
                                     || intake.isWorking
                             )
                     }
+                    if intake.inputType == .image {
+                        Button("Try again") { intake.extract() }
+                            .disabled(intake.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || intake.isWorking)
+                        Text("Correct missing details above, then try again. Images stay on-device; only recognized text is used to create drafts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 }
 
-                if !intake.drafts.isEmpty {
-                    Section("Review drafts") {
-                        ForEach($intake.drafts) { $draft in
+                if !intake.drafts.isEmpty && (intake.imagePresentation != .processing || intake.phase == .saving) {
+                    Section(isSingleEvent ? "Review Event" : "Review drafts") {
+                        ForEach(intake.drafts) { snapshot in
+                            let draft = draftBinding(snapshot)
                             VStack(alignment: .leading, spacing: 10) {
-                                Toggle(isOn: $draft.isSelected) {
+                                if !isSingleEvent {
+                                Toggle(isOn: draft.isSelected) {
                                     Label(
-                                        draft.kind == .event ? "Event" : "Reminder",
-                                        systemImage: draft.kind == .event ? "calendar" : "checklist"
+                                        snapshot.kind == .event ? "Event" : "Reminder",
+                                        systemImage: snapshot.kind == .event ? "calendar" : "checklist"
                                     )
                                 }
-                                .disabled(!draft.canImport)
-                                TextField("Title", text: $draft.title)
-                                if draft.kind == .event {
-                                    DatePicker("Starts", selection: $draft.startTime)
-                                    DatePicker("Ends", selection: $draft.endTime)
-                                    TextField("Location", text: $draft.location)
-                                } else {
-                                    DatePicker("Due", selection: $draft.dueAt)
+                                .disabled(snapshot.isPersisted || snapshot.clarification != nil)
                                 }
-                                Picker("Alert", selection: $draft.alertLeadTimeMinutes) {
+                                TextField("Title", text: draft.title)
+                                    .accessibilityLabel("Event or Reminder title")
+                                if snapshot.kind == .event {
+                                    DatePicker("Starts", selection: draft.startTime)
+                                    DatePicker("Ends", selection: draft.endTime)
+                                    TextField("Location", text: draft.location)
+                                        .accessibilityLabel("Location")
+                                } else {
+                                    DatePicker("Due", selection: draft.dueAt)
+                                }
+                                Picker("Alert", selection: draft.alertLeadTimeMinutes) {
                                     Text("None").tag(Int?.none)
-                                    Text(draft.kind == .event ? "At start" : "At due time").tag(Int?.some(0))
+                                    Text(snapshot.kind == .event ? "At start" : "At due time").tag(Int?.some(0))
                                     Text("5 minutes before").tag(Int?.some(5))
                                     Text("15 minutes before").tag(Int?.some(15))
-                                    if draft.kind == .event {
+                                    if snapshot.kind == .event {
                                         Text("30 minutes before").tag(Int?.some(30))
                                         Text("45 minutes before").tag(Int?.some(45))
                                     }
@@ -122,16 +138,17 @@ struct ScheduleCaptureSheet: View {
                                     Text("1 day before").tag(Int?.some(1_440))
                                 }
                                 if !members.isEmpty {
+                                    Text("Family Members").font(.subheadline)
                                     ForEach(members) { member in
-                                        Toggle(member.name, isOn: memberBinding(member.id, draft: $draft))
+                                        Toggle(member.name, isOn: memberBinding(member.id, draft: draft))
                                             .font(.subheadline)
                                     }
                                 }
-                                if let clarification = draft.clarification {
+                                if let clarification = snapshot.clarification {
                                     Label(clarification, systemImage: "questionmark.circle")
                                         .font(.caption)
                                         .foregroundStyle(.orange)
-                                } else if draft.memberIDs.isEmpty {
+                                } else if snapshot.memberIDs.isEmpty {
                                     Label(
                                         "Choose at least one family member.",
                                         systemImage: "person.crop.circle.badge.questionmark"
@@ -139,14 +156,34 @@ struct ScheduleCaptureSheet: View {
                                     .font(.caption)
                                     .foregroundStyle(.orange)
                                 }
-                                Text("Confidence: \(Int(draft.confidence * 100))%")
+                                Text("Confidence: \(Int(snapshot.confidence * 100))%")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
                             .padding(.vertical, 4)
+                            .disabled(snapshot.isPersisted)
                         }
                     }
                     .disabled(intake.phase == .extracting || intake.phase == .saving)
+                }
+
+                if intake.inputType == .image && !intake.isWorking {
+                    if intake.drafts.contains(where: { $0.kind == .event && !$0.isPersisted }) {
+                        Section {
+                            Toggle("Notify family", isOn: $notifyFamily)
+                            Text("Send a schedule update. Event alerts remain separate.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !showsSourceEditor {
+                        Section {
+                            Button("Edit recognized text / try again") { isEditingSource = true }
+                            Text("AI creates drafts only. Review every item before adding it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 if intake.isWorking {
@@ -162,7 +199,7 @@ struct ScheduleCaptureSheet: View {
                     Text(errorMessage).foregroundStyle(.red)
                 }
             }
-            .navigationTitle("Create with AI")
+            .navigationTitle(intake.inputType == .image || initialImageData != nil ? "Review screenshot" : "Create with AI")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -178,8 +215,10 @@ struct ScheduleCaptureSheet: View {
                         Button("Create") { intake.extract() }
                             .disabled(intake.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     } else {
-                        Button("Add selected") {
-                            if intake.drafts.contains(where: {
+                        Button(isSingleEvent ? "Add Event" : "Add selected") {
+                            if intake.inputType == .image {
+                                intake.saveSelected(notifyParticipants: notifyFamily)
+                            } else if intake.drafts.contains(where: {
                                 $0.isSelected && $0.canImport && $0.kind == .event
                             }) {
                                 isShowingNotifyPrompt = true
@@ -220,8 +259,29 @@ struct ScheduleCaptureSheet: View {
                 didConsumeInitialImage = true
                 intake.completeImageSelection(initialImageData)
             }
+            .onChange(of: intake.drafts.map(\.id)) { _ in
+                if !intake.drafts.isEmpty { isEditingSource = false }
+            }
+            .onChange(of: intake.phase) { _ in
+                if intake.isWorking {
+                    UIAccessibility.post(notification: .announcement, argument: intake.workingMessage)
+                } else if !intake.drafts.isEmpty {
+                    UIAccessibility.post(notification: .announcement, argument: "Drafts ready for review")
+                }
+            }
             .onDisappear { intake.cancel() }
         }
+    }
+
+    private var isSingleEvent: Bool {
+        intake.inputType == .image && intake.drafts.count == 1
+            && intake.drafts[0].kind == .event && intake.drafts[0].clarification == nil
+    }
+
+    private var showsSourceEditor: Bool {
+        if intake.inputType != .image { return initialImageData == nil || didConsumeInitialImage }
+        return !intake.isWorking && (isEditingSource || intake.drafts.isEmpty
+            || intake.drafts.contains(where: { $0.clarification != nil }))
     }
 
     private var imagePickerBinding: Binding<Bool> {
@@ -236,6 +296,18 @@ struct ScheduleCaptureSheet: View {
         return ScheduleUpdateNotificationMessage.make(
             queuedCount: summary.queuedNotificationCount,
             noRecipientCount: summary.noRecipientCount
+        )
+    }
+
+    // SwiftUI may read a binding during dismissal or draft replacement. Resolve by
+    // stable ID rather than retaining an index into an array that can be cleared.
+    private func draftBinding(_ snapshot: EditableScheduleDraft) -> Binding<EditableScheduleDraft> {
+        Binding(
+            get: { intake.drafts.first(where: { $0.id == snapshot.id }) ?? snapshot },
+            set: { updated in
+                guard let index = intake.drafts.firstIndex(where: { $0.id == snapshot.id }) else { return }
+                intake.drafts[index] = updated
+            }
         )
     }
 

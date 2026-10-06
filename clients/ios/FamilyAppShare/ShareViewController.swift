@@ -8,15 +8,19 @@ final class ShareViewController: UIViewController {
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let doneButton = UIButton(type: .system)
     private var hasStarted = false
+    private var didFinish = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
 
-        statusLabel.text = "Sending to Rallyroo…"
+        statusLabel.text = "Preparing screenshot for Rallyroo…"
+        statusLabel.numberOfLines = 0
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.font = .preferredFont(forTextStyle: .headline)
         statusLabel.textAlignment = .center
-        detailLabel.text = "The image stays on this device until you open Rallyroo."
+        detailLabel.text = "Images stay on this device. You will review drafts in Rallyroo before adding them."
+        detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
         detailLabel.textAlignment = .center
@@ -48,10 +52,16 @@ final class ShareViewController: UIViewController {
     private func receiveImage() async {
         do {
             let data = try await sharedImageData()
+            guard !didFinish else { return }
             let queue = try SharedScheduleCaptureQueue.appGroup()
             try queue.enqueue(data)
-            extensionContext?.completeRequest(returningItems: nil)
+            activityIndicator.stopAnimating()
+            statusLabel.text = "Ready to review in Rallyroo"
+            detailLabel.text = "Tap Done, then open Rallyroo to review this screenshot. Images stay on-device; only recognized text is used to create drafts."
+            doneButton.setTitle("Done", for: .normal)
+            UIAccessibility.post(notification: .announcement, argument: statusLabel.text)
         } catch {
+            guard !didFinish else { return }
             activityIndicator.stopAnimating()
             statusLabel.text = "Image not shared"
             detailLabel.text = "Rallyroo could not read this image. Try sharing a screenshot or photo again."
@@ -80,6 +90,7 @@ final class ShareViewController: UIViewController {
     }
 
     @objc private func finish() {
+        didFinish = true
         extensionContext?.completeRequest(returningItems: nil)
     }
 }
