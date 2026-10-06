@@ -4,7 +4,9 @@ Cloudflare Workers Static Assets serves the tracker-free [Rallyroo homepage](htt
 [branded beta docs](https://rallyroo.dev/docs), Privacy Policy, Terms of Service,
 support page, and branded `404` independently of the GCP-hosted API.
 The public docs explain how to use the beta; the [maintainer docs](../docs/README.md)
-cover architecture, development, and operations.
+cover architecture, development, and operations. Update the
+[released-feature inventory](RELEASED_FEATURES.md) with every TestFlight release
+that changes Member-visible behavior.
 
 ## Local verification
 

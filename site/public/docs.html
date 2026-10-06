@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Get started with Rallyroo and learn about your family's schedule, Day Brief, Shopping, and Commuter tools.">
+  <meta name="description" content="Learn how to use Rallyroo for Family schedules, Reminders, alerts, travel, household planning, and commuting.">
   <title>Docs — Rallyroo</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to main content</a>
   <header>
     <nav class="wrap" aria-label="Main navigation">
       <a class="brand" href="/">Rally<span>roo</span></a>
@@ -19,47 +20,185 @@
       </ul>
     </nav>
   </header>
-  <main>
+  <main id="main">
     <div class="docs-hero wrap">
-      <span class="eyebrow">Beta guide</span>
+      <span class="eyebrow">Member guide</span>
       <h1>Rallyroo Docs</h1>
-      <p class="lede">Make room for the whole crew. Here is a quick guide to the iPhone beta.</p>
-      <p class="notice">Features and fixes may arrive in different TestFlight builds. Check your installed build before relying on a newly documented behavior.</p>
+      <p class="lede">Learn the current iPhone beta by the things your Family needs to do—not by the way the app is built.</p>
+      <div class="notice"><strong>Beta and build freshness:</strong> this guide was verified against TestFlight release v0.11.19 on October 5, 2026. Features and fixes can arrive in different builds; check your installed version before relying on newly documented behavior.</div>
       <a class="button" href="mailto:support@rallyroo.dev?subject=Rallyroo%20TestFlight">Request TestFlight access</a>
     </div>
+
     <nav class="grid wrap docs-index" aria-label="Documentation topics">
-      <a class="card" href="#getting-started"><h2>Get started</h2><p>Join your Family and find your bearings.</p></a>
-      <a class="card" href="#schedule"><h2>Schedule</h2><p>Events, Reminders, and connected calendars.</p></a>
-      <a class="card" href="#day-brief"><h2>Day Brief</h2><p>A quieter way to begin the day.</p></a>
-      <a class="card" href="#shopping"><h2>Shopping</h2><p>Plan a trip with evidence, not guesswork.</p></a>
-      <a class="card" href="#commuter"><h2>Commuter</h2><p>Check train information and alerts.</p></a>
+      <a class="card" href="#getting-started"><h2>Start a Family</h2><p>Sign in, create or join, and understand roles.</p></a>
+      <a class="card" href="#schedule"><h2>Plan the week</h2><p>Events, recurrence, conflicts, and occurrences.</p></a>
+      <a class="card" href="#reminders"><h2>Track responsibilities</h2><p>Reminders, assignees, alerts, and completion.</p></a>
+      <a class="card" href="#connected-calendars"><h2>Connect calendars</h2><p>Provider setup, visibility, sync, and safety.</p></a>
+      <a class="card" href="#alerts-day-brief"><h2>Review the day</h2><p>Alerts, Day Brief, Timeline, and weather.</p></a>
+      <a class="card" href="#travel"><h2>Plan the drive</h2><p>Arrival targets, origins, and leave alerts.</p></a>
+      <a class="card" href="#create-with-ai"><h2>Create with AI</h2><p>Text, voice, images, and the Share extension.</p></a>
+      <a class="card" href="#household"><h2>Run the household</h2><p>Shopping, Pantry, receipts, and Expenses.</p></a>
+      <a class="card" href="#commuter"><h2>Watch the commute</h2><p>Caltrain subscriptions and provider status.</p></a>
+      <a class="card" href="#privacy-controls"><h2>Control your data</h2><p>Permissions, privacy, accounts, and limits.</p></a>
     </nav>
+
     <div class="docs-article wrap">
+      <section id="overview">
+        <h2>What Rallyroo is</h2>
+        <p>Rallyroo is an iPhone coordination app for a private Family. It brings plans, responsibilities, imported schedules, travel guidance, and selected household tools into one place so parents and kids can see what applies to them.</p>
+        <p>An <strong>Event</strong> occupies a start-to-end time range and can create a Schedule conflict. A <strong>Reminder</strong> has a due time and assignees but never blocks Schedule time. Imported source-calendar Events stay distinct from Rallyroo-owned Events and remain read-only.</p>
+      </section>
+
       <section id="getting-started">
-        <h2>Get started</h2>
-        <p>Rallyroo is currently an invitation-only TestFlight beta. Ask for access, then sign in with Apple or Google. A parent can create a Family and invite another parent or a kid. Use the Schedule tab for the day's plans and Settings to manage optional tools.</p>
+        <h2>Get started with your Family</h2>
+        <ol>
+          <li>Request invitation-only TestFlight access, install the current build, and sign in with Apple or Google.</li>
+          <li>Sign in without a Family invitation to create a new Family as a parent, or open a secure invitation and sign in to join its Family.</li>
+          <li>Parents use the Family tab to add Members and email single-use parent or kid invitations. Kid invitations require parent, guardian, or authorized-adult confirmation.</li>
+          <li>Use Schedule for plans, Reminders for responsibilities, Alerts for updates, and Settings for optional connections and account controls.</li>
+        </ol>
+        <h3>Parent and kid roles</h3>
+        <p>Parents manage the Family roster, invitations, Events, Reminders, connected calendars, shared saved places, Shopping setup, and Expenses. Kids can see authorized Family information, complete assigned Reminders, contribute Shopping requests and Stock observations, and use available alerts. Some controls are intentionally parent-only.</p>
+        <p>Invitations expire and can be resent or cancelled by a parent. If an invitation is expired or already used, ask the sending parent for a new one.</p>
       </section>
+
       <section id="schedule">
-        <h2>Schedule: activities and responsibilities</h2>
-        <p>Add an Event for something that occupies time, with its participants, driver, and location. Use a Reminder for a task with a due time; Reminders do not block Schedule time. Rallyroo can show overlapping commitments and recurring occurrences without changing the original Event.</p>
-        <p>Parents can connect supported iCalendar subscriptions in Settings. Imported Events are read-only; Personal calendars are visible only to the parent who connected them. Schedule drafts from text, voice, or image text are proposals for a parent to review before saving.</p>
+        <h2>Plan Events on the Schedule</h2>
+        <p>Create an Event for an activity that occupies time. A parent can choose participants, a driver, start and end times, location, optional arrival target, alert lead time, and recurrence. Schedule views show overlapping Event lanes and warn about participant or driver conflicts when saving.</p>
+        <h3>Recurring Events and occurrence actions</h3>
+        <p>A recurring series produces individual occurrences. When changing a recurring Event, choose the scope offered by the app: only this occurrence, the matching weekday and future occurrences when available, or all future occurrences. Past occurrences remain unchanged.</p>
+        <p>Skipping keeps an occurrence in Family history and can be undone. Deleting hides it and prevents the series from recreating it. Parents should read the confirmation and scope before applying an action.</p>
+        <h3>Imported Events</h3>
+        <p>An imported Event identifies its source and is read-only. Edit its title, date, time, location, or recurrence at the source. Rallyroo can still store supported Rallyroo-specific coordination details for an imported Event, such as an arrival target, alert, or driver, without changing the provider calendar.</p>
       </section>
-      <section id="day-brief">
-        <h2>Day Brief</h2>
-        <p>A parent can enable a private morning brief and choose weekday, weekend, and holiday times in Settings. The brief draws on that Member's visible plans. If there is a verified Travel plan leave time, it can arrive earlier; an unavailable route never becomes a guessed leave time.</p>
-        <p>Day Brief notifications use normal priority and respect your device's Focus settings. Delivery behavior may depend on the API and TestFlight version you're using.</p>
+
+      <section id="reminders">
+        <h2>Track responsibilities with Reminders</h2>
+        <p>Use a Reminder for work due at one instant. A parent chooses one or more assignees, an optional alert, and—when needed—a recurring schedule. Reminders are grouped as overdue, today, upcoming, recurring, and completed.</p>
+        <p>Completion is shared: when one assignee completes a Reminder occurrence, it is complete for all assignees. A parent can reopen it. Reminders remain separate from Events and never participate in Event-overlap conflicts.</p>
       </section>
-      <section id="shopping">
-        <h2>Shopping and Pantry</h2>
-        <p>Parents organize Pantry items and store-specific Shopping routines. Family requests and Stock observations provide evidence for a trip plan; a parent reviews and finalizes the decisions, then records outcomes. A Purchase is history, not proof of what is currently in Stock.</p>
+
+      <section id="connected-calendars">
+        <h2>Connect an outside calendar</h2>
+        <p>In Settings → Connected calendars, tap + and choose a provider. Follow its instructions, then continue to paste the subscription link, name the calendar, choose Personal or Shared with family visibility, and select at least one Family Member. Tap Import. Changing provider keeps your entered configuration; Cancel discards it.</p>
+        <p>Subscriptions are continuously updated, one-way, and read-only. Edit Events at the source, not in Rallyroo. A normal browser page or a one-time downloaded .ics file is not a subscription. Rallyroo uses an HTTPS or webcal link, not your provider password or an OAuth sign-in.</p>
+        <div class="notice"><strong>Keep subscription URLs private.</strong> Anyone with the link may be able to read calendar details. Never include one or feed contents in screenshots, support messages, or public posts. Personal visibility limits who sees imported Events in Rallyroo; it does not change the provider's sharing settings.</div>
+        <h3 id="calendar-google">Google Calendar</h3>
+        <ol>
+          <li>On a computer, open Google Calendar on the web and choose Settings.</li>
+          <li>Under Settings for my calendars, choose the calendar, then Integrate calendar.</li>
+          <li>Copy the Secret address in iCal format and paste it in Rallyroo. Do not make a private Family calendar public.</li>
+        </ol>
+        <p>If a work or school account has no secret address, ask your administrator. Do not bypass your organization's policy. Resetting the secret address invalidates the old link.</p>
+        <h3 id="calendar-teamsnap">TeamSnap</h3>
+        <ol>
+          <li>Sign in to TeamSnap on the web and choose the roster name under the team name.</li>
+          <li>Open Schedule → Settings → Sync Calendar / Export. Some versions label this Subscribe/Export.</li>
+          <li>Copy the calendar subscription link for the schedule you want. Do not choose the exported text file.</li>
+        </ol>
+        <h3 id="calendar-outlook">Outlook / Microsoft 365</h3>
+        <ol>
+          <li>Open Outlook Calendar on the web, then Settings → Calendar → Shared calendars (or View → Calendar settings).</li>
+          <li>Under Publish a calendar, select the calendar and how much detail to expose. Publishing allows anyone with the link to view those details. Proceed only if you are comfortable with that access.</li>
+          <li>Select Publish and copy the ICS link, not the HTML link. Paste the link rather than downloading and importing a file.</li>
+        </ol>
+        <p>Unpublish at the source to revoke access. Your organization may disable publishing; ask your administrator if the option is absent. Do not publish a sensitive calendar just to connect it.</p>
+        <h3 id="calendar-other">Other iCalendar provider</h3>
+        <ol>
+          <li>Look for Subscribe, iCal, ICS, or webcal in the provider.</li>
+          <li>Copy an HTTPS or webcal subscription link that remains reachable for future syncs without signing in. If no link is offered, ask the provider.</li>
+          <li>Paste the link in Rallyroo, not a browser page or one-time .ics file.</li>
+        </ol>
+        <h3>Manage a connection</h3>
+        <p>The list shows sync status. Open a connection to use Sync now or inspect its last sync time. The parent who connected it can rename it, change visibility, or remove it. Personal Events are visible only to that parent; Shared with family Events are visible under Family permissions. Removing a connection does not edit the provider calendar.</p>
+        <h3 id="calendar-troubleshooting">Troubleshoot a connection</h3>
+        <ul>
+          <li><strong>Normal webpage copied:</strong> copy the iCalendar/ICS subscription link, not the browser address or an HTML sharing link.</li>
+          <li><strong>One-time file downloaded:</strong> find Subscribe instead of file export. A snapshot cannot receive later changes.</li>
+          <li><strong>Expired or rotated link:</strong> get a fresh link at the source, remove the old connection, and add the replacement. If the old link was exposed, revoke or reset it at the source too.</li>
+          <li><strong>Publishing disabled:</strong> workspaces may restrict subscriptions. Ask your administrator or provider; do not weaken privacy controls to bypass a policy.</li>
+          <li><strong>Sync failed or changes are missing:</strong> inspect status and try Sync now. Provider updates may be delayed. Existing imported Events are preserved when sync fails.</li>
+          <li><strong>Imported Event cannot be edited:</strong> change it at Google Calendar, TeamSnap, Outlook, or its source, then sync.</li>
+        </ul>
+        <p>Provider interfaces change. These steps were checked against official provider guidance; maintainers track source references in the connected-calendar guidance notes.</p>
       </section>
+
+      <section id="alerts-day-brief">
+        <h2>Use Alerts and the Day Brief</h2>
+        <h3>Alerts</h3>
+        <p>The Alerts tab is a Member-specific inbox for Event and Reminder alerts, parent-sent schedule updates, driver assignments, saved conflicts, leave times, commute disruptions, and Day Briefs. Opening an item marks it read and routes to related details when available. Saved conflict warnings can be cleared separately.</p>
+        <p>Alert previews avoid unnecessary Family detail where supported; for example, the Day Brief lock-screen preview uses counts and timing instead of Event or Reminder titles. Delivery still depends on notification permission, network and provider availability, and iOS notification and Focus settings. Rallyroo does not bypass Sleep Focus.</p>
+        <h3 id="day-brief">Day Brief</h3>
+        <p>A parent can enable a private morning brief and choose weekday, weekend or holiday delivery times, time zone, holiday region, and preparation margin. It uses only information visible to that Member. A verified Travel plan can move delivery earlier; a missing route never creates a guessed leave time.</p>
+        <p>Open a Day Brief from Alerts to see At a glance, verified Home weather when available, a chronological Timeline with driving duties and locations, and assigned Reminders. Weather requires an accessible saved place named Home and provider availability. The weather card includes the provider's data-sources and legal attribution link.</p>
+      </section>
+
+      <section id="travel">
+        <h2>Plan travel to an Event</h2>
+        <ol>
+          <li>Edit a Rallyroo-owned Event, enable Arrive by at or before its start, add a destination, and save.</li>
+          <li>Open Plan travel and choose a one-time starting address or a confirmed saved place.</li>
+          <li>Review the traffic-aware driving estimate and optional leave time, then save the plan.</li>
+          <li>If the Event has participants or a driver, choose a leave alert for eligible Members.</li>
+        </ol>
+        <p>Saved places can be personal or shared with the Family. A Member manages personal places; parents manage Family places. Rallyroo uses explicit origins and does not maintain passive location history.</p>
+        <p>Travel guidance currently covers a single driving route. Routing can be unavailable, stale, or change with traffic. The Event remains valid when routing fails, and its arrival target never changes the Event's occupied start-to-end time.</p>
+      </section>
+
+      <section id="create-with-ai">
+        <h2>Create with AI, then review</h2>
+        <p>A parent can open Create with AI from Schedule and provide typed text, dictated speech, or an image containing schedule details. Rallyroo proposes editable Event and Reminder drafts, confidence information, and clarification questions. A proposal does not enter the Family Schedule until the parent selects it, resolves required clarifications, and confirms.</p>
+        <h3>Images and the Share extension</h3>
+        <p>Choose an image in Rallyroo, or share a screenshot or photo to Rallyroo from another app and then open Rallyroo. Apple Vision recognizes image text on-device; the selected image stays on-device and only recognized text is used for draft extraction. Review the recognized text and every proposed date, time, Member, location, alert, and type before saving.</p>
+        <h3>Voice and permissions</h3>
+        <p>Voice capture requires microphone and speech-recognition permission and provider availability. Photo selection uses the system picker. Denying an optional permission only prevents the related capture method; typed creation and manual Event or Reminder entry remain available.</p>
+      </section>
+
+      <section id="household">
+        <h2>Coordinate Shopping, Pantry, and Expenses</h2>
+        <h3 id="shopping">Shopping and Pantry</h3>
+        <p>Parents create store-specific Shopping routines, Pantry items, and replenishment expectations. Family Members can request items and record Stock as Enough, Low, or Out. Requests, observations, and Purchase history are evidence—not guaranteed inventory.</p>
+        <p>A prepared trip separates Buy, Check at home, and Skip suggestions and explains why. A parent reviews and finalizes the list, then records purchased, skipped, unavailable, or deferred outcomes. Purchasing an item does not automatically claim how much remains at home.</p>
+        <h3>Expenses and receipt review</h3>
+        <p>Expenses are a parent-only Family ledger, separate from Shopping Purchase records. Parents can add, correct, and delete USD Expenses with date, category, and optional merchant or note. The beta does not provide budgets, recurring Expenses, automatic conversion, or automatic category decisions.</p>
+        <p>A parent may take or choose a receipt photo. Vision reads it on-device and only bounded OCR text—not the photo—is sent for a private AI proposal. Merchant, total, date, category, and up to 100 suggested line items require review. Suggested Pantry items and future Shopping requests start unselected and are saved only when the parent explicitly chooses them and confirms the Expense.</p>
+      </section>
+
       <section id="commuter">
-        <h2>Commuter</h2>
-        <p>When enabled by a parent, Commuter can show Caltrain trains by direction and help configure commute alerts. Live train and service data depends on the external provider and may be delayed or unavailable. Check the provider's status before relying on it.</p>
+        <h2>Configure Commuter</h2>
+        <p>A parent can enable the Family's Commuter capability. Members can configure personal or Family-visible Caltrain alert subscriptions for a route, direction, stop pair, service window, and matching condition. Alerts report matching delay or cancellation conditions; they are not Events or live departure promises.</p>
+        <p>Commuter shows separate health for its station catalog and real-time provider feed. Transit data is supplied by 511.org and can be delayed, stale, malformed, or unavailable. Check provider status and the transit operator before making time-critical decisions.</p>
       </section>
-      <section>
-        <h2>Need help or building with Rallyroo?</h2>
-        <p>Visit <a href="/support">Support</a> for account and beta questions. Developers can browse the <a href="https://github.com/josebarrueta/rallyroo/blob/main/docs/README.md" rel="noopener noreferrer">maintainer documentation</a> for architecture, local development, and deployment guides.</p>
+
+      <section id="privacy-controls">
+        <h2>Privacy, permissions, and account controls</h2>
+        <ul>
+          <li><strong>Calendar access:</strong> Rallyroo imports only a subscription URL a parent supplies. Imports are read-only; Personal calendar visibility is limited to the connecting parent.</li>
+          <li><strong>Notifications:</strong> permission is needed for local and push alerts. Device settings and Focus can suppress presentation even when an alert exists in the inbox.</li>
+          <li><strong>Microphone and speech:</strong> used only when a parent starts voice capture. Rallyroo does not retain raw microphone audio.</li>
+          <li><strong>Photos and camera:</strong> selected schedule images and receipt photos are recognized on-device. Review the separate data handling described above before submitting recognized text.</li>
+          <li><strong>Location:</strong> address search and travel use locations you enter or save; the current beta does not keep passive GPS history.</li>
+          <li><strong>Account:</strong> Settings provides Sign Out and permanent account deletion through Delete Account. If yours is the Family's final authenticated account, Family data is also deleted as described in the Privacy Policy.</li>
+        </ul>
+        <p>Read the <a href="/privacy">Privacy Policy</a> for data handling and deletion details and the <a href="/terms">Terms of Service</a> for beta limitations. Do not send calendar subscription URLs, credentials, receipt images, or screenshots containing private Family information to support.</p>
+      </section>
+
+      <section id="limitations">
+        <h2>Know the beta limitations</h2>
+        <ul>
+          <li>Rallyroo is invitation-only TestFlight software and may change, fail, or be unavailable.</li>
+          <li>Connected calendars are one-way and read-only; sync timing depends on the source provider.</li>
+          <li>AI and receipt results are proposals and can be incomplete or wrong. Human review is required before saving.</li>
+          <li>Weather, routes, transit, sign-in, email, push delivery, speech, and calendar feeds depend on external providers.</li>
+          <li>Notifications depend on permission, connectivity, iOS settings, and Focus. They are not guaranteed or an emergency service.</li>
+          <li>Rallyroo does not replace the source calendar, transit operator, weather service, financial records, or direct caregiver communication.</li>
+        </ul>
+      </section>
+
+      <section id="help">
+        <h2>Get help</h2>
+        <p>Visit <a href="/support">Rallyroo Support</a> for beta access, account help, privacy requests, or troubleshooting. Include your app version and the approximate time of a problem, but no private subscription links, credentials, receipts, or Family content.</p>
+        <p>Developers and maintainers can browse the <a href="https://github.com/josebarrueta/rallyroo/blob/main/docs/README.md" rel="noopener noreferrer">maintainer documentation</a>. The repository also keeps a released-feature inventory used to review this Member guide for each public release.</p>
       </section>
     </div>
   </main>
