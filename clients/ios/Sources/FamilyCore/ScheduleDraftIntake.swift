@@ -34,6 +34,13 @@ public enum ScheduleDraftIntakePhase: Equatable, Sendable {
     case saving
 }
 
+public enum ScheduleDraftImagePresentation: Equatable, Sendable {
+    case processing
+    case singleEventReview
+    case batchReview
+    case correction
+}
+
 public struct ScheduleDraftSaveSummary: Equatable, Sendable {
     public let savedCount: Int
     public let queuedNotificationCount: Int
@@ -183,10 +190,22 @@ public final class ScheduleDraftIntake: ObservableObject {
         phase == .recognizingImage || phase == .extracting || phase == .saving
     }
 
+    public var imagePresentation: ScheduleDraftImagePresentation? {
+        guard inputType == .image else { return nil }
+        if isWorking { return .processing }
+        if drafts.isEmpty { return .correction }
+        if drafts.count == 1, drafts[0].kind == .event, drafts[0].clarification == nil {
+            return .singleEventReview
+        }
+        return .batchReview
+    }
+
     public var workingMessage: String {
         switch phase {
-        case .recognizingImage: "Reading text from the image…"
-        case .extracting: "Creating your schedule… This can take up to 60 seconds."
+        case .recognizingImage: "Reading screenshot…"
+        case .extracting: inputType == .image
+            ? "Creating Event drafts… This can take up to 60 seconds."
+            : "Creating your schedule… This can take up to 60 seconds."
         case .saving: "Adding selected items…"
         case .idle, .recording: ""
         }
@@ -244,7 +263,10 @@ public final class ScheduleDraftIntake: ObservableObject {
         recognitionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let text = try await imageRecognizer.recognizeText(in: data)
+                let recognizer = imageRecognizer
+                let text = try await withTimeout(extractionTimeout) {
+                    try await recognizer.recognizeText(in: data)
+                }
                 guard !Task.isCancelled, recognitionGeneration == generation else { return }
                 phase = .idle
                 inputText = text
@@ -267,6 +289,10 @@ public final class ScheduleDraftIntake: ObservableObject {
         guard phase == .idle else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        guard text.utf16.count <= 20_000 else {
+            errorMessage = "This text is too long. Shorten it to 20,000 characters or fewer, then try again."
+            return
+        }
         pauseDetector.cancel()
         speech.stop()
         extractionTask?.cancel()
@@ -352,13 +378,18 @@ public final class ScheduleDraftIntake: ObservableObject {
             if failedCount > 0 {
                 errorMessage = "Some drafts could not be added. Items already added are now deselected."
             } else {
+                inputText = ""
                 didComplete = true
             }
         }
     }
 
     public func cancel() {
+        guard phase != .saving else { return }
         cancelCaptureAndExtraction()
+        inputText = ""
+        drafts = []
+        isRequestingImage = false
     }
 
     private func receiveSpeech(_ transcript: String) {

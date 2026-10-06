@@ -258,11 +258,17 @@ struct WeeklyScheduleView: View {
                 set: { presented in
                     isCapturingSchedule = presented
                     if !presented {
+                        if captureImageData != nil && incomingSharedCaptureImageData == captureImageData {
+                            incomingSharedCaptureImageData = nil
+                        }
                         captureImageData = nil
-                        incomingSharedCaptureImageData = nil
                     }
                  }
-             )) {
+             ), onDismiss: {
+                if let imageData = incomingSharedCaptureImageData {
+                    presentSharedCapture(imageData)
+                }
+             }) {
                 if allowsEditing, let scheduleDraftExtractor, let reminderStore {
                     ScheduleCaptureSheet(
                         extractor: scheduleDraftExtractor,
@@ -426,7 +432,7 @@ struct WeeklyScheduleView: View {
      }
 
     private func presentSharedCapture(_ imageData: Data) {
-        guard allowsEditing, scheduleDraftExtractor != nil, reminderStore != nil else { return }
+        guard !isCapturingSchedule, allowsEditing, scheduleDraftExtractor != nil, reminderStore != nil else { return }
         captureImageData = imageData
         isCapturingSchedule = true
     }

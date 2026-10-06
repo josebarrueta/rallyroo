@@ -224,6 +224,134 @@ final class ScheduleDraftIntakeTests: XCTestCase {
     }
 
     @MainActor
+    func testImagePresentationProcessesThenReviewsSingleEventAndClearsTextAfterSave() async throws {
+        let persistence = TestDraftPersistence()
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: [.success([eventDraft(title: "Play")])]),
+            speech: TestSpeechCapture(), imageRecognizer: TestImageRecognizer(text: "Play Friday"),
+            persistence: persistence
+        )
+        intake.completeImageSelection(Data([1]))
+        XCTAssertEqual(intake.imagePresentation, .processing)
+        try await eventually { intake.imagePresentation == .singleEventReview }
+        XCTAssertTrue(persistence.eventAttempts.isEmpty)
+        intake.drafts[0].title = "Edited play"
+        intake.saveSelected(notifyParticipants: false)
+        try await eventually { intake.didComplete }
+        XCTAssertEqual(persistence.eventAttempts.count, 1)
+        XCTAssertTrue(intake.inputText.isEmpty)
+    }
+
+    @MainActor
+    func testImageMixedBatchPresentation() async throws {
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: [.success([eventDraft(title: "Play"), reminderDraft(title: "Tickets")])]),
+            speech: TestSpeechCapture(), imageRecognizer: TestImageRecognizer(text: "Play and tickets"),
+            persistence: TestDraftPersistence()
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.imagePresentation == .batchReview }
+        XCTAssertEqual(intake.drafts.map(\.kind), [.event, .reminder])
+    }
+
+    @MainActor
+    func testEmptyImageTextOffersCorrectionAndCancellationClearsTransientInput() async throws {
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: []), speech: TestSpeechCapture(),
+            imageRecognizer: TestImageRecognizer(text: ""), persistence: TestDraftPersistence()
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.errorMessage != nil }
+        XCTAssertEqual(intake.imagePresentation, .correction)
+        intake.inputText = "Corrected source"
+        intake.cancel()
+        XCTAssertTrue(intake.inputText.isEmpty)
+        XCTAssertTrue(intake.drafts.isEmpty)
+    }
+
+    @MainActor
+    func testImageFailurePreservesTextForRetry() async throws {
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: [.failure(TestFailure()), .success([eventDraft(title: "Play")])]),
+            speech: TestSpeechCapture(), imageRecognizer: TestImageRecognizer(text: "Play Friday"),
+            persistence: TestDraftPersistence()
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.errorMessage != nil }
+        XCTAssertEqual(intake.imagePresentation, .correction)
+        XCTAssertEqual(intake.inputText, "Play Friday")
+        intake.extract()
+        try await eventually { intake.imagePresentation == .singleEventReview }
+    }
+
+    @MainActor
+    func testClarificationRetainsSourceAndCannotSaveUntilReextracted() async throws {
+        let ambiguous = ScheduleDraft(
+            kind: .event, title: "Play", memberIDs: [KidID(rawValue: "kid-1")],
+            startTime: nil, endTime: nil, dueAt: nil, location: nil,
+            alertLeadTimeMinutes: nil, clarification: "Which Friday?", confidence: 0.4
+        )
+        let persistence = TestDraftPersistence()
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: [.success([ambiguous]), .success([eventDraft(title: "Play")])]),
+            speech: TestSpeechCapture(), imageRecognizer: TestImageRecognizer(text: "Play Friday"),
+            persistence: persistence
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { !intake.drafts.isEmpty }
+        XCTAssertEqual(intake.imagePresentation, .batchReview)
+        XCTAssertEqual(intake.inputText, "Play Friday")
+        intake.drafts[0].isSelected = true
+        intake.saveSelected(notifyParticipants: false)
+        XCTAssertTrue(persistence.eventAttempts.isEmpty)
+        intake.inputText = "Play next Friday at six"
+        intake.extract()
+        try await eventually { intake.imagePresentation == .singleEventReview }
+        XCTAssertTrue(intake.drafts[0].canImport)
+    }
+
+    @MainActor
+    func testNoExtractedItemsRetainsSourceForCorrection() async throws {
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: [.success([])]), speech: TestSpeechCapture(),
+            imageRecognizer: TestImageRecognizer(text: "Unclear screenshot"), persistence: TestDraftPersistence()
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.errorMessage != nil }
+        XCTAssertEqual(intake.imagePresentation, .correction)
+        XCTAssertEqual(intake.inputText, "Unclear screenshot")
+    }
+
+    @MainActor
+    func testOversizedOCRTextDoesNotCrossExtractionSeam() async throws {
+        let extractor = QueueDraftExtractor(results: [])
+        let intake = ScheduleDraftIntake(
+            extractor: extractor, speech: TestSpeechCapture(),
+            imageRecognizer: TestImageRecognizer(text: String(repeating: "x", count: 20_001)),
+            persistence: TestDraftPersistence()
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.errorMessage != nil }
+        let inputs = await extractor.recordedInputs()
+        XCTAssertTrue(inputs.isEmpty)
+        XCTAssertEqual(intake.inputText.count, 20_001)
+        XCTAssertEqual(intake.imagePresentation, .correction)
+    }
+
+    @MainActor
+    func testOCRTimeoutIgnoresLateRecognition() async throws {
+        let intake = ScheduleDraftIntake(
+            extractor: QueueDraftExtractor(results: []), speech: TestSpeechCapture(),
+            imageRecognizer: DelayedImageRecognizer(), persistence: TestDraftPersistence(),
+            extractionTimeout: .milliseconds(5)
+        )
+        intake.completeImageSelection(Data([1]))
+        try await eventually { intake.errorMessage != nil }
+        XCTAssertEqual(intake.imagePresentation, .correction)
+        XCTAssertTrue(intake.inputText.isEmpty)
+    }
+
+    @MainActor
     private func makeIntake(
         extractor: QueueDraftExtractor,
         persistence: TestDraftPersistence = TestDraftPersistence()
