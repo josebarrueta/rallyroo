@@ -29,6 +29,12 @@ export class InMemoryNotificationCenterRepository implements NotificationCenterR
       .slice(0, limit);
   }
 
+  async unreadInboxCount(familyID: string, memberID: string): Promise<number> {
+    return [...this.recordsByDeduplication.values()].filter((record) =>
+      record.familyID === familyID && record.memberID === memberID && record.readAt === null,
+    ).length;
+  }
+
   async claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]) {
     const allowed = recordIDs ? new Set(recordIDs) : undefined;
     return [...this.recordsByDeduplication.values()]
@@ -69,6 +75,14 @@ export class InMemoryNotificationCenterRepository implements NotificationCenterR
       this.recordsByDeduplication.delete(key); this.deliveryStatus.delete(recordID); return true;
     }
     return false;
+  }
+
+  async markAllInboxRecordsRead(familyID: string, memberID: string, readAt: Date): Promise<void> {
+    for (const [key, record] of this.recordsByDeduplication) {
+      if (record.familyID === familyID && record.memberID === memberID && record.readAt === null) {
+        this.recordsByDeduplication.set(key, { ...record, readAt });
+      }
+    }
   }
 
   async markInboxRecordRead(

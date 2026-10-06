@@ -5,7 +5,8 @@ struct NotificationsView: View {
     let inboxStore: any NotificationInboxStore
     let conflictStore: any ConflictNotificationStore
     let dayBriefStore: (any DayBriefStore)?
-    let onUnreadCountChanged: (Int) -> Void
+    let unreadCount: Int
+    let onInboxChanged: () -> Void
     @State private var inbox: [InboxNotification] = []
     @State private var conflicts: [ConflictNotification] = []
     @State private var isLoading = true
@@ -18,6 +19,10 @@ struct NotificationsView: View {
             List {
                 RallyrooHeader(title: "Alerts", subtitle: "Updates, reminders, and changes for you.")
                     .listRowBackground(Color.clear)
+                Text("\(unreadCount) unread Alerts")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("alerts-unread-count")
                 if isLoading && inbox.isEmpty && conflicts.isEmpty {
                     ProgressView("Loading alerts…")
                 } else if inbox.isEmpty && conflicts.isEmpty {
@@ -59,6 +64,9 @@ struct NotificationsView: View {
             .navigationTitle("Alerts")
             .refreshable { await load() }
             .task { await load() }
+            .onReceive(NotificationCenter.default.publisher(for: .notificationInboxDidChange)) { _ in
+                Task { await load() }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
                 guard let destination = note.object as? InboxNotificationDestination,
                       destination.kind == .dayBrief else { return }
@@ -70,6 +78,9 @@ struct NotificationsView: View {
                 }
             }
             .toolbar {
+                if unreadCount > 0 {
+                    Button("Mark all read") { Task { await markAllRead() } }
+                }
                 if !conflicts.isEmpty {
                     Button("Clear saved conflicts") {
                         Task { try? await conflictStore.clear(); conflicts = [] }
@@ -130,8 +141,8 @@ struct NotificationsView: View {
             async let remote = inboxStore.notifications()
             async let local = conflictStore.notifications()
             inbox = try await remote
+            onInboxChanged()
             conflicts = try await local
-            onUnreadCountChanged(inbox.filter { $0.readAt == nil }.count)
             errorMessage = nil
         } catch {
             conflicts = (try? await conflictStore.notifications()) ?? conflicts
@@ -140,12 +151,23 @@ struct NotificationsView: View {
     }
 
     @MainActor private func delete(_ ids: [UUID]) async {
+        defer { onInboxChanged() }
         do {
             for id in ids { try await inboxStore.delete(id: id) }
             inbox.removeAll { ids.contains($0.id) }
-            onUnreadCountChanged(inbox.filter { $0.readAt == nil }.count)
         } catch {
+            await load()
             errorMessage = "Couldn't delete this alert."
+        }
+    }
+
+    @MainActor private func markAllRead() async {
+        do {
+            try await inboxStore.markAllRead()
+            onInboxChanged()
+            await load()
+        } catch {
+            errorMessage = "Couldn't mark all alerts as read. Please try again."
         }
     }
 
@@ -161,6 +183,7 @@ struct NotificationsView: View {
         guard notification.readAt == nil else { return }
         do {
             try await inboxStore.markRead(id: notification.id)
+            onInboxChanged()
             await load()
         } catch {
             errorMessage = "Couldn't mark this alert as read."

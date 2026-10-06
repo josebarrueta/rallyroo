@@ -34,6 +34,52 @@ final class NotificationInboxStoreTests: XCTestCase {
         XCTAssertEqual(requests[2].url.path, "/v1/notifications/\(id.uuidString)")
     }
 
+    func testRemoteUnreadCountIsNotLimitedToTheInboxPageAndIsCachedPerAccount() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cacheURL = directory.appendingPathComponent("inbox.json")
+        let record = InboxNotification(
+            id: UUID(), kind: .scheduleUpdate, title: "Update", body: "Review it.",
+            destination: .init(kind: .event, id: "event"), occurredAt: .now, readAt: nil
+        )
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let transport = NotificationHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: try encoder.encode([record])),
+            HTTPResponse(statusCode: 200, body: Data("{\"count\":123}".utf8)),
+            HTTPResponse(statusCode: 204), HTTPResponse(statusCode: 204), HTTPResponse(statusCode: 204),
+        ])
+        let store = RemoteNotificationInboxStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: transport,
+            cacheURL: cacheURL, accountID: { "one" }
+        )
+        _ = try await store.notifications()
+        let count = try await store.unreadCount()
+        XCTAssertEqual(count, 123)
+        try await store.markRead(id: record.id)
+        try await store.delete(id: record.id) // Already read: must not decrement again.
+        let offline = RemoteNotificationInboxStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: FailingNotificationHTTPTransport(),
+            cacheURL: cacheURL, accountID: { "one" }
+        )
+        let cachedCount = try await offline.unreadCount()
+        XCTAssertEqual(cachedCount, 122)
+        try await store.markAllRead()
+        let clearedCount = try await offline.unreadCount()
+        XCTAssertEqual(clearedCount, 0)
+        let other = RemoteNotificationInboxStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: FailingNotificationHTTPTransport(),
+            cacheURL: cacheURL, accountID: { "two" }
+        )
+        do {
+            _ = try await other.unreadCount()
+            XCTFail("Must not reuse another account's count")
+        } catch {}
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests[1].url.path, "/v1/notifications/unread-count")
+        XCTAssertEqual(requests[4].method, .post)
+        XCTAssertEqual(requests[4].url.path, "/v1/notifications/read-all")
+    }
+
     func testDayBriefNotificationDecodesWithoutInvalidatingInbox() throws {
         let data = Data("""
         [{"id":"ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC127","kind":"day_brief","title":"Your Monday","body":"Two drives today.","destination":{"kind":"day_brief","id":"2026-10-05"},"occurredAt":"2026-10-05T14:00:00Z","readAt":null}]

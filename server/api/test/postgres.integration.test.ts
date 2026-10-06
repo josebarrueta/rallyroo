@@ -567,6 +567,23 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     const [retry] = await repository.claimNotificationDeliveries(
       new Date(claimAt.getTime() + 60 * 60_000), 10, [first[0]!.id],
     );
+    expect(await center.unreadCount(account!)).toBe(1);
+    expect(await repository.unreadInboxCount(account!.familyID, "other-member")).toBe(0);
+    await center.markAllRead(account!);
+    await center.markRead(account!, first[0]!.id); // Individual replays stay idempotent.
+    expect(await center.unreadCount(account!)).toBe(0);
+    const [unread] = await center.record({ ...intent, deduplicationKey: "second" });
+    expect(await center.unreadCount(account!)).toBe(1);
+    await center.delete(account!, unread!.id);
+    expect(await center.unreadCount(account!)).toBe(0);
+    // Remove this additional fixture so its real-world deleted_at does not affect
+    // the following test's future-dated global retention sweep.
+    const cleanupPool = new Pool({ connectionString: databaseURL });
+    try {
+      await cleanupPool.query("DELETE FROM member_notification_inbox WHERE id = $1", [unread!.id]);
+    } finally {
+      await cleanupPool.end();
+    }
     expect(retry?.attemptCount).toBe(2);
     await repository.completeNotificationDelivery(
       retry!.record.id, retry!.claimedAt, "delivered", new Date(claimAt.getTime() + 60 * 60_000),
