@@ -10,3 +10,6 @@
 
 /styles.css
   Cache-Control: public, max-age=3600, must-revalidate
+
+/images/*
+  Cache-Control: public, max-age=86400, must-revalidate
