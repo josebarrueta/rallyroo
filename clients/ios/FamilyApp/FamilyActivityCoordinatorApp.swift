@@ -5,6 +5,18 @@ import FamilyCore
 
 private enum AppTab: Hashable { case schedule, reminders, family, alerts, settings }
 
+@MainActor
+private func makeSharedCaptureInbox() -> SharedScheduleCaptureInbox {
+    #if DEBUG
+    if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SCREENSHOT"] != nil {
+        return SharedScheduleCaptureInbox(dequeue: {
+            try ScreenshotUITestExtractor.captureQueue().dequeueOldest()
+        })
+    }
+    #endif
+    return SharedScheduleCaptureInbox()
+}
+
 #if DEBUG
 // Exercise the real queue, inbox, Vision OCR and review UI without a remote AI service.
 private struct ScreenshotUITestExtractor: ScheduleDraftExtractor {
@@ -27,8 +39,16 @@ private struct ScreenshotUITestExtractor: ScheduleDraftExtractor {
         )]
     }
 
+    static func captureQueue() throws -> SharedScheduleCaptureQueue {
+        // Unsigned simulator CI has no App Group entitlement. Keep the real queue
+        // and inbox contracts, but inject a sandbox directory only for this fixture.
+        if let queue = try? SharedScheduleCaptureQueue.appGroup() { return queue }
+        return try SharedScheduleCaptureQueue(directory: FileManager.default.temporaryDirectory
+            .appending(path: "ScreenshotUITestCaptures", directoryHint: .isDirectory))
+    }
+
     @MainActor static func enqueueScreenshot() throws {
-        let queue = try SharedScheduleCaptureQueue.appGroup()
+        let queue = try captureQueue()
         while try queue.dequeueOldest() != nil {}
         let image = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 300)).image { context in
             UIColor.white.setFill()
@@ -500,7 +520,7 @@ struct FamilyActivityCoordinatorApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .schedule
     @State private var unreadAlertCount = 0
-    @StateObject private var sharedCaptureInbox = SharedScheduleCaptureInbox()
+    @StateObject private var sharedCaptureInbox = makeSharedCaptureInbox()
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
