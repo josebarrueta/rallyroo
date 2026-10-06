@@ -380,6 +380,12 @@ describe("Rallyroo API", () => {
     });
     const app = buildApp({ identityProvider, repository: repository(), notificationCenter });
 
+    const unread = (token: string) => app.inject({
+      method: "GET", url: "/v1/notifications/unread-count", headers: { authorization: `Bearer ${token}` },
+    });
+    expect((await unread("parent-token")).json()).toEqual({ count: 1 });
+    expect((await unread("kid-token")).json()).toEqual({ count: 0 });
+    expect((await unread("invalid-token")).statusCode).toBe(401);
     const parentList = await app.inject({
       method: "GET", url: "/v1/notifications", headers: { authorization: "Bearer parent-token" },
     });
@@ -394,6 +400,18 @@ describe("Rallyroo API", () => {
       method: "PATCH", url: `/v1/notifications/${record!.id}/read`,
       headers: { authorization: "Bearer parent-token" },
     })).statusCode).toBe(204);
+    expect((await unread("parent-token")).json()).toEqual({ count: 0 });
+    await notificationCenter.record({
+      familyID: "family-1", recipientMemberIDs: ["parent-1", "kid-1"], kind: "schedule_update",
+      deduplicationKey: "read-all", title: "Update", body: "Review it.",
+      destination: { kind: "event", id: "event-1" }, occurredAt: new Date(),
+    });
+    expect((await app.inject({ method: "POST", url: "/v1/notifications/read-all" })).statusCode).toBe(401);
+    expect((await app.inject({
+      method: "POST", url: "/v1/notifications/read-all", headers: { authorization: "Bearer parent-token" },
+    })).statusCode).toBe(204);
+    expect((await unread("parent-token")).json()).toEqual({ count: 0 });
+    expect((await unread("kid-token")).json()).toEqual({ count: 1 });
     expect((await app.inject({
       method: "DELETE", url: `/v1/notifications/${record!.id}`,
       headers: { authorization: "Bearer kid-token" },

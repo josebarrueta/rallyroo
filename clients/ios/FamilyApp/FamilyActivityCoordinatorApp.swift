@@ -463,7 +463,9 @@ struct FamilyActivityCoordinatorApp: App {
     @UIApplicationDelegateAdaptor(PushNotificationDelegate.self) private var pushNotificationDelegate
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .schedule
-    @State private var unreadAlertCount = 0
+    @StateObject private var alertBadge = NotificationBadgeCoordinator { count in
+        UNUserNotificationCenter.current().setBadgeCount(count) { _ in }
+    }
     @StateObject private var sharedCaptureInbox = SharedScheduleCaptureInbox()
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
@@ -650,8 +652,12 @@ struct FamilyActivityCoordinatorApp: App {
         WindowGroup {
             SessionGateView(
                 authentication: authentication,
-                onSessionEnded: { try? await eventStore.clearCache() }
+                onSessionEnded: {
+                    await alertBadge.endSession()
+                    try? await eventStore.clearCache()
+                }
             ) { session, signOut, deleteAccount in
+                AlertBadgeContent(coordinator: alertBadge) { badge in
                 TabView(selection: $selectedTab) {
                     WeeklyScheduleView(
                         eventStore: eventStore,
@@ -697,10 +703,13 @@ struct FamilyActivityCoordinatorApp: App {
                         inboxStore: inboxStore,
                         conflictStore: notificationStore,
                         dayBriefStore: session.role == .parent ? dayBriefStore : nil,
-                        onUnreadCountChanged: { unreadAlertCount = $0 }
+                        unreadCount: badge.displayedCount,
+                        onInboxChanged: {
+                            Task { await alertBadge.reconcile(inbox: inboxStore, accountID: session.accountID) }
+                        }
                     )
                     .tabItem { Label("Alerts", systemImage: "bell") }
-                    .badge(unreadAlertCount)
+                    .badge(badge.displayedCount)
                     .tag(AppTab.alerts)
                     SettingsView(
                         dataIsSynced: dataIsSynced,
@@ -741,9 +750,10 @@ struct FamilyActivityCoordinatorApp: App {
                     sharedCaptureInbox.receiveNext()
                     await monitorFamilyChanges()
                 }
-                .task {
-                    unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
-                        .filter { $0.readAt == nil }.count
+                .task(id: session.accountID) {
+                    alertBadge.beginSession(accountID: session.accountID)
+                    _ = try? await inboxStore.notifications()
+                    await alertBadge.reconcile(inbox: inboxStore, accountID: session.accountID)
                 }
                 .task { await synchronizeCalendars(for: session.role) }
                 .task { await requestPushNotifications() }
@@ -751,15 +761,14 @@ struct FamilyActivityCoordinatorApp: App {
                     guard let item = notification.object as? InboxNotification else { return }
                     Task {
                         try? await inboxStore.ingest(item)
-                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
-                            .filter { $0.readAt == nil }.count
+                        await alertBadge.reconcile(inbox: inboxStore, accountID: session.accountID)
                     }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .notificationInboxDidChange)) { _ in
-                    Task {
-                        unreadAlertCount = ((try? await inboxStore.notifications()) ?? [])
-                            .filter { $0.readAt == nil }.count
-                    }
+                    Task { await alertBadge.reconcile(inbox: inboxStore, accountID: session.accountID) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .familyDataDidChange)) { _ in
+                    Task { await alertBadge.reconcile(inbox: inboxStore, accountID: session.accountID) }
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .didRegisterDeviceToken)) { notification in
                     guard let token = notification.object as? String else { return }
@@ -769,7 +778,9 @@ struct FamilyActivityCoordinatorApp: App {
                     if phase == .active {
                         sharedCaptureInbox.receiveNext()
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                        NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
                     }
+                }
                 }
             }
         }
@@ -825,6 +836,13 @@ struct FamilyActivityCoordinatorApp: App {
             }
         }
     }
+}
+
+private struct AlertBadgeContent<Content: View>: View {
+    @ObservedObject var coordinator: NotificationBadgeCoordinator
+    @ViewBuilder let content: (NotificationBadgeCoordinator) -> Content
+
+    var body: some View { content(coordinator) }
 }
 
 extension Notification.Name {

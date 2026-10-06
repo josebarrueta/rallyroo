@@ -67,10 +67,14 @@ assert.equal(invitationDeepLink(""), null);
 const privacy = await readFile(join(publicDirectory, "privacy.html"), "utf8");
 assert.match(privacy, /support@rallyroo\.dev/);
 assert.match(privacy, /account deletion/i);
+assert.match(privacy, /creating a family without an invitation must be an adult/);
+assert.match(privacy, /child may join only after an adult parent or legal guardian sends a child invitation/);
 
 const terms = await readFile(join(publicDirectory, "terms.html"), "utf8");
 assert.match(terms, /California/);
 assert.match(terms, /TestFlight/);
+assert.match(terms, /creating a family without an invitation must be at least 18 years old/);
+assert.match(terms, /parent or legal guardian/);
 
 const headers = await readFile(join(publicDirectory, "_headers"), "utf8");
 assert.match(headers, /Content-Security-Policy:/);

@@ -3,6 +3,14 @@ export interface PushNotification {
   body: string;
   data?: Record<string, string>;
   collapseID?: string;
+  /** Absolute unread inbox count, never an increment. */
+  badge?: number;
+}
+
+export const notificationBadgeCap = 99;
+
+export function boundedNotificationBadge(count: number): number {
+  return Number.isFinite(count) ? Math.min(notificationBadgeCap, Math.max(0, Math.trunc(count))) : 0;
 }
 
 export interface PushNotificationProvider {

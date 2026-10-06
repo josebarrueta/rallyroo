@@ -43,9 +43,23 @@ public struct InboxNotification: Codable, Equatable, Identifiable, Sendable {
 
 public protocol NotificationInboxStore: Sendable {
     func notifications() async throws -> [InboxNotification]
+    func unreadCount() async throws -> Int
+    func markAllRead() async throws
     func markRead(id: UUID) async throws
     func delete(id: UUID) async throws
     func ingest(_ notification: InboxNotification) async throws
+}
+
+public extension NotificationInboxStore {
+    func markAllRead() async throws {
+        for item in try await notifications() where item.readAt == nil {
+            try await markRead(id: item.id)
+        }
+    }
+
+    func unreadCount() async throws -> Int {
+        try await notifications().filter { $0.readAt == nil }.count
+    }
 }
 
 public actor EmptyNotificationInboxStore: NotificationInboxStore {
@@ -123,15 +137,55 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
     }
 
     public func notifications() async throws -> [InboxNotification] {
+        let account = try await accountID()
         do {
             let response = try await transport.send(HTTPRequest(method: .get, url: notificationsURL))
             try response.requireSuccess()
             let records = try decoder.decode([InboxNotification].self, from: response.body)
-            try await saveCache(records)
+            guard try await accountID() == account else { throw CancellationError() }
+            try await saveCache(records, account: account)
             return records
         } catch {
             guard let cached = try await cachedNotifications() else { throw error }
             return cached
+        }
+    }
+
+    public func unreadCount() async throws -> Int {
+        let account = try await accountID()
+        do {
+            let response = try await transport.send(HTTPRequest(
+                method: .get, url: notificationsURL.appending(path: "unread-count")
+            ))
+            try response.requireSuccess()
+            let count = try decoder.decode(UnreadInboxCount.self, from: response.body).count
+            guard count >= 0 else { throw URLError(.cannotParseResponse) }
+            guard try await accountID() == account else { throw CancellationError() }
+            if let cached = try await cachedEnvelope() {
+                try await saveCache(cached.records, account: account, unreadCount: count)
+            }
+            return count
+        } catch {
+            guard let cached = try await cachedEnvelope() else { throw error }
+            return cached.unreadCount ?? cached.records.filter { $0.readAt == nil }.count
+        }
+    }
+
+    public func markAllRead() async throws {
+        let account = try await accountID()
+        let response = try await transport.send(HTTPRequest(
+            method: .post, url: notificationsURL.appending(path: "read-all")
+        ))
+        try response.requireSuccess()
+        guard try await accountID() == account else { throw CancellationError() }
+        if let envelope = try await cachedEnvelope() {
+            let records = envelope.records.map { item in
+                InboxNotification(
+                    id: item.id, kind: item.kind, title: item.title, body: item.body,
+                    destination: item.destination, occurredAt: item.occurredAt, readAt: item.readAt ?? .now
+                )
+            }
+            try await saveCache(records, account: account, unreadCount: 0)
         }
     }
 
@@ -142,9 +196,10 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
             method: .delete, url: notificationsURL.appending(path: id.uuidString)
         ))
         try response.requireSuccess()
-        if var cached = try await cachedNotifications() {
-            cached.removeAll { $0.id == id }
-            try await saveCache(cached)
+        if let envelope = try await cachedEnvelope() {
+            let wasUnread = envelope.records.contains { $0.id == id && $0.readAt == nil }
+            let count = envelope.unreadCount.map { max(0, $0 - (wasUnread ? 1 : 0)) }
+            try await saveCache(envelope.records.filter { $0.id != id }, account: envelope.accountID, unreadCount: count)
         }
     }
 
@@ -154,20 +209,25 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
             url: notificationsURL.appending(path: id.uuidString).appending(path: "read")
         ))
         try response.requireSuccess()
-        if var cached = try await cachedNotifications(),
-           let index = cached.firstIndex(where: { $0.id == id }) {
+        if let envelope = try await cachedEnvelope(),
+           let index = envelope.records.firstIndex(where: { $0.id == id }) {
+            var cached = envelope.records
             let item = cached[index]
             cached[index] = InboxNotification(
                 id: item.id, kind: item.kind, title: item.title, body: item.body,
                 destination: item.destination, occurredAt: item.occurredAt, readAt: .now
             )
-            try await saveCache(cached)
+            let count = envelope.unreadCount.map { max(0, $0 - (item.readAt == nil ? 1 : 0)) }
+            try await saveCache(cached, account: envelope.accountID, unreadCount: count)
         }
     }
 
-    private func saveCache(_ records: [InboxNotification]) async throws {
-        guard let cacheURL, let account = try await accountID() else { return }
-        let envelope = InboxCacheEnvelope(accountID: account, records: records)
+    private func saveCache(_ records: [InboxNotification], account: String?, unreadCount: Int? = nil) async throws {
+        guard let cacheURL, let account else { return }
+        let previous = try await cachedEnvelope()?.unreadCount
+        guard try await accountID() == account else { throw CancellationError() }
+        let count = unreadCount ?? previous
+        let envelope = InboxCacheEnvelope(accountID: account, records: records, unreadCount: count)
         try FileManager.default.createDirectory(
             at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true
         )
@@ -175,14 +235,23 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
     }
 
     private func cachedNotifications() async throws -> [InboxNotification]? {
+        try await cachedEnvelope()?.records
+    }
+
+    private func cachedEnvelope() async throws -> InboxCacheEnvelope? {
         guard let cacheURL, let account = try await accountID(),
               FileManager.default.fileExists(atPath: cacheURL.path) else { return nil }
         let envelope = try decoder.decode(InboxCacheEnvelope.self, from: Data(contentsOf: cacheURL))
-        return envelope.accountID == account ? envelope.records : nil
+        return envelope.accountID == account ? envelope : nil
     }
 }
 
 private struct InboxCacheEnvelope: Codable {
     let accountID: String
     let records: [InboxNotification]
+    let unreadCount: Int?
+}
+
+private struct UnreadInboxCount: Decodable {
+    let count: Int
 }

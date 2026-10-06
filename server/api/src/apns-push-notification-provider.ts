@@ -1,6 +1,6 @@
 import { connect } from "node:http2";
 import { importPKCS8, SignJWT } from "jose";
-import type { PushNotification, PushNotificationProvider } from "./push-notification-provider.js";
+import { boundedNotificationBadge, type PushNotification, type PushNotificationProvider } from "./push-notification-provider.js";
 import { configuredSecret, type SecretFileReader } from "./runtime-configuration.js";
 
 interface APNSConfiguration {
@@ -89,15 +89,20 @@ export class APNSPushNotificationProvider implements PushNotificationProvider {
       request.on("end", () => status >= 200 && status < 300
         ? resolve()
         : reject(new Error(`APNs returned ${status}`)));
-      request.end(JSON.stringify({
-        aps: {
-          alert: { title: notification.title, body: notification.body },
-          sound: "default",
-        },
-        ...notification.data,
-      }));
+      request.end(JSON.stringify(apnsPayload(notification)));
     });
   }
+}
+
+export function apnsPayload(notification: PushNotification) {
+  return {
+    ...notification.data,
+    aps: {
+      alert: { title: notification.title, body: notification.body },
+      sound: "default",
+      ...(notification.badge === undefined ? {} : { badge: boundedNotificationBadge(notification.badge) }),
+    },
+  };
 }
 
 export function normalizeAPNSPrivateKey(value: string): string {

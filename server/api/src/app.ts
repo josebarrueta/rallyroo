@@ -1675,6 +1675,19 @@ export function buildApp({
       deduplicationDigest: _deduplicationDigest, ...record }) => record);
   });
 
+  app.get("/v1/notifications/unread-count", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    return { count: await notificationCenter.unreadCount(account) };
+  });
+
+  app.post("/v1/notifications/read-all", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    await notificationCenter.markAllRead(account);
+    return reply.code(204).send();
+  });
+
   app.patch("/v1/notifications/:id/read", async (request, reply) => {
     const account = requiredAccount(request);
     if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
