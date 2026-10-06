@@ -43,14 +43,74 @@ for (const page of requiredPages) {
 
 const homepage = await readFile(join(publicDirectory, "index.html"), "utf8");
 assert.match(homepage, /href="\/docs"/);
+assert.match(homepage, /class="skip-link"/);
+for (const topic of [
+  /Schedule and Reminders/,
+  /Connected calendars/,
+  /Alerts and Day Brief/,
+  /Travel and saved places/,
+  /Create with AI/,
+  /Household and Commuter/,
+]) {
+  assert.match(homepage, topic, `homepage must summarize ${topic}`);
+}
+
 const documentation = await readFile(join(publicDirectory, "docs.html"), "utf8");
 assert.match(documentation, /<h1>Rallyroo Docs<\/h1>/);
-assert.match(documentation, /id="getting-started"/);
-assert.match(documentation, /id="schedule"/);
-assert.match(documentation, /id="day-brief"/);
-assert.match(documentation, /id="shopping"/);
-assert.match(documentation, /id="commuter"/);
+assert.match(documentation, /class="skip-link"/);
+assert.match(documentation, /Beta and build freshness/);
+for (const id of [
+  "overview",
+  "getting-started",
+  "schedule",
+  "reminders",
+  "connected-calendars",
+  "alerts-day-brief",
+  "travel",
+  "create-with-ai",
+  "household",
+  "commuter",
+  "privacy-controls",
+  "limitations",
+  "help",
+]) {
+  assert.match(documentation, new RegExp(`id="${id}"`), `docs must include #${id}`);
+}
+for (const phrase of [
+  /occurrence actions/i,
+  /Home weather/,
+  /Timeline/,
+  /Share extension/,
+  /on-device/,
+  /Expenses/,
+  /account deletion/i,
+  /Focus settings/,
+  /TestFlight/,
+]) {
+  assert.match(documentation, phrase, `docs must cover ${phrase}`);
+}
 assert.match(documentation, /rel="noopener noreferrer"/);
+
+// Provider guidance is maintained product content, not an optional paragraph.
+assert.match(documentation, /href="#connected-calendars"/);
+for (const id of ["connected-calendars", "calendar-google", "calendar-teamsnap", "calendar-outlook", "calendar-other", "calendar-troubleshooting"]) {
+  assert.match(documentation, new RegExp(`id="${id}"`));
+}
+for (const phrase of [/Secret address in iCal format/, /Sync Calendar \/ Export/, /Publish a calendar/, /read-only/, /expired/i, /one-time/, /private/, /anyone with the link/, /administrator/]) {
+  assert.match(documentation, phrase);
+}
+
+const inventory = await readFile(join(root, "RELEASED_FEATURES.md"), "utf8");
+assert.match(inventory, /Last review.*v0\.11\.19/);
+assert.match(inventory, /Release review procedure/);
+for (const feature of ["Events", "Reminders", "Day Brief", "Travel plans", "Expenses", "Commuter", "account deletion"]) {
+  assert.match(inventory, new RegExp(`- \\[x\\].*${feature}`, "i"), `inventory must track ${feature}`);
+}
+
+const styles = await readFile(join(publicDirectory, "styles.css"), "utf8");
+assert.match(styles, /:focus-visible/);
+assert.match(styles, /prefers-reduced-motion:\s*reduce/);
+assert.match(styles, /@media\s*\(max-width:\s*760px\)/);
 
 const invitation = await readFile(join(publicDirectory, "invite.html"), "utf8");
 assert.match(invitation, /<script type="module" src="\/invite\.js"><\/script>/);
