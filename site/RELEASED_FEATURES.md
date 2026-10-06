@@ -15,7 +15,16 @@ For every TestFlight release that changes Member-visible behavior:
 3. Update the public guide, homepage summary when the capability is major, this review stamp, and the guide's build-freshness notice.
 4. Keep Events distinct from Reminders, imported data distinct from Rallyroo-owned data, and proposals distinct from saved records.
 5. Review Privacy Policy or Terms changes separately; do not turn legal pages into marketing copy.
-6. Run `npm test` and `npm run deploy:dry-run` from `site/`, then verify production routes after deployment.
+6. Regenerate screenshots only from synthetic UI-test fixtures. Confirm that no account, calendar link, address, receipt, or real Family data is visible; preserve descriptive alt text and optimized dimensions.
+7. Run `npm test` and `npm run deploy:dry-run` from `site/`, then verify production routes after deployment.
+
+## Public image inventory
+
+- `public/images/day-brief.webp` — synthetic `DayBriefUITestStore` data.
+- `public/images/ai-draft-review.webp` — synthetic `ScreenshotUITestExtractor` Event and test Member “Alex.”
+- `public/images/shopping-pantry.webp` — synthetic `ShoppingUITestStore` routine, request, and Pantry item.
+
+The screenshots were captured from the iOS simulator, resized to 720 pixels wide, converted to WebP, and privacy-reviewed. They contain no production identifiers or real Member information.
 
 ## Member-facing inventory
 

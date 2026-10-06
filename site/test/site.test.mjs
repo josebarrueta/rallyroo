@@ -111,6 +111,20 @@ const styles = await readFile(join(publicDirectory, "styles.css"), "utf8");
 assert.match(styles, /:focus-visible/);
 assert.match(styles, /prefers-reduced-motion:\s*reduce/);
 assert.match(styles, /@media\s*\(max-width:\s*760px\)/);
+assert.match(styles, /scroll-snap-type:\s*x mandatory/);
+
+// Product screenshots use synthetic fixtures, useful alt text, fixed dimensions,
+// and compact modern assets so the static site stays fast and stable.
+for (const image of ["day-brief.webp", "ai-draft-review.webp", "shopping-pantry.webp"]) {
+  const source = `/images/${image}`;
+  assert.match(homepage, new RegExp(`src="${source}"`), `homepage must show ${image}`);
+  assert.match(documentation, new RegExp(`src="${source}"`), `docs must show ${image}`);
+  const imageMarkup = new RegExp(`<img[^>]+src="${source}"[^>]+width="720"[^>]+height="1566"[^>]+alt="[^"]+"`);
+  assert.match(homepage, imageMarkup, `${image} must reserve space and have alt text`);
+  const details = await stat(join(publicDirectory, "images", image));
+  assert.ok(details.size < 75_000, `${image} must remain under 75 KB`);
+}
+assert.match(homepage, /synthetic Family information/);
 
 const invitation = await readFile(join(publicDirectory, "invite.html"), "utf8");
 assert.match(invitation, /<script type="module" src="\/invite\.js"><\/script>/);
@@ -141,6 +155,8 @@ assert.match(headers, /Content-Security-Policy:/);
 assert.match(headers, /script-src 'self'/);
 assert.match(headers, /frame-ancestors 'none'/);
 assert.match(headers, /Permissions-Policy:/);
+assert.match(headers, /\/images\/\*/);
+assert.match(headers, /max-age=86400/);
 
 const wrangler = JSON.parse(await readFile(join(root, "wrangler.json"), "utf8"));
 assert.equal(wrangler.workers_dev, false);
