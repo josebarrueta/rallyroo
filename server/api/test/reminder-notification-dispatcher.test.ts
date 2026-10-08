@@ -21,7 +21,7 @@ describe("ReminderNotificationDispatcher", () => {
     const deliveries: Array<{ tokens: string[]; reminderID: string | undefined }> = [];
     const dispatcher = new ReminderNotificationDispatcher({
       repository: {
-        claimDueReminderNotifications: async () => [reminder],
+        claimDueReminderNotifications: async () => [{ reminder, occurrenceDue: reminder.dueAt }],
         deviceTokensForMembers: async (_familyID, memberIDs) => {
           expect(memberIDs).toEqual(["kid-1"]);
           return ["assignee-device-token"];
@@ -50,7 +50,7 @@ describe("ReminderNotificationDispatcher", () => {
     let released = false;
     const dispatcher = new ReminderNotificationDispatcher({
       repository: {
-        claimDueReminderNotifications: async () => [reminder],
+        claimDueReminderNotifications: async () => [{ reminder, occurrenceDue: reminder.dueAt }],
         deviceTokensForMembers: async () => ["device-token"],
         markReminderNotificationSent: async () => { marked = true; },
         releaseReminderNotificationClaim: async () => { released = true; },

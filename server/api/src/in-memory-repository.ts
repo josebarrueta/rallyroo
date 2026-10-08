@@ -9,6 +9,7 @@ import type {
   ScheduleOccurrenceState,
 } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type { DueReminderNotification } from "./reminder-notification-dispatcher.js";
 import type {
   ClaimedScheduleUpdateNotification,
   EventMutationPlan,
@@ -17,6 +18,7 @@ import type {
   ScheduleUpdateNotificationIntent,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
+import { reminderOccurrenceDueDates } from "./reminder-recurrence.js";
 import type { InvitationConsumptionResult, RallyrooRepository } from "./repository.js";
 
 interface SeedData {
@@ -540,8 +542,13 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     );
     if (index >= 0) this.reminders[index] = reminder;
     else this.reminders.push(reminder);
-    this.claimedReminderNotifications.delete(`${reminder.familyID}:${reminder.id.toLowerCase()}`);
-    this.sentReminderNotifications.delete(`${reminder.familyID}:${reminder.id.toLowerCase()}`);
+    const notificationPrefix = `${reminder.familyID}:${reminder.id.toLowerCase()}:`;
+    for (const key of this.claimedReminderNotifications) {
+      if (key.startsWith(notificationPrefix)) this.claimedReminderNotifications.delete(key);
+    }
+    for (const key of this.sentReminderNotifications) {
+      if (key.startsWith(notificationPrefix)) this.sentReminderNotifications.delete(key);
+    }
   }
 
   async deleteReminder(familyID: string, reminderID: string): Promise<void> {
@@ -551,30 +558,40 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     if (index >= 0) this.reminders.splice(index, 1);
   }
 
-  async claimDueReminderNotifications(now: Date, limit: number): Promise<FamilyReminder[]> {
+  async claimDueReminderNotifications(now: Date, limit: number): Promise<DueReminderNotification[]> {
     const oldestDueAt = now.getTime() - 24 * 60 * 60 * 1_000;
-    const due = this.reminders.filter((reminder) => {
-      if (reminder.status !== "open" || reminder.alertLeadTimeMinutes === null) return false;
-      const key = `${reminder.familyID}:${reminder.id.toLowerCase()}`;
-      if (this.claimedReminderNotifications.has(key) || this.sentReminderNotifications.has(key)) return false;
-      const dueAt = new Date(reminder.dueAt).getTime();
-      const notifyAt = dueAt - reminder.alertLeadTimeMinutes * 60 * 1_000;
-      return notifyAt <= now.getTime() && dueAt >= oldestDueAt;
-    }).slice(0, limit);
-    for (const reminder of due) {
-      this.claimedReminderNotifications.add(`${reminder.familyID}:${reminder.id.toLowerCase()}`);
+    const due = this.reminders.flatMap((reminder) => {
+      if (reminder.status !== "open" || reminder.alertLeadTimeMinutes === null) return [];
+      const through = new Date(now.getTime() + reminder.alertLeadTimeMinutes * 60 * 1_000);
+      return reminderOccurrenceDueDates(reminder, through).flatMap((occurrenceDueDate) => {
+        const occurrenceDue = occurrenceDueDate.toISOString();
+        const key = reminderNotificationKey(reminder.familyID, reminder.id, occurrenceDue);
+        const notifyAt = occurrenceDueDate.getTime() - reminder.alertLeadTimeMinutes! * 60 * 1_000;
+        if (notifyAt > now.getTime() || occurrenceDueDate.getTime() < oldestDueAt
+          || this.claimedReminderNotifications.has(key) || this.sentReminderNotifications.has(key)) return [];
+        return [{ reminder, occurrenceDue }];
+      });
+    }).sort((left, right) => left.occurrenceDue.localeCompare(right.occurrenceDue)).slice(0, limit);
+    for (const notification of due) {
+      this.claimedReminderNotifications.add(reminderNotificationKey(
+        notification.reminder.familyID, notification.reminder.id, notification.occurrenceDue,
+      ));
     }
     return due;
   }
 
-  async markReminderNotificationSent(familyID: string, reminderID: string): Promise<void> {
-    const key = `${familyID}:${reminderID.toLowerCase()}`;
+  async markReminderNotificationSent(
+    familyID: string, reminderID: string, occurrenceDue: string,
+  ): Promise<void> {
+    const key = reminderNotificationKey(familyID, reminderID, occurrenceDue);
     this.claimedReminderNotifications.delete(key);
     this.sentReminderNotifications.add(key);
   }
 
-  async releaseReminderNotificationClaim(familyID: string, reminderID: string, _claimedAt: Date): Promise<void> {
-    this.claimedReminderNotifications.delete(`${familyID}:${reminderID.toLowerCase()}`);
+  async releaseReminderNotificationClaim(
+    familyID: string, reminderID: string, occurrenceDue: string, _claimedAt: Date,
+  ): Promise<void> {
+    this.claimedReminderNotifications.delete(reminderNotificationKey(familyID, reminderID, occurrenceDue));
   }
 
   async membersForFamily(familyID: string): Promise<FamilyMember[]> {
@@ -610,6 +627,10 @@ function occurrenceStateKey(
 
 function eventNotificationKey(familyID: string, eventID: string, occurrenceStart: string): string {
   return `${familyID}:${eventID.toLowerCase()}:${occurrenceStart}`;
+}
+
+function reminderNotificationKey(familyID: string, reminderID: string, occurrenceDue: string): string {
+  return `${familyID}:${reminderID.toLowerCase()}:${occurrenceDue}`;
 }
 
 function removeWhere<T>(values: T[], predicate: (value: T) => boolean): void {

@@ -16,6 +16,7 @@ import type {
   CommuterAlertDeliveryRepository,
 } from "./commuter-alert-dispatcher.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type { DueReminderNotification } from "./reminder-notification-dispatcher.js";
 import type {
   ClaimedScheduleUpdateNotification,
   EventMutationPlan,
@@ -23,6 +24,7 @@ import type {
   EventMutationSnapshot,
 } from "./event-mutation-persistence.js";
 import { eventOccurrenceStarts } from "./event-recurrence.js";
+import { reminderOccurrenceDueDates } from "./reminder-recurrence.js";
 import type {
   DayBrief,
   DayBriefPersistence,
@@ -2296,6 +2298,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         reminder.recurrenceSeriesID ?? null,
       ],
     );
+    await this.pool.query(
+      "DELETE FROM reminder_notification_deliveries WHERE family_id = $1 AND reminder_id = $2",
+      [reminder.familyID, reminder.id],
+    );
   }
 
   async deleteReminder(familyID: string, reminderID: string): Promise<void> {
@@ -2305,52 +2311,95 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
-  async claimDueReminderNotifications(now: Date, limit: number): Promise<FamilyReminder[]> {
-    const result = await this.pool.query<ReminderRow>(
-      `WITH due AS (
-         SELECT family_id, id
+  async claimDueReminderNotifications(now: Date, limit: number): Promise<DueReminderNotification[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<ReminderRow>(
+        `SELECT family_id, id::text, title, assignee_ids, due_at, status,
+                completed_at, completed_by_member_id, alert_lead_time_minutes,
+                created_by_member_id, recurrence_frequency, recurrence_interval,
+                recurrence_weekdays, recurrence_end_date, recurrence_time_zone,
+                recurrence_series_id
          FROM family_reminders
          WHERE status = 'open'
-           AND notification_sent_at IS NULL
-           AND (notification_claimed_at IS NULL OR notification_claimed_at < $1::timestamptz - interval '5 minutes')
            AND alert_lead_time_minutes IS NOT NULL
-           AND due_at - make_interval(mins => alert_lead_time_minutes) <= $1
-           AND due_at >= $1::timestamptz - interval '24 hours'
-         ORDER BY due_at
-         LIMIT $2
-         FOR UPDATE SKIP LOCKED
-       )
-       UPDATE family_reminders AS reminder
-       SET notification_claimed_at = $1, updated_at = now()
-       FROM due
-       WHERE reminder.family_id = due.family_id AND reminder.id = due.id
-       RETURNING reminder.family_id, reminder.id::text, reminder.title,
-                 reminder.assignee_ids, reminder.due_at, reminder.status,
-                 reminder.completed_at, reminder.completed_by_member_id,
-                 reminder.alert_lead_time_minutes, reminder.created_by_member_id,
-                 reminder.recurrence_frequency, reminder.recurrence_interval,
-                 reminder.recurrence_weekdays, reminder.recurrence_end_date,
-                 reminder.recurrence_time_zone, reminder.recurrence_series_id`,
-      [now.toISOString(), limit],
-    );
-    return Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
+           AND due_at <= $1::timestamptz + interval '1 day'
+           AND (
+             (recurrence_frequency IS NULL AND due_at >= $1::timestamptz - interval '24 hours')
+             OR
+             (recurrence_frequency IS NOT NULL
+              AND (recurrence_end_date IS NULL
+                   OR recurrence_end_date >= $1::timestamptz - interval '24 hours'))
+           )`,
+        [now.toISOString()],
+      );
+      const reminders = await Promise.all(result.rows.map((row) => this.reminderFromRow(row)));
+      const due = reminders.flatMap((reminder) => {
+        const through = new Date(now.getTime() + reminder.alertLeadTimeMinutes! * 60 * 1_000);
+        return reminderOccurrenceDueDates(reminder, through).flatMap((occurrenceDueDate) => {
+          const notifyAt = occurrenceDueDate.getTime()
+            - reminder.alertLeadTimeMinutes! * 60 * 1_000;
+          if (notifyAt > now.getTime()
+            || occurrenceDueDate.getTime() < now.getTime() - 24 * 60 * 60 * 1_000) return [];
+          return [{ reminder, occurrenceDue: occurrenceDueDate.toISOString() }];
+        });
+      }).sort((left, right) => left.occurrenceDue.localeCompare(right.occurrenceDue));
+      const claimed: DueReminderNotification[] = [];
+      for (const notification of due) {
+        if (claimed.length >= limit) break;
+        const claim = await client.query(
+          `INSERT INTO reminder_notification_deliveries (
+             family_id, reminder_id, occurrence_due, notification_claimed_at
+           ) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (family_id, reminder_id, occurrence_due) DO UPDATE
+           SET notification_claimed_at = EXCLUDED.notification_claimed_at
+           WHERE reminder_notification_deliveries.notification_sent_at IS NULL
+             AND (
+               reminder_notification_deliveries.notification_claimed_at IS NULL
+               OR reminder_notification_deliveries.notification_claimed_at
+                    < $4::timestamptz - interval '5 minutes'
+             )
+           RETURNING occurrence_due`,
+          [
+            notification.reminder.familyID,
+            notification.reminder.id,
+            notification.occurrenceDue,
+            now.toISOString(),
+          ],
+        );
+        if (claim.rows[0]) claimed.push(notification);
+      }
+      await client.query("COMMIT");
+      return claimed;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
-  async markReminderNotificationSent(familyID: string, reminderID: string, sentAt: Date): Promise<void> {
+  async markReminderNotificationSent(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void> {
     await this.pool.query(
-      `UPDATE family_reminders
-       SET notification_claimed_at = NULL, notification_sent_at = $3, updated_at = now()
-       WHERE family_id = $1 AND id = $2 AND notification_claimed_at = $3`,
-      [familyID, reminderID, sentAt.toISOString()],
+      `UPDATE reminder_notification_deliveries
+       SET notification_claimed_at = NULL, notification_sent_at = $4
+       WHERE family_id = $1 AND reminder_id = $2 AND occurrence_due = $3
+         AND notification_claimed_at = $4`,
+      [familyID, reminderID, occurrenceDue, claimedAt.toISOString()],
     );
   }
 
-  async releaseReminderNotificationClaim(familyID: string, reminderID: string, claimedAt: Date): Promise<void> {
+  async releaseReminderNotificationClaim(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void> {
     await this.pool.query(
-      `UPDATE family_reminders SET notification_claimed_at = NULL, updated_at = now()
-       WHERE family_id = $1 AND id = $2 AND notification_sent_at IS NULL
-         AND notification_claimed_at = $3`,
-      [familyID, reminderID, claimedAt.toISOString()],
+      `UPDATE reminder_notification_deliveries SET notification_claimed_at = NULL
+       WHERE family_id = $1 AND reminder_id = $2 AND occurrence_due = $3
+         AND notification_sent_at IS NULL AND notification_claimed_at = $4`,
+      [familyID, reminderID, occurrenceDue, claimedAt.toISOString()],
     );
   }
 

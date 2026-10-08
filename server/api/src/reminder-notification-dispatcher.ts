@@ -2,11 +2,20 @@ import type { FamilyReminder } from "./domain.js";
 import type { PushNotificationProvider } from "./push-notification-provider.js";
 import type { NotificationCenterModule } from "./notification-center.js";
 
+export interface DueReminderNotification {
+  reminder: FamilyReminder;
+  occurrenceDue: string;
+}
+
 export interface ReminderNotificationRepository {
-  claimDueReminderNotifications(now: Date, limit: number): Promise<FamilyReminder[]>;
+  claimDueReminderNotifications(now: Date, limit: number): Promise<DueReminderNotification[]>;
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
-  markReminderNotificationSent(familyID: string, reminderID: string, sentAt: Date): Promise<void>;
-  releaseReminderNotificationClaim(familyID: string, reminderID: string, claimedAt: Date): Promise<void>;
+  markReminderNotificationSent(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void>;
+  releaseReminderNotificationClaim(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void>;
 }
 
 interface Dependencies {
@@ -30,21 +39,23 @@ export class ReminderNotificationDispatcher {
   }
 
   async dispatchDue(now = new Date()): Promise<void> {
-    const reminders = await this.repository.claimDueReminderNotifications(now, this.batchSize);
-    const results = await Promise.allSettled(reminders.map(async (reminder) => {
+    const notifications = await this.repository.claimDueReminderNotifications(now, this.batchSize);
+    const results = await Promise.allSettled(notifications.map(async ({ reminder, occurrenceDue }) => {
       try {
         if (this.dependencies.notificationCenter) {
           await this.dependencies.notificationCenter.recordAndDispatch({
             familyID: reminder.familyID,
             recipientMemberIDs: reminder.assigneeIDs,
             kind: "reminder_occurrence",
-            deduplicationKey: reminder.id,
+            deduplicationKey: `${reminder.id}:${occurrenceDue}`,
             title: reminder.title,
             body: "Reminder due. Open Rallyroo to review.",
             destination: { kind: "reminder", id: reminder.id },
             occurredAt: now,
           });
-          await this.repository.markReminderNotificationSent(reminder.familyID, reminder.id, now);
+          await this.repository.markReminderNotificationSent(
+            reminder.familyID, reminder.id, occurrenceDue, now,
+          );
           return;
         }
         const tokens = await this.repository.deviceTokensForMembers(
@@ -55,12 +66,16 @@ export class ReminderNotificationDispatcher {
           await this.pushNotificationProvider.send(tokens, {
             title: reminder.title,
             body: "Reminder due. Open Rallyroo to review.",
-            data: { reminderID: reminder.id },
+            data: { reminderID: reminder.id, occurrenceDue },
           });
         }
-        await this.repository.markReminderNotificationSent(reminder.familyID, reminder.id, now);
+        await this.repository.markReminderNotificationSent(
+          reminder.familyID, reminder.id, occurrenceDue, now,
+        );
       } catch (error) {
-        await this.repository.releaseReminderNotificationClaim(reminder.familyID, reminder.id, now);
+        await this.repository.releaseReminderNotificationClaim(
+          reminder.familyID, reminder.id, occurrenceDue, now,
+        );
         throw error;
       }
     }));
