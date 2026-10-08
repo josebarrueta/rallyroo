@@ -8,6 +8,7 @@ import type {
   ScheduleOccurrenceState,
 } from "./domain.js";
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
+import type { DueReminderNotification } from "./reminder-notification-dispatcher.js";
 import type { EventMutationPersistence } from "./event-mutation-persistence.js";
 
 export type InvitationConsumptionResult =
@@ -69,9 +70,13 @@ export interface RallyrooRepository extends EventMutationPersistence {
   remindersForFamily(familyID: string): Promise<FamilyReminder[]>;
   saveReminder(reminder: FamilyReminder): Promise<void>;
   deleteReminder(familyID: string, reminderID: string): Promise<void>;
-  claimDueReminderNotifications(now: Date, limit: number): Promise<FamilyReminder[]>;
-  markReminderNotificationSent(familyID: string, reminderID: string, sentAt: Date): Promise<void>;
-  releaseReminderNotificationClaim(familyID: string, reminderID: string, claimedAt: Date): Promise<void>;
+  claimDueReminderNotifications(now: Date, limit: number): Promise<DueReminderNotification[]>;
+  markReminderNotificationSent(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void>;
+  releaseReminderNotificationClaim(
+    familyID: string, reminderID: string, occurrenceDue: string, claimedAt: Date,
+  ): Promise<void>;
   membersForFamily(familyID: string): Promise<FamilyMember[]>;
   saveMember(member: FamilyMember): Promise<void>;
   deleteMember(familyID: string, memberID: string): Promise<void>;

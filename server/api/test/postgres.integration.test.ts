@@ -1159,9 +1159,11 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       data.claimDueReminderNotifications(now, 100),
     ]);
 
-    expect(claims.flat().map((reminder) => reminder.id)).toEqual([reminderID]);
-    await data.releaseReminderNotificationClaim(account.familyID, reminderID, now);
-    expect((await data.claimDueReminderNotifications(now, 100)).map((reminder) => reminder.id))
+    expect(claims.flat().map(({ reminder }) => reminder.id)).toEqual([reminderID]);
+    await data.releaseReminderNotificationClaim(
+      account.familyID, reminderID, "2026-09-10T15:00:00.000Z", now,
+    );
+    expect((await data.claimDueReminderNotifications(now, 100)).map(({ reminder }) => reminder.id))
       .toEqual([reminderID]);
   });
 
