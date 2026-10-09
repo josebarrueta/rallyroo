@@ -5,7 +5,7 @@ public enum RemoteAuthenticationError: Error, Equatable {
     case invalidOAuthCallback
 }
 
-public actor RemoteAuthentication: Authentication {
+public actor RemoteAuthentication: SessionInvalidatingAuthentication {
     private struct OAuthTokenExchange: Encodable {
         let oauthToken: String
         let codeVerifier: String
@@ -121,6 +121,19 @@ public actor RemoteAuthentication: Authentication {
         try await sessionStore.save(authenticatedSession)
         session = authenticatedSession
         return authenticatedSession
+    }
+
+    public func invalidateSession(rejectedAccessToken: String) async throws -> Bool {
+        let activeSession: AuthSession?
+        if let session {
+            activeSession = session
+        } else {
+            activeSession = try await sessionStore.load()
+        }
+        guard activeSession?.accessToken == rejectedAccessToken else { return false }
+        session = nil
+        try await sessionStore.delete()
+        return true
     }
 
     public func signOut() async throws {

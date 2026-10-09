@@ -40,6 +40,20 @@ public protocol Authentication: Sendable {
     func deleteAccount() async throws
 }
 
+/// Authentication adapters that can discard a locally cached session without
+/// attempting a remote sign-out after the server has already rejected it.
+public protocol SessionInvalidatingAuthentication: Authentication {
+    /// Invalidates only when the rejected token is still current, so a late
+    /// response from an older request cannot sign out a newly authenticated session.
+    func invalidateSession(rejectedAccessToken: String) async throws -> Bool
+}
+
+public extension Notification.Name {
+    static let authenticationSessionDidExpire = Notification.Name(
+        "dev.rallyroo.authenticationSessionDidExpire"
+    )
+}
+
 public extension Authentication {
     func signIn(invitationCode: String?) async throws -> AuthSession {
         try await signIn(with: .google, invitationCode: invitationCode)
