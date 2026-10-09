@@ -33,6 +33,31 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertFalse(app.textFields["Invitation code (optional)"].exists)
     }
 
+    func testExpiredSessionReturnsToLoginWithoutRestartingTheApp() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPIRE_SESSION"] = "1"
+        app.launchArguments += ["-RallyrooLastAuthenticationProvider", "apple"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Your session expired. Sign in again to continue."].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].exists)
+        XCTAssertTrue(app.staticTexts["Previously signed in with Apple"].exists)
+    }
+
+    func testLoginRemindsTheMemberWhichProviderTheyUsedPreviously() {
+        let app = XCUIApplication()
+        app.launchEnvironment["RALLYROO_UI_TEST_RESET_STORAGE"] = "1"
+        app.launchEnvironment["RALLYROO_DATA_MODE"] = "remote"
+        app.launchEnvironment["RALLYROO_REMOTE_BASE_URL"] = "http://127.0.0.1:3199"
+        app.launchArguments += ["-RallyrooLastAuthenticationProvider", "google"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Welcome to Rallyroo"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Previously signed in with Google"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["last-sign-in-provider"].exists)
+    }
+
     func testInvitationDeepLinkKeepsBothOAuthControlsEnabledAndCanBeIgnored() throws {
         guard #available(iOS 16.4, *) else { throw XCTSkip("Opening URLs requires iOS 16.4") }
         let app = XCUIApplication()

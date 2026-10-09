@@ -41,7 +41,18 @@ struct SessionGateView<Content: View>: View {
                 SignInView(viewModel: viewModel)
             }
         }
-        .task { await viewModel.restoreSession() }
+        .task {
+            await viewModel.restoreSession()
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_EXPIRE_SESSION"] == "1" {
+                try? await Task.sleep(for: .milliseconds(500))
+                NotificationCenter.default.post(name: .authenticationSessionDidExpire, object: nil)
+            }
+            #endif
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .authenticationSessionDidExpire)) { _ in
+            Task { await viewModel.sessionDidExpire() }
+        }
         .onOpenURL { viewModel.acceptInvitationURL($0) }
     }
 }
@@ -51,22 +62,38 @@ final class SessionGateViewModel: ObservableObject {
     @Published private(set) var session: AuthSession?
     @Published private(set) var isLoading = true
     @Published private(set) var errorMessage: String?
+    @Published private(set) var lastUsedProvider: AuthenticationProvider?
     @Published var invitationCode = ""
     private let authentication: any Authentication
     private let onSessionEnded: @Sendable () async -> Void
+    private let preferences: UserDefaults
+
+    private static let lastUsedProviderKey = "RallyrooLastAuthenticationProvider"
 
     init(
         authentication: any Authentication,
-        onSessionEnded: @escaping @Sendable () async -> Void = {}
+        onSessionEnded: @escaping @Sendable () async -> Void = {},
+        preferences: UserDefaults = .standard
     ) {
         self.authentication = authentication
         self.onSessionEnded = onSessionEnded
+        self.preferences = preferences
+        lastUsedProvider = preferences.string(forKey: Self.lastUsedProviderKey)
+            .flatMap(AuthenticationProvider.init(rawValue:))
     }
 
     func restoreSession() async {
         session = try? await authentication.currentSession()
         if session == nil { await onSessionEnded() }
         isLoading = false
+    }
+
+    func sessionDidExpire() async {
+        guard session != nil else { return }
+        session = nil
+        isLoading = false
+        errorMessage = "Your session expired. Sign in again to continue."
+        await onSessionEnded()
     }
 
     func signOut() async {
@@ -84,6 +111,8 @@ final class SessionGateViewModel: ObservableObject {
         await onSessionEnded()
         session = nil
         errorMessage = nil
+        lastUsedProvider = nil
+        preferences.removeObject(forKey: Self.lastUsedProviderKey)
     }
 
     func acceptInvitationURL(_ url: URL) {
@@ -108,6 +137,8 @@ final class SessionGateViewModel: ObservableObject {
                 with: provider,
                 invitationCode: invitationCode
             )
+            lastUsedProvider = provider
+            preferences.set(provider.rawValue, forKey: Self.lastUsedProviderKey)
             errorMessage = nil
         } catch {
             errorMessage = invitationCode == nil
@@ -181,6 +212,15 @@ private struct SignInView: View {
                     .background(AppTheme.purple.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
                     .accessibilityIdentifier("family-invitation-status")
                 }
+                if let provider = viewModel.lastUsedProvider {
+                    Label(
+                        "Previously signed in with \(provider.displayName)",
+                        systemImage: "clock.arrow.circlepath"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.purple)
+                    .accessibilityIdentifier("last-sign-in-provider")
+                }
                 VStack(spacing: 12) {
                     AppleOAuthButton {
                         Task {
@@ -242,6 +282,15 @@ private struct SignInView: View {
             .accessibilityLabel("Terms of Service")
         Link("Privacy", destination: URL(string: "https://rallyroo.dev/privacy")!)
             .accessibilityLabel("Privacy Policy")
+    }
+}
+
+private extension AuthenticationProvider {
+    var displayName: String {
+        switch self {
+        case .apple: "Apple"
+        case .google: "Google"
+        }
     }
 }
 

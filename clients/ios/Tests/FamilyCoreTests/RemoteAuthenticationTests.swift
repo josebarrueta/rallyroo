@@ -77,6 +77,44 @@ final class RemoteAuthenticationTests: XCTestCase {
         XCTAssertEqual(restored, storedSession)
     }
 
+    func testInvalidatingAnExpiredSessionClearsMemoryAndStoredCredentials() async throws {
+        let storedSession = AuthSession(
+            accountID: "account-1",
+            displayName: "Alex",
+            role: .parent,
+            accessToken: "expired-token"
+        )
+        let sessionStore = TestAuthSessionStore()
+        try await sessionStore.save(storedSession)
+        let authentication = RemoteAuthentication(
+            baseURL: URL(string: "https://api.example.com")!,
+            transport: OfflineAuthenticationHTTPTransport(),
+            webSession: StubOAuthWebSession(
+                callbackURL: URL(string: "rallyroo://oauth-callback")!
+            ),
+            sessionStore: sessionStore
+        )
+        let restoredSession = try await authentication.currentSession()
+        XCTAssertEqual(restoredSession, storedSession)
+
+        let ignoredStaleResponse = try await authentication.invalidateSession(
+            rejectedAccessToken: "an-older-token"
+        )
+        XCTAssertFalse(ignoredStaleResponse)
+        let stillActiveSession = try await authentication.currentSession()
+        XCTAssertEqual(stillActiveSession, storedSession)
+
+        let invalidated = try await authentication.invalidateSession(
+            rejectedAccessToken: "expired-token"
+        )
+        XCTAssertTrue(invalidated)
+
+        let invalidatedSession = try await authentication.currentSession()
+        let persistedSession = try await sessionStore.load()
+        XCTAssertNil(invalidatedSession)
+        XCTAssertNil(persistedSession)
+    }
+
     func testDeletesTheRemoteAccountAndClearsTheStoredSession() async throws {
         let storedSession = AuthSession(
             accountID: "account-1",
