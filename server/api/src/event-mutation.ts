@@ -551,7 +551,7 @@ function eventVersionSignature(event: FamilyEvent): string {
     recurrence: event.recurrence ? {
       frequency: event.recurrence.frequency,
       interval: event.recurrence.interval,
-      weekdays: [...(event.recurrence.weekdays ?? [])].sort((left, right) => left - right),
+      weekdays: canonicalWeekdays(event.recurrence.weekdays),
       timeZone: event.recurrence.timeZone ?? null,
       endDate: eventVersionSecond(event.recurrence.endDate),
     } : null,
@@ -565,6 +565,10 @@ function eventVersionSecond(value: string): number {
   return Math.floor(new Date(value).getTime() / 1_000);
 }
 
+function canonicalWeekdays(weekdays: number[] | undefined): number[] {
+  return [...new Set(weekdays ?? [])].sort((left, right) => left - right);
+}
+
 function pastRowIsPreserved(
   existing: FamilyEvent,
   planned: FamilyEvent,
@@ -575,8 +579,8 @@ function pastRowIsPreserved(
     ? plannedRecurrence != null
       && existingRecurrence.frequency === plannedRecurrence.frequency
       && existingRecurrence.interval === plannedRecurrence.interval
-      && JSON.stringify(existingRecurrence.weekdays ?? null)
-        === JSON.stringify(plannedRecurrence.weekdays ?? null)
+      && JSON.stringify(canonicalWeekdays(existingRecurrence.weekdays))
+        === JSON.stringify(canonicalWeekdays(plannedRecurrence.weekdays))
       && (existingRecurrence.timeZone ?? null) === (plannedRecurrence.timeZone ?? null)
       && new Date(plannedRecurrence.endDate) <= new Date(existingRecurrence.endDate)
     : plannedRecurrence == null;
