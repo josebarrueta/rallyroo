@@ -75,6 +75,23 @@ function weeklyOccurrenceStarts(
   return starts;
 }
 
+export function isSameEventLocalDate(
+  left: Date,
+  right: Date,
+  timeZone?: string,
+): boolean {
+  if (!timeZone) {
+    return left.getUTCFullYear() === right.getUTCFullYear()
+      && left.getUTCMonth() === right.getUTCMonth()
+      && left.getUTCDate() === right.getUTCDate();
+  }
+  const leftParts = zonedParts(left, timeZone);
+  const rightParts = zonedParts(right, timeZone);
+  return leftParts.year === rightParts.year
+    && leftParts.month === rightParts.month
+    && leftParts.day === rightParts.day;
+}
+
 interface ZonedParts {
   year: number;
   month: number;

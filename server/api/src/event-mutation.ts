@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Account, EventConflict, FamilyEvent, FamilyMember } from "./domain.js";
-import { eventOccurrenceStarts } from "./event-recurrence.js";
+import { eventOccurrenceStarts, isSameEventLocalDate } from "./event-recurrence.js";
 import type {
   EventMutationPersistence,
   EventMutationResult,
@@ -437,6 +437,9 @@ function validateConcreteRecurringPlan(input: {
     throw new EventMutationError("invalid_recurring_edit", 400);
   }
   const existingByID = new Map(input.events.map((event) => [event.id.toLowerCase(), event]));
+  const affectedIDSet = new Set(affectedIDs);
+  const seriesTimeZone = input.source.recurrence?.timeZone
+    ?? input.seriesRows.find((event) => event.recurrence?.timeZone)?.recurrence?.timeZone;
   const upsertIDs = new Set<string>();
   const upserts = input.upserts.map((candidate) => {
     const id = candidate.id.toLowerCase();
@@ -467,12 +470,21 @@ function validateConcreteRecurringPlan(input: {
     if (new Date(event.endTime) <= new Date(event.startTime)) {
       throw new EventMutationError("invalid_recurring_edit", 400);
     }
-    const plannedStartsInPast = new Date(event.startTime) < input.occurrenceStart;
+    const plannedStart = new Date(event.startTime);
+    const plannedStartsInPast = plannedStart < input.occurrenceStart;
     const existingStartsInPast = existing
       ? new Date(existing.startTime) < input.occurrenceStart
       : false;
-    if ((plannedStartsInPast && !existingStartsInPast)
-      || (existingStartsInPast && !pastRowIsPreserved(existing!, event))) {
+    const isAffectedOnScheduledDay = affectedIDSet.has(id)
+      && isSameEventLocalDate(
+        plannedStart,
+        input.occurrenceStart,
+        event.recurrence?.timeZone ?? seriesTimeZone,
+      );
+    if ((plannedStartsInPast && !existingStartsInPast && !isAffectedOnScheduledDay)
+      || (existingStartsInPast
+        && !pastRowIsPreserved(existing!, event)
+        && !isAffectedOnScheduledDay)) {
       throw new EventMutationError("invalid_recurring_edit", 409);
     }
     return event;
