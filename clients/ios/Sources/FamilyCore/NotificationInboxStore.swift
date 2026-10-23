@@ -47,6 +47,7 @@ public protocol NotificationInboxStore: Sendable {
     func markAllRead() async throws
     func markRead(id: UUID) async throws
     func delete(id: UUID) async throws
+    func deleteAll() async throws
     func ingest(_ notification: InboxNotification) async throws
 }
 
@@ -59,6 +60,12 @@ public extension NotificationInboxStore {
 
     func unreadCount() async throws -> Int {
         try await notifications().filter { $0.readAt == nil }.count
+    }
+
+    func deleteAll() async throws {
+        for item in try await notifications() {
+            try await delete(id: item.id)
+        }
     }
 }
 
@@ -98,6 +105,9 @@ public actor LocalNotificationInboxStore: NotificationInboxStore {
         var records = try await notifications()
         records.removeAll { $0.id == id }
         try persist(records)
+    }
+    public func deleteAll() async throws {
+        try persist([])
     }
     public func ingest(_ notification: InboxNotification) async throws {
         var records = try await notifications()
@@ -201,6 +211,14 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
             let count = envelope.unreadCount.map { max(0, $0 - (wasUnread ? 1 : 0)) }
             try await saveCache(envelope.records.filter { $0.id != id }, account: envelope.accountID, unreadCount: count)
         }
+    }
+
+    public func deleteAll() async throws {
+        let account = try await accountID()
+        let response = try await transport.send(HTTPRequest(method: .delete, url: notificationsURL))
+        try response.requireSuccess()
+        guard try await accountID() == account else { throw CancellationError() }
+        try await saveCache([], account: account, unreadCount: 0)
     }
 
     public func markRead(id: UUID) async throws {

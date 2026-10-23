@@ -156,6 +156,21 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertFalse(try visibleTabBarHasBadge(in: app))
     }
 
+    func testDeleteAllAlertsClearsTheInboxAndVisibleBadge() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        app.buttons["alerts-delete-all"].tap()
+        XCTAssertTrue(app.buttons["Delete All Alerts"].waitForExistence(timeout: 5))
+        app.buttons["Delete All Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["You're all caught up"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
+        XCTAssertFalse(try visibleTabBarHasBadge(in: app))
+    }
+
     func testDeletingTheUnreadAlertClearsTheVisibleBadge() throws {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"

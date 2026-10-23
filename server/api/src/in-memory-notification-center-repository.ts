@@ -77,6 +77,14 @@ export class InMemoryNotificationCenterRepository implements NotificationCenterR
     return false;
   }
 
+  async deleteAllInboxRecords(familyID: string, memberID: string): Promise<void> {
+    for (const [key, record] of this.recordsByDeduplication) {
+      if (record.familyID !== familyID || record.memberID !== memberID) continue;
+      this.recordsByDeduplication.delete(key);
+      this.deliveryStatus.delete(record.id);
+    }
+  }
+
   async markAllInboxRecordsRead(familyID: string, memberID: string, readAt: Date): Promise<void> {
     for (const [key, record] of this.recordsByDeduplication) {
       if (record.familyID === familyID && record.memberID === memberID && record.readAt === null) {

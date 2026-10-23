@@ -80,6 +80,39 @@ final class NotificationInboxStoreTests: XCTestCase {
         XCTAssertEqual(requests[4].url.path, "/v1/notifications/read-all")
     }
 
+    func testRemoteDeleteAllUsesBulkEndpointAndClearsTheAccountCache() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cacheURL = directory.appendingPathComponent("inbox.json")
+        let record = InboxNotification(
+            id: UUID(), kind: .scheduleUpdate, title: "Update", body: "Review it.",
+            destination: .init(kind: .event, id: "event"), occurredAt: .now, readAt: nil
+        )
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let transport = NotificationHTTPTransport(responses: [
+            HTTPResponse(statusCode: 200, body: try encoder.encode([record])),
+            HTTPResponse(statusCode: 204),
+        ])
+        let store = RemoteNotificationInboxStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: transport,
+            cacheURL: cacheURL, accountID: { "member-1" }
+        )
+        _ = try await store.notifications()
+        try await store.deleteAll()
+
+        let offline = RemoteNotificationInboxStore(
+            baseURL: URL(string: "https://api.example.com")!, transport: FailingNotificationHTTPTransport(),
+            cacheURL: cacheURL, accountID: { "member-1" }
+        )
+        let cachedNotifications = try await offline.notifications()
+        let cachedUnreadCount = try await offline.unreadCount()
+        XCTAssertEqual(cachedNotifications, [])
+        XCTAssertEqual(cachedUnreadCount, 0)
+        let requests = await transport.recordedRequests()
+        XCTAssertEqual(requests.map(\.method), [.get, .delete])
+        XCTAssertEqual(requests[1].url.path, "/v1/notifications")
+    }
+
     func testDayBriefNotificationDecodesWithoutInvalidatingInbox() throws {
         let data = Data("""
         [{"id":"ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABC127","kind":"day_brief","title":"Your Monday","body":"Two drives today.","destination":{"kind":"day_brief","id":"2026-10-05"},"occurredAt":"2026-10-05T14:00:00Z","readAt":null}]
@@ -114,6 +147,14 @@ final class NotificationInboxStoreTests: XCTestCase {
         try await store.delete(id: id)
         let deleted = try await store.notifications()
         XCTAssertEqual(deleted, [])
+        try await store.ingest(record)
+        try await store.ingest(InboxNotification(
+            id: UUID(), kind: .savedConflict, title: "Conflict", body: "Overlapping plans.",
+            destination: .init(kind: .event, id: "event-2"), occurredAt: .now, readAt: nil
+        ))
+        try await store.deleteAll()
+        let deletedAll = try await store.notifications()
+        XCTAssertEqual(deletedAll, [])
     }
 
     func testOfflineCacheIsScopedToTheSignedInAccount() async throws {

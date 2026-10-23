@@ -55,6 +55,7 @@ export interface NotificationCenterRepository {
     familyID: string, memberID: string, recordID: string, readAt: Date,
   ): Promise<boolean>;
   deleteInboxRecord(familyID: string, memberID: string, recordID: string): Promise<boolean>;
+  deleteAllInboxRecords(familyID: string, memberID: string): Promise<void>;
   markAllInboxRecordsRead(familyID: string, memberID: string, readAt: Date): Promise<void>;
   claimNotificationDeliveries(now: Date, limit: number, recordIDs?: string[]): Promise<ClaimedNotificationDelivery[]>;
   deviceTokensForMembers(familyID: string, memberIDs: string[]): Promise<string[]>;
@@ -189,6 +190,10 @@ export class NotificationCenterModule {
   async delete(account: Account, recordID: string): Promise<boolean> {
     if (!recordID) throw new Error("invalid_notification_delete");
     return this.repository.deleteInboxRecord(account.familyID, account.memberID, recordID);
+  }
+
+  async deleteAll(account: Account): Promise<void> {
+    return this.repository.deleteAllInboxRecords(account.familyID, account.memberID);
   }
 
   async markAllRead(account: Account, readAt = new Date()): Promise<void> {
