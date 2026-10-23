@@ -53,6 +53,11 @@ describe("NotificationCenterModule", () => {
     expect(await center.unreadCount(kid)).toBe(1);
     await center.markAllRead(parent); // Replays remain idempotent.
     expect(await center.unreadCount(kid)).toBe(1);
+    await center.deleteAll(parent);
+    expect(await center.list(parent)).toEqual([]);
+    expect(await center.unreadCount(parent)).toBe(0);
+    expect(await center.unreadCount(kid)).toBe(1);
+    await center.deleteAll(parent); // Empty inbox deletion is idempotent.
   });
 
   it("records one private inbox item per recipient and replays idempotently", async () => {

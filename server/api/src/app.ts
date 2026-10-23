@@ -1688,6 +1688,13 @@ export function buildApp({
     return reply.code(204).send();
   });
 
+  app.delete("/v1/notifications", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    await notificationCenter.deleteAll(account);
+    return reply.code(204).send();
+  });
+
   app.patch("/v1/notifications/:id/read", async (request, reply) => {
     const account = requiredAccount(request);
     if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });

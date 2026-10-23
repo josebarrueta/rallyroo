@@ -590,6 +590,51 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     );
   });
 
+  it("bulk-deletes only the member's full inbox and cancels its delivery work", async () => {
+    const repository = repositoryForTest();
+    const parent = await repository.provisionParentAccount("bulk-delete-parent", "Parent");
+    const other = await repository.provisionParentAccount("bulk-delete-other", "Other");
+    const center = new NotificationCenterModule(repository);
+    const intent = {
+      familyID: parent.familyID, recipientMemberIDs: [parent.memberID],
+      kind: "schedule_update" as const, deduplicationKey: "bulk-delete",
+      title: "Update", body: "Review it.", destination: { kind: "event" as const, id: "event" },
+      occurredAt: new Date(),
+    };
+    const records = [];
+    for (let index = 0; index < 105; index++) {
+      records.push(...await center.record({ ...intent, deduplicationKey: `bulk-${index}` }));
+    }
+    const [protectedRecord] = await center.record({
+      ...intent, familyID: other.familyID, recipientMemberIDs: [other.memberID],
+    });
+    await center.markRead(parent, records[0]!.id);
+    await repository.claimNotificationDeliveries(new Date(Date.now() + 60_000), 1, [records[1]!.id]);
+    await center.deleteAll(parent);
+    await center.deleteAll(parent);
+    expect(await center.list(parent)).toEqual([]);
+    expect(await center.unreadCount(parent)).toBe(0);
+    expect((await center.list(other)).map((record) => record.id)).toEqual([protectedRecord!.id]);
+    expect(await repository.notificationDeliveryOutcomes(records.map((record) => record.id)))
+      .toEqual(Array(105).fill("terminal_failure"));
+    const replay = await center.record({ ...intent, deduplicationKey: "bulk-0" });
+    expect(replay[0]!.id).toBe(records[0]!.id);
+    expect(await center.list(parent)).toEqual([]);
+    const pool = new Pool({ connectionString: databaseURL });
+    try {
+      const result = await pool.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM member_notification_inbox WHERE family_id = $1 AND deleted_at IS NOT NULL",
+        [parent.familyID],
+      );
+      expect(result.rows[0]!.count).toBe("105");
+      // Keep the suite's later global retention assertions independent of these fixtures.
+      await pool.query("DELETE FROM member_notification_inbox WHERE family_id = ANY($1::text[])",
+        [[parent.familyID, other.familyID]]);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("prunes member inbox records after the retention window", async () => {
     const repository = repositoryForTest();
     const app = buildApp({ identityProvider, repository });

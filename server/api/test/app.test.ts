@@ -420,6 +420,14 @@ describe("Rallyroo API", () => {
       method: "DELETE", url: `/v1/notifications/${record!.id}`,
       headers: { authorization: "Bearer parent-token" },
     })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: "/v1/notifications" })).statusCode).toBe(401);
+    expect((await app.inject({
+      method: "DELETE", url: "/v1/notifications", headers: { authorization: "Bearer parent-token" },
+    })).statusCode).toBe(204);
+    expect((await app.inject({
+      method: "GET", url: "/v1/notifications", headers: { authorization: "Bearer parent-token" },
+    })).json()).toEqual([]);
+    expect((await unread("kid-token")).json()).toEqual({ count: 1 });
     await app.close();
   });
 

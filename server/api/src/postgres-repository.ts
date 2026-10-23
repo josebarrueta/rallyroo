@@ -2567,6 +2567,20 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     return result.rowCount === 1;
   }
 
+  async deleteAllInboxRecords(familyID: string, memberID: string): Promise<void> {
+    await this.pool.query(
+      `WITH deleted AS (
+         UPDATE member_notification_inbox SET deleted_at = now()
+         WHERE family_id = $1 AND member_id = $2 AND deleted_at IS NULL
+         RETURNING id
+       )
+       UPDATE member_notification_delivery d SET status = 'terminal_failure',
+         claimed_at = NULL, last_error_category = 'member_deleted'
+       FROM deleted WHERE d.notification_id = deleted.id`,
+      [familyID, memberID],
+    );
+  }
+
   async markInboxRecordRead(
     familyID: string, memberID: string, recordID: string, readAt: Date,
   ): Promise<boolean> {

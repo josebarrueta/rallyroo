@@ -13,6 +13,7 @@ struct NotificationsView: View {
     @State private var errorMessage: String?
     @State private var presentedDayBrief: DayBrief?
     @State private var isPresentingDayBrief = false
+    @State private var isPresentingDeleteAllConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -86,6 +87,24 @@ struct NotificationsView: View {
                         Task { try? await conflictStore.clear(); conflicts = [] }
                     }
                 }
+                if !inbox.isEmpty || !conflicts.isEmpty {
+                    Button("Delete all", role: .destructive) {
+                        isPresentingDeleteAllConfirmation = true
+                    }
+                    .accessibilityIdentifier("alerts-delete-all")
+                }
+            }
+            .confirmationDialog(
+                "Delete all alerts?",
+                isPresented: $isPresentingDeleteAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All Alerts", role: .destructive) {
+                    Task { await deleteAllAlerts() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes every alert and saved conflict from your inbox.")
             }
             .tint(AppTheme.purple)
         }
@@ -158,6 +177,20 @@ struct NotificationsView: View {
         } catch {
             await load()
             errorMessage = "Couldn't delete this alert."
+        }
+    }
+
+    @MainActor private func deleteAllAlerts() async {
+        defer { onInboxChanged() }
+        do {
+            try await inboxStore.deleteAll()
+            try await conflictStore.clear()
+            inbox = []
+            conflicts = []
+            errorMessage = nil
+        } catch {
+            await load()
+            errorMessage = "Couldn't delete all alerts. Please try again."
         }
     }
 
