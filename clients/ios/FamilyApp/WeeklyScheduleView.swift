@@ -697,14 +697,18 @@ struct WeeklyScheduleView: View {
                     Label("Month", systemImage: viewport.mode == .month ? "checkmark" : "calendar")
                 }
             } label: {
-                Image(systemName: "calendar")
+                RallyrooToolbarLabel(title: "Today, Week, Month", systemImage: "calendar")
             }
             .accessibilityLabel("Today, Week, Month")
             .accessibilityIdentifier("schedule-view-menu")
-            Button { viewport.move(by: -1) } label: { Image(systemName: "chevron.left") }
+            Button { viewport.move(by: -1) } label: {
+                RallyrooToolbarLabel(title: "Previous \(viewport.mode.rawValue.lowercased())", systemImage: "chevron.left")
+            }
                 .accessibilityLabel("Previous \(viewport.mode.rawValue.lowercased())")
                 .accessibilityIdentifier("schedule-previous-page")
-            Button { viewport.move(by: 1) } label: { Image(systemName: "chevron.right") }
+            Button { viewport.move(by: 1) } label: {
+                RallyrooToolbarLabel(title: "Next \(viewport.mode.rawValue.lowercased())", systemImage: "chevron.right")
+            }
                 .accessibilityLabel("Next \(viewport.mode.rawValue.lowercased())")
                 .accessibilityIdentifier("schedule-next-page")
             Menu {
@@ -713,7 +717,7 @@ struct WeeklyScheduleView: View {
                     Button(member.name) { selectedParticipantID = member.id }
                  }
              } label: {
-                Image(systemName: "line.3.horizontal.decrease.circle")
+                RallyrooToolbarLabel(title: "Filter family members", systemImage: "line.3.horizontal.decrease.circle")
              }
             if allowsEditing && !viewModel.isShowingCachedEvents {
                 Menu {
@@ -726,7 +730,7 @@ struct WeeklyScheduleView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "plus")
+                    RallyrooToolbarLabel(title: "Add", systemImage: "plus")
                 }
                 .accessibilityLabel("Add")
                 .accessibilityIdentifier("schedule-create-menu")

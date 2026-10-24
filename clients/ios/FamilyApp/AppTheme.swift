@@ -8,6 +8,22 @@ enum AppTheme {
     static let background = Color(red: 1.00, green: 0.97, blue: 0.91)
 }
 
+/// Compact navigation actions share an accent and symbol treatment, leaving
+/// sizing and hit regions to the native toolbar. Titles remain available to VoiceOver.
+struct RallyrooToolbarLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .font(.body.weight(.medium))
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            .foregroundStyle(AppTheme.purple)
+            .accessibilityLabel(title)
+    }
+}
+
 extension Color {
     init(familyColorTag: String?) {
         switch familyColorTag?.lowercased() {

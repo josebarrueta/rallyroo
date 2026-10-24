@@ -14,6 +14,7 @@ struct NotificationsView: View {
     @State private var presentedDayBrief: DayBrief?
     @State private var isPresentingDayBrief = false
     @State private var isPresentingDeleteAllConfirmation = false
+    @State private var isUpdatingInbox = false
 
     var body: some View {
         NavigationStack {
@@ -79,25 +80,41 @@ struct NotificationsView: View {
                 }
             }
             .toolbar {
-                if unreadCount > 0 {
-                    Button("Mark all read") { Task { await markAllRead() } }
-                }
-                if !conflicts.isEmpty {
-                    Button("Clear saved conflicts") {
-                        Task { try? await conflictStore.clear(); conflicts = [] }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if unreadCount > 0 || !inbox.isEmpty || !conflicts.isEmpty {
+                        Menu {
+                            if unreadCount > 0 {
+                                Button {
+                                    Task { await markAllRead() }
+                                } label: {
+                                    Label("Mark all read", systemImage: "checkmark.circle")
+                                }
+                            }
+                            if !conflicts.isEmpty {
+                                Button {
+                                    Task { await clearSavedConflicts() }
+                                } label: {
+                                    Label("Clear saved conflicts", systemImage: "checkmark.rectangle.stack")
+                                }
+                            }
+                            if unreadCount > 0 || !conflicts.isEmpty { Divider() }
+                            Button(role: .destructive) {
+                                isPresentingDeleteAllConfirmation = true
+                            } label: {
+                                Label("Delete all alerts", systemImage: "trash")
+                            }
+                            .accessibilityIdentifier("alerts-delete-all")
+                        } label: {
+                            RallyrooToolbarLabel(title: "Alert actions", systemImage: "ellipsis")
+                        }
+                        .accessibilityIdentifier("alerts-actions-menu")
+                        .disabled(isUpdatingInbox)
                     }
-                }
-                if !inbox.isEmpty || !conflicts.isEmpty {
-                    Button("Delete all", role: .destructive) {
-                        isPresentingDeleteAllConfirmation = true
-                    }
-                    .accessibilityIdentifier("alerts-delete-all")
                 }
             }
-            .confirmationDialog(
+            .alert(
                 "Delete all alerts?",
-                isPresented: $isPresentingDeleteAllConfirmation,
-                titleVisibility: .visible
+                isPresented: $isPresentingDeleteAllConfirmation
             ) {
                 Button("Delete All Alerts", role: .destructive) {
                     Task { await deleteAllAlerts() }
@@ -181,7 +198,9 @@ struct NotificationsView: View {
     }
 
     @MainActor private func deleteAllAlerts() async {
-        defer { onInboxChanged() }
+        guard !isUpdatingInbox else { return }
+        isUpdatingInbox = true
+        defer { isUpdatingInbox = false; onInboxChanged() }
         do {
             try await inboxStore.deleteAll()
             try await conflictStore.clear()
@@ -194,7 +213,23 @@ struct NotificationsView: View {
         }
     }
 
+    @MainActor private func clearSavedConflicts() async {
+        guard !isUpdatingInbox else { return }
+        isUpdatingInbox = true
+        defer { isUpdatingInbox = false }
+        do {
+            try await conflictStore.clear()
+            conflicts = []
+            errorMessage = nil
+        } catch {
+            errorMessage = "Couldn't clear saved conflicts. Please try again."
+        }
+    }
+
     @MainActor private func markAllRead() async {
+        guard !isUpdatingInbox else { return }
+        isUpdatingInbox = true
+        defer { isUpdatingInbox = false }
         do {
             try await inboxStore.markAllRead()
             onInboxChanged()
