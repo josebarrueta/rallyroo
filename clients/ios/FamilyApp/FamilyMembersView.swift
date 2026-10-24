@@ -130,10 +130,12 @@ struct FamilyMembersView: View {
                             Button("Invite a parent") { invitationRequest = InvitationRequest(role: .parent) }
                             Button("Invite a kid") { invitationRequest = InvitationRequest(role: .kid) }
                         } label: {
-                            Image(systemName: "person.badge.plus")
+                            RallyrooToolbarLabel(title: "Invite family member", systemImage: "person.badge.plus")
                         }
                     }
-                    Button { isAddingMember = true } label: { Image(systemName: "plus") }
+                    Button { isAddingMember = true } label: {
+                        RallyrooToolbarLabel(title: "Add family member", systemImage: "plus")
+                    }
                 }
             }
             .task { await viewModel.load() }

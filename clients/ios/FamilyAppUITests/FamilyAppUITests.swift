@@ -151,6 +151,7 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Alerts"].tap()
         XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        app.buttons["alerts-actions-menu"].tap()
         app.buttons["Mark all read"].tap()
         XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
         XCTAssertFalse(try visibleTabBarHasBadge(in: app))
@@ -163,12 +164,43 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Alerts"].tap()
         XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+        app.buttons["alerts-actions-menu"].tap()
         app.buttons["alerts-delete-all"].tap()
         XCTAssertTrue(app.buttons["Delete All Alerts"].waitForExistence(timeout: 5))
         app.buttons["Delete All Alerts"].tap()
         XCTAssertTrue(app.staticTexts["You're all caught up"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["alerts-actions-menu"].exists)
         XCTAssertTrue(app.staticTexts["0 unread Alerts"].waitForExistence(timeout: 5))
         XCTAssertFalse(try visibleTabBarHasBadge(in: app))
+    }
+
+    func testAlertActionsStayCompactAtLargestTextSizeAndDeletionCanBeCancelled() throws {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        let actions = app.buttons["alerts-actions-menu"]
+        XCTAssertTrue(actions.waitForExistence(timeout: 5))
+        XCTAssertTrue(actions.isHittable)
+        // Native toolbar chrome owns the hit region; verify compact visible bounds.
+        XCTAssertLessThanOrEqual(actions.frame.width, 64)
+        XCTAssertLessThanOrEqual(actions.frame.height, 64)
+        XCTAssertFalse(app.buttons["Mark all read"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Alerts at largest accessibility text size"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        actions.tap()
+        XCTAssertTrue(app.buttons["Mark all read"].waitForExistence(timeout: 5))
+        app.buttons["alerts-delete-all"].tap()
+        XCTAssertTrue(app.buttons["Delete All Alerts"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(actions.waitForExistence(timeout: 5))
+        actions.tap()
+        // An unread-only action still being available proves Cancel preserved read state.
+        XCTAssertTrue(app.buttons["Mark all read"].waitForExistence(timeout: 5))
     }
 
     func testDeletingTheUnreadAlertClearsTheVisibleBadge() throws {
@@ -997,7 +1029,7 @@ final class FamilyAppUITests: XCTestCase {
     private func addFamilyMember(named name: String, in app: XCUIApplication) {
         app.tabBars.buttons["Family"].tap()
         XCTAssertTrue(app.navigationBars["Family"].waitForExistence(timeout: 5))
-        app.navigationBars["Family"].buttons["Add"].tap()
+        app.navigationBars["Family"].buttons["Add family member"].tap()
         XCTAssertTrue(app.navigationBars["Add Family Member"].waitForExistence(timeout: 5))
         app.textFields["Name"].tap()
         app.textFields["Name"].typeText(name)

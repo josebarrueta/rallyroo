@@ -306,8 +306,10 @@ private struct SavedPlacesView: View {
         }
         .navigationTitle("Saved places")
         .toolbar {
-            Button { isAdding = true } label: { Image(systemName: "plus") }
-                .accessibilityLabel("Add saved place")
+            Button { isAdding = true } label: {
+                RallyrooToolbarLabel(title: "Add saved place", systemImage: "plus")
+            }
+            .accessibilityLabel("Add saved place")
         }
         .task { await load() }
         .refreshable { await load() }
@@ -567,8 +569,10 @@ struct CalendarSourcesView: View {
         }
         .navigationTitle("Calendars")
         .toolbar {
-            Button { isAdding = true } label: { Image(systemName: "plus") }
-                .disabled(members.isEmpty)
+            Button { isAdding = true } label: {
+                RallyrooToolbarLabel(title: "Add calendar", systemImage: "plus")
+            }
+            .disabled(members.isEmpty)
         }
         .task { await load() }
         .sheet(item: $selectedSource) { source in
@@ -1068,8 +1072,11 @@ private struct ExpenseLedgerView: View {
             }
         }
         .navigationTitle("Expenses")
-        .toolbar { Button { isAdding = true } label: { Image(systemName: "plus") }
-            .accessibilityLabel("Add expense") }
+        .toolbar {
+            Button { isAdding = true } label: {
+                RallyrooToolbarLabel(title: "Add expense", systemImage: "plus")
+            }
+        }
         .task { await load() }
         .refreshable { await load() }
         .sheet(isPresented: $isAdding) {
@@ -1605,10 +1612,10 @@ private struct ShoppingCatalogView: View {
             if canManage {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button { isAddingRoutine = true } label: {
-                        Label("Add shopping routine", systemImage: "storefront")
+                        RallyrooToolbarLabel(title: "Add shopping routine", systemImage: "storefront")
                     }
                     Button { isAddingItem = true } label: {
-                        Label("Add pantry item", systemImage: "plus")
+                        RallyrooToolbarLabel(title: "Add pantry item", systemImage: "plus")
                     }
                 }
             }

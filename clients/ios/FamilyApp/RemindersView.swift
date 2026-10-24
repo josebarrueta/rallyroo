@@ -53,7 +53,7 @@ struct RemindersView: View {
                             alertLeadTime: .atDueTime
                         )
                     } label: {
-                        Label("Add Reminder", systemImage: "plus")
+                        RallyrooToolbarLabel(title: "Add Reminder", systemImage: "plus")
                     }
                 }
             }
