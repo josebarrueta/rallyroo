@@ -292,9 +292,11 @@ private struct SavedPlacesView: View {
                                 .foregroundStyle(.tertiary)
                         }
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(canEdit(place) ? "Edit this saved place." : "This family place can only be changed by a parent.")
+                .accessibilityValue(canEdit(place) ? "Editable" : "Read only")
                 .swipeActions {
                     if canEdit(place) {
                         Button("Delete", role: .destructive) {
@@ -406,6 +408,7 @@ private struct SavedPlaceEditor: View {
                             Text("Family").tag(SavedPlaceVisibility.family)
                             Text("Only me").tag(SavedPlaceVisibility.personal)
                         }
+                        .accessibilityIdentifier("saved-place-visibility")
                     }
                 }
                 Section("Address") {

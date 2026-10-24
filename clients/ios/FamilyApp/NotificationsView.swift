@@ -19,7 +19,7 @@ struct NotificationsView: View {
     var body: some View {
         NavigationStack {
             List {
-                RallyrooHeader(title: "Alerts", subtitle: "Updates, reminders, and changes for you.")
+                RallyrooHeader(title: nil, subtitle: "Updates, reminders, and changes for you.")
                     .listRowBackground(Color.clear)
                 Text("\(unreadCount) unread Alerts")
                     .font(.subheadline)

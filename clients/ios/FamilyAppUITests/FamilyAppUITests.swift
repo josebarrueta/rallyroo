@@ -1037,6 +1037,118 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 5))
     }
 
+    func testParentCanReachAndManageSavedPlacesFromSettings() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "parent"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["saved-place-visibility"].exists)
+        fillSavedPlace(named: "Practice field", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+        let saved = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Practice field")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertEqual(saved.value as? String, "Editable")
+        saved.tap()
+        XCTAssertTrue(app.navigationBars["Edit place"].waitForExistence(timeout: 5))
+        let name = app.textFields["Name, such as Home"]
+        name.tap()
+        name.typeText(" west")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Practice field west"].waitForExistence(timeout: 5))
+    }
+
+    func testKidCanSavePersonalPlaceButCannotEditFamilyPlace() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "kid"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Family home")).firstMatch.tap()
+        XCTAssertFalse(app.navigationBars["Edit place"].exists)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["saved-place-visibility"].exists)
+        fillSavedPlace(named: "My practice field", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+        let saved = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "My practice field")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertEqual(saved.value as? String, "Editable")
+        XCTAssertTrue(app.staticTexts["Only me"].exists)
+        saved.tap()
+        XCTAssertTrue(app.navigationBars["Edit place"].waitForExistence(timeout: 5))
+    }
+
+    func testFailedSavedPlaceSaveKeepsTheDraftVisible() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "failure"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        fillSavedPlace(named: "Not saved", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["The saved place could not be saved."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Add place"].exists)
+        XCTAssertEqual(app.textFields["Name, such as Home"].value as? String, "Not saved")
+    }
+
+    func testAlertsUsefulContentIsVisibleWithLargestTextAndInLandscape() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        let unread = app.staticTexts["alerts-unread-count"]
+        XCTAssertTrue(unread.waitForExistence(timeout: 5))
+        XCTAssertTrue(unread.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["rallyroo-brand-header"].exists)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(unread.isHittable)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Alerts landscape maximum text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let actions = app.buttons["alerts-actions-menu"]
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: actions)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+    }
+
+    func testScheduleUsefulContentIsVisibleWithLargestText() {
+        let app = localApp()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let today = app.staticTexts[Date.now.formatted(.dateTime.weekday(.wide).month().day())]
+        XCTAssertTrue(today.waitForExistence(timeout: 5))
+        XCTAssertTrue(today.isHittable)
+        XCTAssertFalse(app.staticTexts["Let's jam!"].exists)
+        XCTAssertTrue(app.buttons["schedule-create-menu"].isHittable)
+    }
+
+    private func openSavedPlaces(in app: XCUIApplication) {
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let places = app.buttons["Saved places"]
+        for _ in 0..<5 where !places.isHittable { app.swipeUp() }
+        XCTAssertTrue(places.waitForExistence(timeout: 5))
+        places.tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+    }
+
+    private func fillSavedPlace(named name: String, in app: XCUIApplication) {
+        let nameField = app.textFields["Name, such as Home"]
+        nameField.tap()
+        nameField.typeText(name)
+        let address = app.textFields["Street address"]
+        address.tap()
+        address.typeText("123 Main Street")
+    }
+
     private func localApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"

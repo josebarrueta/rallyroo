@@ -564,7 +564,15 @@ struct FamilyActivityCoordinatorApp: App {
         switch configuration.dataMode {
         case .local:
             AppStorage.resetForUnifiedFamilyMembersIfNeeded()
+            #if DEBUG
+            let savedPlacesTestMode = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SAVED_PLACES"]
+            let savedPlacesTestRole: AccountRole = savedPlacesTestMode == "kid" ? .kid : .parent
+            authentication = savedPlacesTestMode == nil
+                ? LocalAuthentication()
+                : SavedPlacesUITestAuthentication(role: savedPlacesTestRole)
+            #else
             authentication = LocalAuthentication()
+            #endif
             #if DEBUG
             let testsOccurrenceLifecycle = ProcessInfo.processInfo.environment[
                 "RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"
@@ -613,7 +621,13 @@ struct FamilyActivityCoordinatorApp: App {
             scheduleDraftExtractor = nil
             #endif
             commuterStore = nil
+            #if DEBUG
+            travelPlanningStore = savedPlacesTestMode.map { mode in
+                SavedPlacesUITestStore(role: savedPlacesTestRole, failsToSave: mode == "failure")
+            }
+            #else
             travelPlanningStore = nil
+            #endif
             #if DEBUG
             let usesDayBriefUITest = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DAY_BRIEF"] == "1"
             dayBriefStore = usesDayBriefUITest ? DayBriefUITestStore() : nil
@@ -787,6 +801,8 @@ struct FamilyActivityCoordinatorApp: App {
                         shoppingStore: shoppingStore,
                         expenseStore: session.role == .parent ? expenseStore : nil,
                         receiptDraftStore: session.role == .parent ? receiptDraftStore : nil,
+                        locationSearch: locationSearch,
+                        canManageFamilyPlaces: session.role == .parent,
                         canManageShoppingCatalog: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
@@ -980,6 +996,86 @@ enum AppStorage {
 }
 
 #if DEBUG
+private actor SavedPlacesUITestAuthentication: Authentication {
+    private var session: AuthSession?
+    private let role: AccountRole
+
+    init(role: AccountRole) {
+        self.role = role
+        session = AuthSession(accountID: "local-\(role.rawValue)", displayName: "Local Member", role: role)
+    }
+    func currentSession() async throws -> AuthSession? { session }
+    func signIn(with provider: AuthenticationProvider, invitationCode: String?) async throws -> AuthSession {
+        let next = AuthSession(accountID: "local-\(role.rawValue)", displayName: "Local Member", role: role)
+        session = next
+        return next
+    }
+    func signOut() async throws { session = nil }
+    func deleteAccount() async throws { session = nil }
+}
+
+private actor SavedPlacesUITestStore: TravelPlanningStore {
+    private var places: [SavedPlace] = []
+    private let role: AccountRole
+    private let failsToSave: Bool
+    private var memberID: String { "local-\(role.rawValue)" }
+
+    init(role: AccountRole, failsToSave: Bool) {
+        self.role = role
+        self.failsToSave = failsToSave
+        places = [SavedPlace(
+            id: UUID(uuidString: "00000000-0000-4000-8000-000000000197")!,
+            ownerMemberID: nil, visibility: .family, label: "Family home",
+            waypoint: try! TravelWaypoint(location: "100 Main Street"), createdAt: .now, updatedAt: .now
+        )]
+    }
+    func savedPlaces() async throws -> [SavedPlace] { places }
+    func createSavedPlace(_ draft: SavedPlaceDraft) async throws -> SavedPlace {
+        try draft.validate()
+        guard !failsToSave else { throw URLError(.notConnectedToInternet) }
+        guard role == .parent || draft.visibility == .personal else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        let place = SavedPlace(
+            id: UUID(), ownerMemberID: draft.visibility == .personal ? memberID : nil,
+            visibility: draft.visibility, label: draft.label, waypoint: draft.waypoint,
+            createdAt: .now, updatedAt: .now
+        )
+        places.append(place)
+        return place
+    }
+    func updateSavedPlace(_ draft: SavedPlaceDraft, id: UUID) async throws -> SavedPlace {
+        guard let old = places.first(where: { $0.id == id }),
+              old.visibility == .family ? role == .parent : old.ownerMemberID == memberID else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        let updated = try await createSavedPlace(draft)
+        places.removeAll { $0.id == id || $0.id == updated.id }
+        let place = SavedPlace(
+            id: id, ownerMemberID: updated.ownerMemberID, visibility: updated.visibility,
+            label: updated.label, waypoint: updated.waypoint, createdAt: old.createdAt, updatedAt: .now
+        )
+        places.append(place)
+        return place
+    }
+    func deleteSavedPlace(id: UUID) async throws {
+        guard let place = places.first(where: { $0.id == id }),
+              place.visibility == .family ? role == .parent : place.ownerMemberID == memberID else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        places.removeAll { $0.id == id }
+    }
+    func travelPlan(for eventID: UUID) async throws -> EventTravelPlan? { nil }
+    func saveTravelPlan(_ draft: TravelPlanDraft, for eventID: UUID) async throws -> EventTravelPlan {
+        throw URLError(.unsupportedURL)
+    }
+    func deleteTravelPlan(for eventID: UUID) async throws { throw URLError(.unsupportedURL) }
+    func previewTravelPlan(for eventID: UUID) async throws -> TravelPreview { throw URLError(.unsupportedURL) }
+    func previewTravelPlan(_ draft: TravelPlanDraft, for eventID: UUID) async throws -> TravelPreview {
+        throw URLError(.unsupportedURL)
+    }
+}
+
 private actor DayBriefUITestStore: DayBriefStore {
     private var savedPreferences: DayBriefPreferences?
 
