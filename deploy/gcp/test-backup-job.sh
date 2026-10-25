@@ -133,4 +133,6 @@ if env FAIL_RESTORE=1 bash "$scratch/verify-restore.sh" >/dev/null 2>&1; then
   echo 'Expected restore failure' >&2; exit 1
 fi
 [[ "$(grep -c '^dropdb$' "$scratch/calls")" == 2 ]]
-echo 'Backup job: daily timer, retention, failed-upload safety and isolated restore checks passed.'
+PYTHONDONTWRITEBYTECODE=1 python3 ./test-backup-monitor.py
+for file in backup-monitor/*.sh; do bash -n "$file"; done
+echo 'Backup job: daily timer, retention, failed-upload safety, monitor and isolated restore checks passed.'

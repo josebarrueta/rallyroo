@@ -5,6 +5,9 @@ Wants=k3s.service
 
 [Service]
 Type=oneshot
+StateDirectory=rallyroo-backup
+StateDirectoryMode=0700
 ExecStart=/opt/rallyroo/backups/verify-restore.sh
+ExecStartPost=/usr/bin/touch /var/lib/rallyroo-backup/verify-ok
 StandardOutput=journal
 StandardError=journal

@@ -2,6 +2,7 @@ export interface Environment {
   FLUX_HMAC_SECRET: string;
   RESEND_API_KEY: string;
   ALERT_RECIPIENT: string;
+  BACKUP_MONITOR_STATE?: DurableObjectNamespace;
 }
 
 type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -111,7 +112,7 @@ export async function handleRequest(
 ): Promise<Response> {
   const { pathname } = new URL(request.url);
   if (pathname === "/health") return request.method === "GET" ? response(204) : response(405);
-  if (pathname !== "/flux") return response(404);
+  if (pathname !== "/flux" && pathname !== "/backup" && pathname !== "/backup-heartbeat") return response(404);
   if (request.method !== "POST") return response(405);
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) return response(415);
 
@@ -129,6 +130,18 @@ export async function handleRequest(
   } catch {
     return response(400);
   }
+  if (pathname === "/backup-heartbeat") {
+    if (!isRecord(parsed) || Object.keys(parsed).sort().join(",") !== "problems,timestamp"
+        || !Array.isArray(parsed.problems) || parsed.problems.length !== 0 || !validBackupTimestamp(parsed.timestamp)) {
+      return response(422);
+    }
+    if (!environment.BACKUP_MONITOR_STATE) return response(503);
+    const namespace = environment.BACKUP_MONITOR_STATE;
+    return namespace.get(namespace.idFromName("production")).fetch(new Request("https://internal/heartbeat", {
+      method: "POST", body: JSON.stringify(parsed), headers: { "Content-Type": "application/json" },
+    }));
+  }
+  if (pathname === "/backup") return handleBackupEvent(parsed, environment, send);
   const event = parseFluxEvent(parsed);
   if (
     !event
@@ -167,6 +180,78 @@ export async function handleRequest(
     return response(502);
   }
   return response(202);
+}
+
+async function handleBackupEvent(value: unknown, environment: Environment, send: Fetcher): Promise<Response> {
+  const allowed = new Set([
+    "upload_overdue", "excess_live_objects", "inventory_unavailable", "backup_service_failed",
+    "verify_service_failed", "backup_verification_overdue", "verify_verification_overdue", "monitor_test", "monitor_heartbeat_overdue",
+  ]);
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !== "problems,timestamp"
+      || !Array.isArray(value.problems) || value.problems.length < 1 || value.problems.length > 9
+      || !value.problems.every((problem) => typeof problem === "string" && allowed.has(problem))
+      || !validBackupTimestamp(value.timestamp)) return response(422);
+  // Reuse the already configured operator automation, but identify the source
+  // explicitly as BackupMonitor, not as a fabricated HelmRelease failure.
+  const sent = await send("https://api.resend.com/events/send", {
+    method: "POST", signal: AbortSignal.timeout(15_000),
+    headers: { Authorization: `Bearer ${environment.RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ event: "deployment.failed", email: environment.ALERT_RECIPIENT, payload: {
+      application: "rallyroo-backups", environment: "production", object: "BackupMonitor/rallyroo",
+      namespace: "rallyroo", reason: value.problems.includes("monitor_test") ? "BackupMonitorTest" : "BackupVerificationFailed",
+      message: [...new Set(value.problems)].join(", "), revision: "not-applicable", timestamp: value.timestamp,
+    } }),
+  });
+  return response(sent.ok ? 202 : 502);
+}
+
+function validBackupTimestamp(value: unknown): value is string {
+  return typeof value === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value)
+    && Number.isFinite(Date.parse(value)) && Math.abs(Date.now() - Date.parse(value)) <= 5 * 60_000;
+}
+
+interface BackupStateContext {
+  storage: {
+    get<T>(key: string): Promise<T | undefined>;
+    put<T>(key: string, value: T): Promise<void>;
+    setAlarm(time: number): Promise<void>;
+  };
+}
+
+/** Cloudflare-hosted alarm survives production VM loss. Stores no Family data or secrets. */
+export class BackupMonitorState {
+  constructor(private readonly state: BackupStateContext, private readonly environment: Environment,
+    private readonly send: Fetcher = fetch) {}
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/heartbeat") return response(404);
+    const now = Date.now();
+    // Receipt time is authoritative; a sender cannot postpone detection using a future timestamp.
+    await this.state.storage.put("lastReceivedAt", now);
+    await this.state.storage.put("lastAlertAt", 0);
+    await this.state.storage.setAlarm(now + 15 * 60_000);
+    return response(202);
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    try {
+      const receivedAt = await this.state.storage.get<number>("lastReceivedAt");
+      const lastAlertAt = await this.state.storage.get<number>("lastAlertAt") ?? 0;
+      if (receivedAt !== undefined && now - receivedAt > 60 * 60_000
+          && (lastAlertAt === 0 || now - lastAlertAt >= 6 * 60 * 60_000)) {
+        const sent = await handleBackupEvent({ problems: ["monitor_heartbeat_overdue"], timestamp: new Date(now).toISOString() },
+          this.environment, this.send);
+        if (sent.status !== 202) throw new Error("backup_monitor_alert_failed");
+        if (await this.state.storage.get<number>("lastReceivedAt") === receivedAt) {
+          await this.state.storage.put("lastAlertAt", now);
+        }
+      }
+    } finally {
+      await this.state.storage.setAlarm(Date.now() + 15 * 60_000);
+    }
+  }
 }
 
 export default {

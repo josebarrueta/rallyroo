@@ -1,0 +1,13 @@
+[Unit]
+Description=Rallyroo backup freshness, failure and retention monitor
+After=k3s.service
+Wants=k3s.service
+
+[Service]
+Type=oneshot
+StateDirectory=rallyroo-backup
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/bin/bash -ec 'source /etc/rallyroo/environment; export RALLYROO_BACKUP_BUCKET; exec /usr/bin/python3 /opt/rallyroo/backup-monitor/monitor.py'
+StandardOutput=journal
+StandardError=journal
