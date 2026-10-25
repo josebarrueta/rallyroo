@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Rallyroo backups every fifteen minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=30
+Persistent=true
+Unit=rallyroo-backup-monitor.service
+
+[Install]
+WantedBy=timers.target

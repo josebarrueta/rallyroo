@@ -564,12 +564,22 @@ struct FamilyActivityCoordinatorApp: App {
         switch configuration.dataMode {
         case .local:
             AppStorage.resetForUnifiedFamilyMembersIfNeeded()
+            #if DEBUG
+            let savedPlacesTestMode = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SAVED_PLACES"]
+            let savedPlacesTestRole: AccountRole = savedPlacesTestMode == "kid" ? .kid : .parent
+            authentication = savedPlacesTestMode == nil
+                ? LocalAuthentication()
+                : SavedPlacesUITestAuthentication(role: savedPlacesTestRole)
+            #else
             authentication = LocalAuthentication()
+            #endif
             #if DEBUG
             let testsOccurrenceLifecycle = ProcessInfo.processInfo.environment[
                 "RALLYROO_UI_TEST_OCCURRENCE_LIFECYCLE"
             ] == "1"
-            if testsOccurrenceLifecycle {
+            if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DRAFT_SAVE_FAILURE"] == "1" {
+                eventStore = DraftSaveFailureUITestStore()
+            } else if testsOccurrenceLifecycle {
                 eventStore = OccurrenceLifecycleUITestEventStore()
             } else if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_IMPORTED_EVENT"] == "1" {
                 eventStore = ImportedEventUITestEventStore()
@@ -581,7 +591,13 @@ struct FamilyActivityCoordinatorApp: App {
             #else
             eventStore = LocalEventStore(storageURL: AppStorage.eventsURL)
             #endif
+            #if DEBUG
+            reminderStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DRAFT_SAVE_FAILURE"] == "1"
+                ? DraftSaveFailureUITestStore()
+                : LocalReminderStore(storageURL: AppStorage.remindersURL)
+            #else
             reminderStore = LocalReminderStore(storageURL: AppStorage.remindersURL)
+            #endif
             let localAlertScheduler = LocalReminderAlertScheduler()
             reminderAlertScheduler = localAlertScheduler
             eventAlertScheduler = localAlertScheduler
@@ -613,7 +629,13 @@ struct FamilyActivityCoordinatorApp: App {
             scheduleDraftExtractor = nil
             #endif
             commuterStore = nil
+            #if DEBUG
+            travelPlanningStore = savedPlacesTestMode.map { mode in
+                SavedPlacesUITestStore(role: savedPlacesTestRole, failsToSave: mode == "failure")
+            }
+            #else
             travelPlanningStore = nil
+            #endif
             #if DEBUG
             let usesDayBriefUITest = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_DAY_BRIEF"] == "1"
             dayBriefStore = usesDayBriefUITest ? DayBriefUITestStore() : nil
@@ -625,9 +647,13 @@ struct FamilyActivityCoordinatorApp: App {
                 : nil
             receiptDraftStore = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT"] == "1"
                 ? ReceiptUITestStore(rejectionStatus: Int(ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_RECEIPT_REJECT"] ?? "")) : nil
-            inboxStore = usesDayBriefUITest
-                ? DayBriefUITestInboxStore()
-                : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
+            if ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_INBOX_PAGES"] == "1" {
+                inboxStore = PagedInboxUITestStore(cached: ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_INBOX_CACHED"] == "1")
+            } else {
+                inboxStore = usesDayBriefUITest
+                    ? DayBriefUITestInboxStore()
+                    : LocalNotificationInboxStore(storageURL: AppStorage.localInboxURL)
+            }
             #else
             dayBriefStore = nil
             shoppingStore = nil
@@ -787,6 +813,8 @@ struct FamilyActivityCoordinatorApp: App {
                         shoppingStore: shoppingStore,
                         expenseStore: session.role == .parent ? expenseStore : nil,
                         receiptDraftStore: session.role == .parent ? receiptDraftStore : nil,
+                        locationSearch: locationSearch,
+                        canManageFamilyPlaces: session.role == .parent,
                         canManageShoppingCatalog: session.role == .parent,
                         onSignOut: signOut,
                         onDeleteAccount: deleteAccount
@@ -844,6 +872,7 @@ struct FamilyActivityCoordinatorApp: App {
                         sharedCaptureInbox.receiveNext()
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
                         NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
+                        Task { await requestPushNotifications() }
                     }
                 }
                 }
@@ -853,11 +882,10 @@ struct FamilyActivityCoordinatorApp: App {
 
     @MainActor
     private func requestPushNotifications() async {
-        // Always request local notification permission—reminders need it in both modes.
-        let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .badge, .sound]
-          )) == true
-        if granted {
+        // Ask only from the explicit Settings action, not automatically on launch/navigation.
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+            || settings.authorizationStatus == .ephemeral {
             if deviceRegistrationStore != nil {
                 // Remote mode: also register for APNs
                 UIApplication.shared.registerForRemoteNotifications()
@@ -980,6 +1008,107 @@ enum AppStorage {
 }
 
 #if DEBUG
+private actor DraftSaveFailureUITestStore: EventStore, ReminderStore {
+    func updateRecurringEvent(_ edit: RecurringEventEdit, notifyParticipants: Bool, idempotencyKey: UUID) async throws -> EventMutationResult {
+        throw URLError(.notConnectedToInternet)
+    }
+    func loadEvents() async throws -> EventSnapshot { EventSnapshot(events: [], freshness: .fresh) }
+    func reminders() async throws -> [FamilyReminder] { [] }
+    func save(_ event: FamilyEvent, notifyParticipants: Bool, idempotencyKey: UUID) async throws -> EventMutationResult {
+        try await Task.sleep(for: .milliseconds(700))
+        throw URLError(.notConnectedToInternet)
+    }
+    func save(_ reminder: FamilyReminder) async throws {
+        try await Task.sleep(for: .milliseconds(700))
+        throw URLError(.notConnectedToInternet)
+    }
+    func delete(_ event: FamilyEvent, idempotencyKey: UUID) async throws { throw URLError(.unsupportedURL) }
+    func delete(_ reminder: FamilyReminder) async throws { throw URLError(.unsupportedURL) }
+    func complete(_ reminder: FamilyReminder, by memberID: KidID) async throws { throw URLError(.unsupportedURL) }
+    func reopen(_ reminder: FamilyReminder) async throws { throw URLError(.unsupportedURL) }
+    func occurrences(_ series: [FamilyReminder], in range: DateInterval) async throws -> [FamilyReminder] { series }
+}
+
+private actor SavedPlacesUITestAuthentication: Authentication {
+    private var session: AuthSession?
+    private let role: AccountRole
+
+    init(role: AccountRole) {
+        self.role = role
+        session = AuthSession(accountID: "local-\(role.rawValue)", displayName: "Local Member", role: role)
+    }
+    func currentSession() async throws -> AuthSession? { session }
+    func signIn(with provider: AuthenticationProvider, invitationCode: String?) async throws -> AuthSession {
+        let next = AuthSession(accountID: "local-\(role.rawValue)", displayName: "Local Member", role: role)
+        session = next
+        return next
+    }
+    func signOut() async throws { session = nil }
+    func deleteAccount() async throws { session = nil }
+}
+
+private actor SavedPlacesUITestStore: TravelPlanningStore {
+    private var places: [SavedPlace] = []
+    private let role: AccountRole
+    private let failsToSave: Bool
+    private var memberID: String { "local-\(role.rawValue)" }
+
+    init(role: AccountRole, failsToSave: Bool) {
+        self.role = role
+        self.failsToSave = failsToSave
+        places = [SavedPlace(
+            id: UUID(uuidString: "00000000-0000-4000-8000-000000000197")!,
+            ownerMemberID: nil, visibility: .family, label: "Family home",
+            waypoint: try! TravelWaypoint(location: "100 Main Street"), createdAt: .now, updatedAt: .now
+        )]
+    }
+    func savedPlaces() async throws -> [SavedPlace] { places }
+    func createSavedPlace(_ draft: SavedPlaceDraft) async throws -> SavedPlace {
+        try draft.validate()
+        guard !failsToSave else { throw URLError(.notConnectedToInternet) }
+        guard role == .parent || draft.visibility == .personal else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        let place = SavedPlace(
+            id: UUID(), ownerMemberID: draft.visibility == .personal ? memberID : nil,
+            visibility: draft.visibility, label: draft.label, waypoint: draft.waypoint,
+            createdAt: .now, updatedAt: .now
+        )
+        places.append(place)
+        return place
+    }
+    func updateSavedPlace(_ draft: SavedPlaceDraft, id: UUID) async throws -> SavedPlace {
+        guard let old = places.first(where: { $0.id == id }),
+              old.visibility == .family ? role == .parent : old.ownerMemberID == memberID else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        let updated = try await createSavedPlace(draft)
+        places.removeAll { $0.id == id || $0.id == updated.id }
+        let place = SavedPlace(
+            id: id, ownerMemberID: updated.ownerMemberID, visibility: updated.visibility,
+            label: updated.label, waypoint: updated.waypoint, createdAt: old.createdAt, updatedAt: .now
+        )
+        places.append(place)
+        return place
+    }
+    func deleteSavedPlace(id: UUID) async throws {
+        guard let place = places.first(where: { $0.id == id }),
+              place.visibility == .family ? role == .parent : place.ownerMemberID == memberID else {
+            throw RemoteStoreError.requestFailed(statusCode: 403)
+        }
+        places.removeAll { $0.id == id }
+    }
+    func travelPlan(for eventID: UUID) async throws -> EventTravelPlan? { nil }
+    func saveTravelPlan(_ draft: TravelPlanDraft, for eventID: UUID) async throws -> EventTravelPlan {
+        throw URLError(.unsupportedURL)
+    }
+    func deleteTravelPlan(for eventID: UUID) async throws { throw URLError(.unsupportedURL) }
+    func previewTravelPlan(for eventID: UUID) async throws -> TravelPreview { throw URLError(.unsupportedURL) }
+    func previewTravelPlan(_ draft: TravelPlanDraft, for eventID: UUID) async throws -> TravelPreview {
+        throw URLError(.unsupportedURL)
+    }
+}
+
 private actor DayBriefUITestStore: DayBriefStore {
     private var savedPreferences: DayBriefPreferences?
 
@@ -1029,6 +1158,33 @@ private actor DayBriefUITestStore: DayBriefStore {
             body: "You drive to School drop-off at 8:15 AM."
         )
     }
+}
+
+private actor PagedInboxUITestStore: NotificationInboxStore {
+    private let cached: Bool
+    init(cached: Bool) { self.cached = cached }
+    private var records: [InboxNotification] = (1...6).map { index in
+        InboxNotification(id: UUID(), kind: .scheduleUpdate, title: "Page alert \(index)", body: "Schedule update",
+            destination: .init(kind: .event, id: "event"), occurredAt: Date(timeIntervalSince1970: Double(index)),
+            readAt: index == 6 ? .now : nil)
+    }
+    func notifications() async throws -> [InboxNotification] { records }
+    func page(filter: InboxFilter, cursor: String?) async throws -> InboxNotificationPage {
+        let available = records.filter { filter == .all || $0.readAt == nil }.sorted { $0.occurredAt > $1.occurredAt }
+        let offset = cursor.flatMap(Int.init) ?? 0
+        let end = min(offset + 2, available.count)
+        return InboxNotificationPage(items: Array(available[offset..<end]),
+            nextCursor: !cached && end < available.count ? String(end) : nil, freshness: cached ? .cached : .live,
+            refreshedAt: Date(timeIntervalSince1970: 1_790_000_000))
+    }
+    func markRead(id: UUID) async throws {
+        records = records.map { item in
+            InboxNotification(id: item.id, kind: item.kind, title: item.title, body: item.body,
+                destination: item.destination, occurredAt: item.occurredAt, readAt: item.id == id ? .now : item.readAt)
+        }
+    }
+    func delete(id: UUID) async throws { records.removeAll { $0.id == id } }
+    func ingest(_ notification: InboxNotification) async throws { records.append(notification) }
 }
 
 private actor DayBriefUITestInboxStore: NotificationInboxStore {

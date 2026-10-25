@@ -200,10 +200,12 @@ public enum EventDataFreshness: Equatable, Sendable {
 public struct EventSnapshot: Equatable, Sendable {
     public let events: [FamilyEvent]
     public let freshness: EventDataFreshness
+    public let refreshedAt: Date?
 
-    public init(events: [FamilyEvent], freshness: EventDataFreshness) {
+    public init(events: [FamilyEvent], freshness: EventDataFreshness, refreshedAt: Date? = nil) {
         self.events = events
         self.freshness = freshness
+        self.refreshedAt = refreshedAt
     }
 }
 

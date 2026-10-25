@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
 import type { Account } from "./domain.js";
 import { boundedNotificationBadge, type PushNotificationProvider } from "./push-notification-provider.js";
 
@@ -47,9 +48,16 @@ export interface ClaimedNotificationDelivery {
   claimedAt: Date;
 }
 
+export interface InboxPageQuery {
+  limit: number;
+  unreadOnly: boolean;
+  before?: { occurredAt: Date; id: string };
+}
+
 export interface NotificationCenterRepository {
   saveInboxRecordsIfAbsent(records: MemberInboxRecord[]): Promise<MemberInboxRecord[]>;
   inboxRecords(familyID: string, memberID: string, limit: number): Promise<MemberInboxRecord[]>;
+  inboxRecordPage(familyID: string, memberID: string, query: InboxPageQuery): Promise<MemberInboxRecord[]>;
   unreadInboxCount(familyID: string, memberID: string): Promise<number>;
   markInboxRecordRead(
     familyID: string, memberID: string, recordID: string, readAt: Date,
@@ -177,6 +185,34 @@ export class NotificationCenterModule {
   async list(account: Account, limit = 100): Promise<MemberInboxRecord[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("invalid_notification_limit");
     return this.repository.inboxRecords(account.familyID, account.memberID, limit);
+  }
+
+  async page(account: Account, limit = 50, filter: "all" | "unread" = "all", cursor?: string) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !["all", "unread"].includes(filter)) {
+      throw new Error("invalid_inbox_page");
+    }
+    const scope = createHash("sha256").update(`${account.familyID}\0${account.memberID}`).digest("hex");
+    let before: InboxPageQuery["before"];
+    if (cursor !== undefined) {
+      try {
+        if (!/^[A-Za-z0-9_-]{1,600}$/.test(cursor)) throw new Error();
+        const parsed = z.object({
+          at: z.string().datetime(), id: z.string().uuid(), scope: z.literal(scope), filter: z.literal(filter),
+        }).strict().parse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+        before = { occurredAt: new Date(parsed.at), id: parsed.id };
+      } catch {
+        throw new Error("invalid_inbox_page");
+      }
+    }
+    const records = await this.repository.inboxRecordPage(account.familyID, account.memberID, {
+      limit: limit + 1, unreadOnly: filter === "unread", ...(before ? { before } : {}),
+    });
+    const items = records.slice(0, limit);
+    const last = items.at(-1);
+    const nextCursor = records.length > limit && last ? Buffer.from(JSON.stringify({
+      at: last.occurredAt.toISOString(), id: last.id, scope, filter,
+    })).toString("base64url") : null;
+    return { items, nextCursor };
   }
 
   async unreadCount(account: Account): Promise<number> {

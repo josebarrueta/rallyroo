@@ -1037,6 +1037,311 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 5))
     }
 
+    func testParentCanReachAndManageSavedPlacesFromSettings() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "parent"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["saved-place-visibility"].exists)
+        fillSavedPlace(named: "Practice field", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+        let saved = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Practice field")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertEqual(saved.value as? String, "Editable")
+        saved.tap()
+        XCTAssertTrue(app.navigationBars["Edit place"].waitForExistence(timeout: 5))
+        let name = app.textFields["Name, such as Home"]
+        name.tap()
+        name.typeText(" west")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["Practice field west"].waitForExistence(timeout: 5))
+    }
+
+    func testKidCanSavePersonalPlaceButCannotEditFamilyPlace() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "kid"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Family home")).firstMatch.tap()
+        XCTAssertFalse(app.navigationBars["Edit place"].exists)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["saved-place-visibility"].exists)
+        fillSavedPlace(named: "My practice field", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+        let saved = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "My practice field")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertEqual(saved.value as? String, "Editable")
+        XCTAssertTrue(app.staticTexts["Only me"].exists)
+        saved.tap()
+        XCTAssertTrue(app.navigationBars["Edit place"].waitForExistence(timeout: 5))
+    }
+
+    func testFailedSavedPlaceSaveKeepsTheDraftVisible() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = "failure"
+        app.launch()
+        openSavedPlaces(in: app)
+        app.buttons["Add saved place"].tap()
+        XCTAssertTrue(app.navigationBars["Add place"].waitForExistence(timeout: 5))
+        fillSavedPlace(named: "Not saved", in: app)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["The saved place could not be saved."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Add place"].exists)
+        XCTAssertEqual(app.textFields["Name, such as Home"].value as? String, "Not saved")
+    }
+
+    func testAlertsUsefulContentIsVisibleWithLargestTextAndInLandscape() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Alerts"].tap()
+        let unread = app.staticTexts["alerts-unread-count"]
+        XCTAssertTrue(unread.waitForExistence(timeout: 5))
+        XCTAssertTrue(unread.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["rallyroo-brand-header"].exists)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(unread.isHittable)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Alerts landscape maximum text"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let actions = app.buttons["alerts-actions-menu"]
+        let hittable = expectation(for: NSPredicate(format: "isHittable == true"), evaluatedWith: actions)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed)
+    }
+
+    func testScheduleUsefulContentIsVisibleWithLargestText() {
+        let app = localApp()
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        let today = app.staticTexts[Date.now.formatted(.dateTime.weekday(.wide).month().day())]
+        XCTAssertTrue(today.waitForExistence(timeout: 5))
+        XCTAssertTrue(today.isHittable)
+        XCTAssertFalse(app.staticTexts["Let's jam!"].exists)
+        XCTAssertTrue(app.buttons["schedule-create-menu"].isHittable)
+    }
+
+    private func openSavedPlaces(in app: XCUIApplication) {
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let places = app.buttons["Saved places"]
+        for _ in 0..<5 where !places.isHittable { app.swipeUp() }
+        XCTAssertTrue(places.waitForExistence(timeout: 5))
+        places.tap()
+        XCTAssertTrue(app.navigationBars["Saved places"].waitForExistence(timeout: 5))
+    }
+
+    private func fillSavedPlace(named name: String, in app: XCUIApplication) {
+        let nameField = app.textFields["Name, such as Home"]
+        nameField.tap()
+        nameField.typeText(name)
+        let address = app.textFields["Street address"]
+        address.tap()
+        address.typeText("123 Main Street")
+    }
+
+    func testAlertPagesFiltersAndBulkReadCoverUnloadedItems() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_INBOX_PAGES"] = "1"
+        app.launch()
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["Page alert 6"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Page alert 4"].exists)
+        app.buttons["alerts-load-more"].tap()
+        XCTAssertTrue(app.staticTexts["Page alert 4"].waitForExistence(timeout: 5))
+        app.segmentedControls["alerts-filter"].buttons["Unread"].tap()
+        XCTAssertTrue(app.staticTexts["Page alert 5"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Page alert 6"].exists)
+        app.buttons["alerts-actions-menu"].tap()
+        app.buttons["Mark all read"].tap()
+        XCTAssertTrue(app.staticTexts["No unread alerts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["0 unread Alerts"].exists)
+        app.segmentedControls["alerts-filter"].buttons["All"].tap()
+        XCTAssertTrue(app.staticTexts["Page alert 6"].waitForExistence(timeout: 5))
+        app.buttons["alerts-actions-menu"].tap()
+        app.buttons["alerts-delete-all"].tap()
+        app.buttons["Delete All Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["You're all caught up"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["alerts-load-more"].exists)
+    }
+
+    func testCachedInboxLabelsStalenessAndDoesNotOfferUncachedOlderPages() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_INBOX_PAGES"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_INBOX_CACHED"] = "1"
+        app.launch()
+        app.tabBars.buttons["Alerts"].tap()
+        let status = app.descendants(matching: .any)["alerts-freshness"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Page alert 6"].exists)
+        XCTAssertTrue(app.buttons["Retry refresh"].exists)
+        XCTAssertFalse(app.buttons["alerts-load-more"].exists)
+    }
+
+    func testEventDraftCanBeKeptRevertedOrExplicitlyDiscarded() {
+        let app = localApp()
+        app.launch()
+        openAddEvent(in: app)
+        let title = app.textFields["Title"]
+        title.tap(); title.typeText("Unsaved")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved changes?"].waitForExistence(timeout: 5))
+        app.buttons["Keep Editing"].tap()
+        XCTAssertEqual(title.value as? String, "Unsaved")
+        title.tap(); title.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.alerts["Discard unsaved changes?"].exists)
+        openAddEvent(in: app)
+        app.textFields["Title"].tap(); app.textFields["Title"].typeText("Discard me")
+        app.buttons["Cancel"].tap()
+        app.buttons["Discard Changes"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+    }
+
+    func testParticipantAndArrivalChangesAreTrackedAndCanBeReverted() {
+        let app = localApp()
+        app.launch()
+        addFamilyMember(named: "Avery", in: app)
+        app.tabBars.buttons["Schedule"].tap()
+        openAddEvent(in: app)
+        let participant = app.switches["Avery"]
+        XCTAssertEqual(participant.value as? String, "0")
+        participant.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(participant.value as? String, "1")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved changes?"].waitForExistence(timeout: 5))
+        app.buttons["Keep Editing"].tap()
+        participant.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let arrival = app.switches["Arrive by"]
+        for _ in 0..<6 where !arrival.isHittable { app.swipeUp() }
+        arrival.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(arrival.value as? String, "1")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved changes?"].waitForExistence(timeout: 5))
+        app.buttons["Keep Editing"].tap()
+        arrival.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.alerts["Discard unsaved changes?"].exists)
+    }
+
+    func testFailedEventAndReminderSavesPreserveTheirDrafts() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_DRAFT_SAVE_FAILURE"] = "1"
+        app.launch()
+        openAddEvent(in: app)
+        app.textFields["Title"].tap(); app.textFields["Title"].typeText("Still editing event")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["The event could not be saved."].waitForExistence(timeout: 5))
+        app.buttons["OK"].tap()
+        XCTAssertEqual(app.textFields["Title"].value as? String, "Still editing event")
+        app.buttons["Cancel"].tap(); app.buttons["Discard Changes"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Reminders"].tap()
+        XCTAssertTrue(app.navigationBars["Reminders"].waitForExistence(timeout: 5))
+        app.buttons["Add Reminder"].tap()
+        app.textFields["Title"].tap(); app.textFields["Title"].typeText("Still editing reminder")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["The reminder could not be saved."].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["Title"].value as? String, "Still editing reminder")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved changes?"].waitForExistence(timeout: 5))
+    }
+
+    func testReminderDraftRequiresExplicitDiscard() {
+        let app = localApp()
+        app.launch()
+        app.tabBars.buttons["Reminders"].tap()
+        app.buttons["Add Reminder"].tap()
+        app.textFields["Title"].tap(); app.textFields["Title"].typeText("Unsaved task")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.alerts["Discard unsaved changes?"].waitForExistence(timeout: 5))
+        app.buttons["Keep Editing"].tap()
+        XCTAssertEqual(app.textFields["Title"].value as? String, "Unsaved task")
+        app.buttons["Cancel"].tap(); app.buttons["Discard Changes"].tap()
+        XCTAssertTrue(app.navigationBars["Reminders"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Unsaved task"].exists)
+    }
+
+    func testEventSearchFindsLoadedItemsOutsideTheCurrentWeek() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_IMPORTED_EVENT"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-next-page"].tap()
+        let search = app.searchFields.firstMatch
+        if !search.isHittable { app.swipeDown() }
+        search.tap(); search.typeText("CHAMPIONSHIP")
+        let result = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Imported championship")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 5))
+        result.tap()
+        XCTAssertTrue(app.navigationBars["Event details"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["Title"].exists)
+    }
+
+    func testReminderSearchFindsCompletedRemindersAndHasNoResultsState() {
+        let app = localApp()
+        app.launch()
+        app.tabBars.buttons["Reminders"].tap(); app.buttons["Add Reminder"].tap()
+        app.textFields["Title"].tap(); app.textFields["Title"].typeText("Café task")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons["Complete reminder"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Complete reminder"].firstMatch.tap()
+        let search = app.searchFields.firstMatch
+        if !search.isHittable { app.swipeDown() }
+        search.tap(); search.typeText("CAFE")
+        XCTAssertTrue(app.staticTexts["Café task"].waitForExistence(timeout: 5))
+        search.typeText(" missing")
+        XCTAssertTrue(app.staticTexts["No matching reminders"].waitForExistence(timeout: 5))
+    }
+
+    func testPantrySearchFiltersWithoutChangingTheCatalog() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SHOPPING"] = "1"
+        app.launch()
+        app.buttons["schedule-household"].tap(); app.buttons["Shopping and Pantry"].tap()
+        let search = app.searchFields.firstMatch
+        if !search.isHittable { app.swipeDown() }
+        search.tap(); search.typeText("OAT MILK")
+        XCTAssertTrue(app.staticTexts["Oat milk"].waitForExistence(timeout: 5))
+        search.typeText(" missing")
+        XCTAssertTrue(app.staticTexts["No matching Pantry items"].waitForExistence(timeout: 5))
+        app.buttons["Clear text"].tap()
+        if app.buttons["Close"].exists { app.buttons["Close"].tap() }
+        else if app.navigationBars["Shopping and Pantry"].buttons["Cancel"].exists {
+            app.navigationBars["Shopping and Pantry"].buttons["Cancel"].tap()
+        }
+        let restored = app.staticTexts["Oat milk"]
+        for _ in 0..<6 where !restored.isHittable { app.swipeUp() }
+        XCTAssertTrue(restored.waitForExistence(timeout: 5))
+    }
+
+    func testDeniedNotificationPermissionExplainsRecoveryWithoutHidingInbox() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_NOTIFICATION_PERMISSION"] = "denied"
+        app.launchEnvironment["RALLYROO_UI_TEST_DAY_BRIEF"] = "1"
+        app.launch()
+        app.tabBars.buttons["Settings"].tap()
+        let status = app.staticTexts["notification-permission-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Notifications blocked"))
+        XCTAssertTrue(app.buttons["Open iPhone Settings"].exists)
+        XCTAssertFalse(app.buttons["Enable notifications"].exists)
+        app.tabBars.buttons["Alerts"].tap()
+        XCTAssertTrue(app.staticTexts["1 unread Alerts"].waitForExistence(timeout: 5))
+    }
+
     private func localApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["RALLYROO_DATA_MODE"] = "local"

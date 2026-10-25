@@ -8,6 +8,8 @@ final class WeeklyScheduleViewModel: ObservableObject {
     @Published private(set) var members: [FamilyMember] = []
     @Published private(set) var errorMessage: String?
     @Published private(set) var isShowingCachedEvents = false
+    @Published private(set) var refreshedAt: Date?
+    @Published private(set) var isRefreshing = false
 
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
@@ -33,10 +35,14 @@ final class WeeklyScheduleViewModel: ObservableObject {
      }
 
     func loadEvents() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         do {
             let snapshot = try await eventStore.loadEvents()
             events = snapshot.events.sorted { $0.startTime < $1.startTime }
             isShowingCachedEvents = snapshot.freshness == .cached
+            refreshedAt = snapshot.refreshedAt
             for event in events {
                 try? await alertScheduler?.schedule(event)
              }
@@ -47,8 +53,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
              }
             errorMessage = nil
          } catch {
-            errorMessage = "Your schedule could not be loaded."
-            isShowingCachedEvents = false
+            errorMessage = "Your schedule could not be refreshed. Showing what is available."
          }
      }
 

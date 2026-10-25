@@ -39,26 +39,37 @@ extension Color {
     }
 }
 
+/// Optional branding yields space to useful content in constrained layouts.
+/// Never shrink the member's chosen text size to preserve decorative content.
 struct RallyrooHeader: View {
-    let title: String
+    let title: String?
     let subtitle: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
-        HStack(spacing: 14) {
-            Image("FamilyHero")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 116, height: 76)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-            VStack(alignment: .leading, spacing: 5) {
-                Text(title)
-                    .font(.title2.bold())
-                    .foregroundStyle(AppTheme.purple)
-                Text(subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+        if !dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
+            HStack(spacing: 12) {
+                Image("FamilyHero")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    if let title {
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.purple)
+                    }
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.vertical, 8)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("rallyroo-brand-header")
         }
-        .padding(.vertical, 8)
     }
 }

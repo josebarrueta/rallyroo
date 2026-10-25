@@ -392,6 +392,17 @@ describe("Rallyroo API", () => {
     expect(parentList.statusCode).toBe(200);
     expect(parentList.json()).toEqual([expect.objectContaining({ id: record!.id, title: "Schedule updated" })]);
     expect(JSON.stringify(parentList.json())).not.toContain("deduplicationDigest");
+    expect((await app.inject({ method: "GET", url: "/v1/notifications/page" })).statusCode).toBe(401);
+    const page = await app.inject({ method: "GET", url: "/v1/notifications/page?filter=unread&limit=1",
+      headers: { authorization: "Bearer parent-token" } });
+    expect(page.statusCode).toBe(200);
+    expect(page.json()).toEqual({ items: [expect.objectContaining({ id: record!.id })], nextCursor: null });
+    expect(JSON.stringify(page.json())).not.toContain("deduplicationDigest");
+    expect(JSON.stringify(page.json())).not.toContain("familyID");
+    for (const query of ["cursor=bad", "limit=101", "filter=other"]) {
+      expect((await app.inject({ method: "GET", url: `/v1/notifications/page?${query}`,
+        headers: { authorization: "Bearer parent-token" } })).statusCode).toBe(400);
+    }
     expect((await app.inject({
       method: "PATCH", url: `/v1/notifications/${record!.id}/read`,
       headers: { authorization: "Bearer kid-token" },

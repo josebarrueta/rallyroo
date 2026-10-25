@@ -609,6 +609,13 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       ...intent, familyID: other.familyID, recipientMemberIDs: [other.memberID],
     });
     await center.markRead(parent, records[0]!.id);
+    const page1 = await center.page(parent, 50);
+    const page2 = await center.page(parent, 50, "all", page1.nextCursor!);
+    const page3 = await center.page(parent, 50, "all", page2.nextCursor!);
+    expect(new Set([...page1.items, ...page2.items, ...page3.items].map((item) => item.id)).size).toBe(105);
+    expect(page3.nextCursor).toBeNull();
+    expect((await center.page(parent, 100, "unread")).items.every((item) => item.readAt === null)).toBe(true);
+    await expect(center.page(other, 50, "all", page1.nextCursor!)).rejects.toThrow("invalid_inbox_page");
     await repository.claimNotificationDeliveries(new Date(Date.now() + 60_000), 1, [records[1]!.id]);
     await center.deleteAll(parent);
     await center.deleteAll(parent);

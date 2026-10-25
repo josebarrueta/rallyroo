@@ -113,6 +113,8 @@ export interface DayBriefNarratorInput {
   facts: DayBrief["facts"];
   deterministicTitle: string;
   deterministicBody: string;
+  /** Only these deterministically rendered texts may become a narrative. */
+  narrativeOptions: readonly { id: string; text: string }[];
 }
 
 export interface DayBriefNarrator {
@@ -342,25 +344,30 @@ export class DayBriefModule {
   private async narrate(brief: DayBrief, firstName: string): Promise<DayBrief> {
     if (!this.narrator) return brief;
     try {
+      const counts = [
+        brief.facts.events.length ? `${brief.facts.events.length} ${brief.facts.events.length === 1 ? "event" : "events"}` : "",
+        brief.facts.reminders.length ? `${brief.facts.reminders.length} ${brief.facts.reminders.length === 1 ? "reminder" : "reminders"}` : "",
+      ].filter(Boolean);
+      const narrativeOptions = Object.freeze([
+        Object.freeze({ id: "pace", text: brief.summary ?? "Your day looks open." }),
+        Object.freeze({ id: "overview", text: counts.length ? `Your day includes ${counts.join(" and ")}.` : "Your day looks open." }),
+      ]);
       const narrative = await this.narrator.narrate({
         firstName,
         localDate: brief.localDate,
         timeZone: brief.timeZone,
-        facts: brief.facts,
+        facts: structuredClone(brief.facts),
         deterministicTitle: brief.title,
         deterministicBody: brief.body,
+        narrativeOptions,
       });
-      if (narrative.title.trim().length > 0 && narrative.title.length <= 300
-        && narrative.body.trim().length > 0 && narrative.body.length <= 1_000
-        && !mentionsEmptyCategory(narrative.body, brief.facts)
-        && !mentionsWeather(narrative.body)
-        && !repeatsTimelineDetails(narrative.body, brief.facts)) {
-        // Keep the verified personalized greeting stable; AI customizes only
-        // the high-level summary. Structured sections present the details.
-        const body = [brief.facts.weather ? weatherSummary(brief.facts.weather) : "", narrative.body]
-          .filter(Boolean)
-          .join(" ");
-        return { ...brief, summary: narrative.body, body };
+      const approved = narrativeOptions.find((option) => option.text === narrative.body);
+      if (approved) {
+        // Even a custom/compromised adapter cannot persist free-form model claims.
+        // Render from our trusted option, never from the returned text or title.
+        const body = [brief.facts.weather ? weatherSummary(brief.facts.weather) : "", approved.text]
+          .filter(Boolean).join(" ");
+        return { ...brief, summary: approved.text, body };
       }
     } catch {
       // The verified deterministic brief remains useful when AI is unavailable or invalid.
@@ -606,26 +613,6 @@ function weatherCondition(code: string): string {
     cloudy: "cloudy skies",
   };
   return descriptions[code.toLocaleLowerCase("en-US")] ?? words;
-}
-
-function mentionsWeather(body: string): boolean {
-  return /\b(?:weather|forecast|rain(?:y|ing)?|showers?|drizzl(?:e|ing)|snow(?:y|ing)?|sleet|hail|thunder(?:storm)?s?|storms?|tornado(?:es)?|hurricanes?|sunny|sunshine|cloud(?:y|s)?|overcast|fog(?:gy)?|wind(?:y)?|temperatures?|precipitation|humid(?:ity)?|degrees?)\b|\d\s*°\s*[cf]?\b|\b(?:high|low)\s+(?:of|near)\s+\d/iu.test(body);
-}
-
-function repeatsTimelineDetails(body: string, facts: DayBrief["facts"]): boolean {
-  const normalized = body.toLocaleLowerCase("en-US");
-  const repeatsTitle = [...facts.events, ...facts.reminders]
-    .some((fact) => normalized.includes(fact.title.trim().toLocaleLowerCase("en-US")));
-  const repeatsClockTime = /\b(?:[01]?\d|2[0-3]):[0-5]\d\s*(?:a\.?m\.?|p\.?m\.?)?\b/i.test(body);
-  return repeatsTitle || repeatsClockTime;
-}
-
-function mentionsEmptyCategory(body: string, facts: DayBrief["facts"]): boolean {
-  const emptyEventMention = facts.events.length === 0
-    && /\b(?:no|zero|0)\s+(?:scheduled\s+)?events?\b/i.test(body);
-  const emptyReminderMention = facts.reminders.length === 0
-    && /\b(?:no|zero|0)\s+(?:open\s+)?reminders?\b/i.test(body);
-  return emptyEventMention || emptyReminderMention;
 }
 
 function firstNameFrom(name: string | undefined): string {
