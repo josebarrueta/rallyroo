@@ -789,6 +789,76 @@ final class FamilyAppUITests: XCTestCase {
         }
     }
 
+    func testMonthCalendarSwipesBothWaysAndKeepsArrowNavigation() throws {
+        let app = localApp()
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Month"].tap()
+
+        let calendar = Calendar.autoupdatingCurrent
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: .now)?.start)
+        let next = try XCTUnwrap(calendar.date(byAdding: .month, value: 1, to: month))
+        let previous = try XCTUnwrap(calendar.date(byAdding: .month, value: -1, to: month))
+        let title = app.staticTexts["schedule-month-title"]
+        let grid = app.otherElements["schedule-month-grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
+
+        grid.swipeLeft()
+        XCTAssertEqual(title.label, next.formatted(.dateTime.month(.wide).year()))
+        grid.swipeRight()
+        XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
+        grid.swipeRight()
+        XCTAssertEqual(title.label, previous.formatted(.dateTime.month(.wide).year()))
+
+        app.buttons["schedule-next-page"].tap()
+        XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
+        app.buttons["schedule-previous-page"].tap()
+        XCTAssertEqual(title.label, previous.formatted(.dateTime.month(.wide).year()))
+    }
+
+    func testMonthCalendarStillSelectsDaysAndScrollsVerticallyWithoutPaging() throws {
+        let app = localApp()
+        // Make the calendar scrollable even on tall phones; also cover accessible text sizes.
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Month"].tap()
+
+        let calendar = Calendar.autoupdatingCurrent
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: .now)?.start)
+        let dayOffset = calendar.component(.day, from: .now) == 1 ? 1 : 0
+        let day = try XCTUnwrap(calendar.date(byAdding: .day, value: dayOffset, to: month))
+        let grid = app.otherElements["schedule-month-grid"]
+        let title = app.staticTexts["schedule-month-title"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        let originalTitle = title.label
+        let dayButton = grid.buttons[day.formatted(.dateTime.weekday(.wide).month(.wide).day())]
+        XCTAssertFalse(dayButton.isSelected)
+        dayButton.tap()
+        XCTAssertTrue(dayButton.isSelected)
+        XCTAssertEqual(title.label, originalTitle)
+
+        // At large text sizes the grid extends under the tab bar. Use only its
+        // visible region so the test never accidentally taps or drags a tab.
+        let top = max(grid.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 12
+        let bottom = min(grid.frame.maxY, app.tabBars.firstMatch.frame.minY) - 12
+        XCTAssertGreaterThan(bottom - top, 40)
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let middle = origin.withOffset(CGVector(dx: app.frame.midX, dy: (top + bottom) / 2))
+        middle.press(forDuration: 0.05, thenDragTo: middle.withOffset(CGVector(dx: -15, dy: 0)))
+        XCTAssertEqual(title.label, originalTitle, "A small drag must not change months")
+
+        let originalY = grid.frame.minY
+        let start = origin.withOffset(CGVector(dx: app.frame.midX, dy: bottom))
+        let end = origin.withOffset(CGVector(dx: app.frame.midX, dy: top))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertEqual(title.label, originalTitle, "Vertical scrolling must not change months")
+        XCTAssertLessThan(grid.frame.minY, originalY - 20, "The calendar gesture must not block vertical list scrolling")
+    }
+
     func testParentCanOpenTheLocalScheduleAndFamilyTabs() {
         let app = localApp()
         app.launch()

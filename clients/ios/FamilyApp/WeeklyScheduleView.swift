@@ -528,6 +528,7 @@ struct WeeklyScheduleView: View {
                     Text(viewport.anchorDate.formatted(.dateTime.month(.wide).year()))
                         .font(.title3.bold())
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("schedule-month-title")
                     // Keep this grid eager and deterministically sized. A LazyVGrid inside
                     // List can repeatedly change its preferred cell height during UIKit's
                     // collection-view layout pass and trigger a recursive-layout trap.
@@ -551,8 +552,20 @@ struct WeeklyScheduleView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 30)
+                        .onEnded { value in
+                            let horizontal = value.translation.width
+                            let vertical = value.translation.height
+                            // Require a deliberate horizontal swipe, not a tap or list scroll.
+                            guard abs(horizontal) >= 50, abs(horizontal) > abs(vertical) * 1.5 else { return }
+                            viewport.move(by: horizontal < 0 ? 1 : -1)
+                        }
+                )
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("schedule-month-grid")
+                .accessibilityHint("Swipe left for next month or right for previous month, or use the arrow buttons.")
             }
             Section("Selected day") {
                 let dayEvents = events(on: viewport.selectedDate)
@@ -628,6 +641,7 @@ struct WeeklyScheduleView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityValue(dayEvents.isEmpty ? "No activities" : "\(dayEvents.count) activities")
     }
 
