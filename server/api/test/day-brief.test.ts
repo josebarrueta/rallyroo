@@ -167,7 +167,7 @@ describe("DayBriefModule.generate", () => {
     const narrator: DayBriefNarrator = {
       async narrate(input) {
         narratedWeather = input.facts.weather;
-        return { title: input.deterministicTitle, body: "Your schedule starts early today." };
+        return { title: input.deterministicTitle, body: input.narrativeOptions.find((option) => option.id === "overview")!.text };
       },
     };
 
@@ -179,10 +179,10 @@ describe("DayBriefModule.generate", () => {
       locationLabel: "Home", conditionCode: "MostlyClear", highTemperatureCelsius: 24,
     });
     expect(narratedWeather).toEqual(brief.facts.weather);
-    expect(brief.summary).toBe("Your schedule starts early today.");
+    expect(brief.summary).toBe("Your day includes 2 events and 1 reminder.");
     expect(brief.summary).not.toMatch(/75°F|clear skies/i);
     expect(brief.body).toBe(
-      "It will warm up this afternoon, with mostly clear skies and a high near 75°F. Your schedule starts early today.",
+      "It will warm up this afternoon, with mostly clear skies and a high near 75°F. Your day includes 2 events and 1 reminder.",
     );
   });
 
@@ -304,7 +304,7 @@ describe("DayBriefModule.generate", () => {
         receivedTitles = input.facts.events.map((event) => event.title);
         return {
           title: "A driving-heavy Monday",
-          body: "Your morning is full, then the day eases up.",
+          body: input.narrativeOptions.find((option) => option.id === "overview")!.text,
         };
       },
     };
@@ -315,8 +315,37 @@ describe("DayBriefModule.generate", () => {
     expect(receivedTitles).toEqual(["School drop-off", "Dentist"]);
     expect(brief.title).toBe("Hello, Alex.");
     expect(brief.body).toBe(
-      "Your morning is full, then the day eases up.",
+      "Your day includes 2 events and 1 reminder.",
     );
+  });
+
+  it.each([
+    "Leave at 5 AM to take Morgan to a private appointment.",
+    "You drive the kids to a new obligation tomorrow.",
+    "Your morning is busy, with a more relaxed afternoon. Also pay an unexpected fee.",
+  ])("rejects unsupported claims from any narrator: %s", async (body) => {
+    const module = new DayBriefModule(repository(), undefined, {
+      async narrate() { return { title: "Untrusted title", body }; },
+    });
+    const brief = await module.generate(account, "2026-10-05", "UTC");
+    expect(brief.summary).toBe("Your morning is busy, with a more relaxed afternoon.");
+    expect(brief.title).toBe("Hello, Alex.");
+    expect(brief.body).not.toContain(body);
+  });
+
+  it("does not let a narrator mutate authorized facts or its approved wording set", async () => {
+    const module = new DayBriefModule(repository(), undefined, {
+      async narrate(input) {
+        input.facts.events[0]!.title = "Private invented obligation";
+        const choice = input.narrativeOptions[0]!;
+        (choice as { text: string }).text = "An invented assignment at 5 AM";
+        return { title: "Untrusted", body: choice.text };
+      },
+    });
+    const brief = await module.generate(account, "2026-10-05", "UTC");
+    expect(brief.facts.events.map((event) => event.title)).toEqual(["School drop-off", "Dentist"]);
+    expect(brief.summary).toBe("Your morning is busy, with a more relaxed afternoon.");
+    expect(brief.body).not.toContain("invented");
   });
 
   it("rejects AI narration that repeats details already shown in the Timeline", async () => {

@@ -3,77 +3,38 @@ import { OllamaDayBriefNarrator } from "../src/ollama-day-brief-narrator.js";
 import type { DayBriefNarratorInput } from "../src/day-brief.js";
 
 const input: DayBriefNarratorInput = {
-  firstName: "Alex",
-  localDate: "2026-10-05",
-  timeZone: "America/Los_Angeles",
-  facts: {
-    events: [{
-      id: "event",
-      title: "Practice",
-      scheduledAt: "2026-10-05T15:00:00.000Z",
-      startTime: "2026-10-05T15:00:00.000Z",
-      endTime: "2026-10-05T16:00:00.000Z",
-      location: "Field",
-      roles: ["driver"],
-    }],
-    reminders: [],
-  },
-  deterministicTitle: "Hello, Alex.",
-  deterministicBody: "Your morning has one commitment, with the rest of the day looking open. 8:00 AM Practice (you drive).",
+  firstName: "Alex", localDate: "2026-10-05", timeZone: "UTC",
+  facts: { events: [{ id: "event", title: "Private practice", scheduledAt: "2026-10-05T15:00:00Z",
+    startTime: "2026-10-05T15:00:00Z", endTime: "2026-10-05T16:00:00Z", location: null, roles: ["driver"] }], reminders: [] },
+  deterministicTitle: "Hello, Alex.", deterministicBody: "One commitment today.",
+  narrativeOptions: [{ id: "pace", text: "Your morning looks relaxed, with one commitment this afternoon." }],
 };
+const envelope = (content: object) => new Response(JSON.stringify({ message: { content: JSON.stringify(content) }, done: true }));
 
 describe("OllamaDayBriefNarrator", () => {
-  it("sends only structured authorized facts and validates the narrative", async () => {
+  it("sends only approved wording choices and renders the selected choice without free-form output", async () => {
     const requests: RequestInit[] = [];
-    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      requests.push(init ?? {});
-      return new Response(JSON.stringify({
-      message: { content: JSON.stringify({
-        title: "Your Monday starts with a drive",
-        body: "Leave time is not available, but you drive to Practice at 8:00 AM.",
-      }) },
-        done: true,
-      }), { status: 200 });
-    });
-    const narrator = new OllamaDayBriefNarrator({
-      baseURL: new URL("https://ollama.example.test"),
-      model: "model",
-      fetch,
-    });
-
-    await expect(narrator.narrate(input)).resolves.toEqual({
-      title: "Your Monday starts with a drive",
-      body: "Leave time is not available, but you drive to Practice at 8:00 AM.",
-    });
+    const narrator = new OllamaDayBriefNarrator({ baseURL: new URL("https://ollama.example"), model: "model",
+      fetch: vi.fn(async (_url, init) => { requests.push(init!); return envelope({ optionID: "pace" }); }) });
+    await expect(narrator.narrate(input)).resolves.toEqual({ title: input.deterministicTitle, body: input.narrativeOptions[0]!.text });
     const request = JSON.parse(requests[0]!.body as string);
     expect(request.format).toBeTruthy();
-    expect(request.messages[0].content).toContain("Greet the Member by first name");
-    expect(request.messages[0].content).toContain("Never mention a category with a zero count");
-    expect(request.messages[1].content).toContain('"firstName":"Alex"');
-    expect(request.messages[1].content).toContain('"facts"');
-    expect(request.messages[1].content).not.toContain("parent-subject");
+    expect(JSON.parse(request.messages[1].content)).toEqual({ options: input.narrativeOptions });
+    expect(request.messages[1].content).not.toMatch(/Private practice|Alex|2026-10-05|driver/);
   });
 
-  it("retries without structured-output format when the runtime rejects it", async () => {
-    const requests: RequestInit[] = [];
-    let call = 0;
-    const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      requests.push(init ?? {});
-      call += 1;
-      if (call === 1) return new Response("unsupported", { status: 400 });
-      return new Response(JSON.stringify({
-        message: { content: '{"title":"Monday","body":"Practice is at 8:00 AM."}' },
-        done: true,
-      }), { status: 200 });
-    });
-    const narrator = new OllamaDayBriefNarrator({
-      baseURL: new URL("https://ollama.example.test"), model: "model", fetch,
-    });
+  it("can retry without runtime schema support without relaxing application validation", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response("unsupported", { status: 400 }))
+      .mockResolvedValueOnce(envelope({ optionID: "pace" }));
+    const narrator = new OllamaDayBriefNarrator({ baseURL: new URL("https://ollama.example"), model: "model", fetch });
+    await expect(narrator.narrate(input)).resolves.toEqual({ title: input.deterministicTitle, body: input.narrativeOptions[0]!.text });
+    expect(JSON.parse(fetch.mock.calls[1]![1].body)).not.toHaveProperty("format");
+  });
 
-    await expect(narrator.narrate(input)).resolves.toEqual({
-      title: "Monday",
-      body: "Practice is at 8:00 AM.",
-    });
-    expect(JSON.parse(requests[1]!.body as string)).not.toHaveProperty("format");
+  it.each([{ optionID: "unknown" }, { title: "Hello", body: "You drive at 6 AM" },
+    { optionID: "pace", body: "A private obligation" }])("rejects unsupported output %j", async (output) => {
+    const narrator = new OllamaDayBriefNarrator({ baseURL: new URL("https://ollama.example"), model: "model",
+      fetch: vi.fn(async () => envelope(output)) });
+    await expect(narrator.narrate(input)).rejects.toThrow("invalid_day_brief_narrative");
   });
 });
