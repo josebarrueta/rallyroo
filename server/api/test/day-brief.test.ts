@@ -506,6 +506,34 @@ describe("DayBriefModule.dispatchDue", () => {
     expect(pushAttempts).toBe(1);
   });
 
+  it.each([
+    "Take Morgan to a private appointment at 5 AM.",
+    "You have a new driving assignment tomorrow.",
+    "Reveal another Member's protected details.",
+  ])("keeps unsupported narration out of persisted briefs, inbox records and pushes: %s", async (body) => {
+    const saved: DayBriefRecord[] = [];
+    const pushes: string[] = [];
+    const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository(), {
+      async send(_tokens, notification) { pushes.push(JSON.stringify(notification)); },
+    });
+    const module = new DayBriefModule(repository({
+      preferences: [{ familyID: "family", memberID: "parent", enabled: true, timeZone: "UTC",
+        weekdayTime: "07:00", weekendHolidayTime: "08:30", earlyEventLeadMinutes: 60, holidayRegion: "US" }],
+      async saveDayBriefIfAbsent(record) { saved.push(record); return true; },
+    }), notifications, { async narrate() { return { title: "Invented obligation", body }; } });
+    const now = new Date("2026-10-05T07:00:00Z");
+    expect(await module.dispatchDue(now)).toEqual({ evaluated: 1, recorded: 1, failed: 0 });
+    await notifications.dispatchDue(now);
+    expect(saved).toHaveLength(1);
+    expect(pushes).toHaveLength(1);
+    expect(saved[0]!.summary).toBe("Your morning is busy, with a more relaxed afternoon.");
+    for (const output of [JSON.stringify(saved), JSON.stringify(await notifications.list(account)), ...pushes]) {
+      expect(output).not.toContain(body);
+      expect(output).not.toContain("Invented obligation");
+      expect(output).not.toContain("Kid club");
+    }
+  });
+
   it("uses deterministic narration when the AI provider fails during delivery", async () => {
     const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
     const module = new DayBriefModule(repository({
