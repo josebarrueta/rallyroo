@@ -49,6 +49,7 @@ import {
 import type { TravelWaypoint } from "./travel-preview.js";
 import type {
   MemberInboxRecord,
+  InboxPageQuery,
   NotificationCenterRepository,
 } from "./notification-center.js";
 import type {
@@ -2457,6 +2458,21 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
        WHERE family_id = $1 AND member_id = $2 AND deleted_at IS NULL
        ORDER BY occurred_at DESC, id LIMIT $3`,
       [familyID, memberID, limit],
+    );
+    return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
+  }
+
+  async inboxRecordPage(familyID: string, memberID: string, query: InboxPageQuery): Promise<MemberInboxRecord[]> {
+    const result = await this.pool.query<MemberInboxRow>(
+      `SELECT id::text, family_id, member_id, kind, deduplication_digest,
+              occurred_at, read_at, details_ciphertext
+       FROM member_notification_inbox
+       WHERE family_id = $1 AND member_id = $2 AND deleted_at IS NULL
+         AND (NOT $3::boolean OR read_at IS NULL)
+         AND ($4::timestamptz IS NULL OR (occurred_at, id) < ($4::timestamptz, $5::uuid))
+       ORDER BY occurred_at DESC, id DESC LIMIT $6`,
+      [familyID, memberID, query.unreadOnly, query.before?.occurredAt.toISOString() ?? null,
+        query.before?.id ?? null, query.limit],
     );
     return Promise.all(result.rows.map((row) => this.inboxRecordFromRow(row)));
   }

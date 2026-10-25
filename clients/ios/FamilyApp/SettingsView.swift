@@ -3,6 +3,7 @@ import PhotosUI
 import Vision
 import ImageIO
 import FamilyCore
+import UserNotifications
 
 struct SettingsView: View {
     let dataIsSynced: Bool
@@ -21,6 +22,12 @@ struct SettingsView: View {
     private let canManageFamilyPlaces: Bool
     private let canManageShoppingCatalog: Bool
     private let preferences = ConflictAlertPreferences()
+    private let notificationPermissions: any NotificationPermissionProvider
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @State private var notificationHealth: NotificationPermissionHealth?
+    @State private var isRequestingPermission = false
+    @State private var permissionError: String?
 
     init(
         dataIsSynced: Bool = false,
@@ -36,6 +43,7 @@ struct SettingsView: View {
         locationSearch: (any LocationSearch)? = nil,
         canManageFamilyPlaces: Bool = false,
         canManageShoppingCatalog: Bool = false,
+        notificationPermissions: any NotificationPermissionProvider = SystemNotificationPermissionProvider(),
         onSignOut: SignOutAction = SignOutAction({}),
         onDeleteAccount: DeleteAccountAction = DeleteAccountAction({})
     ) {
@@ -52,6 +60,7 @@ struct SettingsView: View {
         self.locationSearch = locationSearch
         self.canManageFamilyPlaces = canManageFamilyPlaces
         self.canManageShoppingCatalog = canManageShoppingCatalog
+        self.notificationPermissions = notificationPermissions
         self.onSignOut = onSignOut
         self.onDeleteAccount = onDeleteAccount
     }
@@ -67,6 +76,39 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Notifications") {
+                    if let health = notificationHealth {
+                        LabeledContent("Permission", value: health.title)
+                            .accessibilityIdentifier("notification-permission-status")
+                        Text(health.guidance).font(.caption).foregroundStyle(.secondary)
+                        if health.canRequest {
+                            Button(isRequestingPermission ? "Requesting…" : "Enable notifications") {
+                                Task {
+                                    isRequestingPermission = true
+                                    defer { isRequestingPermission = false }
+                                    do {
+                                        let granted = try await notificationPermissions.request()
+                                        if granted {
+                                            if dataIsSynced { UIApplication.shared.registerForRemoteNotifications() }
+                                            NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
+                                        }
+                                        permissionError = nil
+                                    } catch {
+                                        permissionError = "Couldn't request notification permission. Please try again."
+                                    }
+                                    notificationHealth = await notificationPermissions.health()
+                                }
+                            }
+                            .disabled(isRequestingPermission)
+                        }
+                        if health.canOpenSettings {
+                            Button("Open iPhone Settings") {
+                                openURL(URL(string: UIApplication.openSettingsURLString)!)
+                            }
+                        }
+                    } else {
+                        ProgressView("Checking notification permission…")
+                    }
+                    if let permissionError { Text(permissionError).font(.caption).foregroundStyle(.secondary) }
                     Toggle("Save conflict alerts", isOn: $conflictAlertsEnabled)
                         .onChange(of: conflictAlertsEnabled) { newValue in
                             preferences.areConflictAlertsEnabled = newValue
@@ -151,7 +193,11 @@ struct SettingsView: View {
 
                 Section("About") {
                     LabeledContent("App", value: "Rallyroo")
-                    LabeledContent("Data", value: dataIsSynced ? "Synced" : "Stored on this device")
+                    LabeledContent("Data", value: dataIsSynced ? "Cloud-backed" : "Stored on this device")
+                    if dataIsSynced {
+                        Text("Cloud-backed does not mean up to date. Schedule and Alerts show their last successful refresh and any saved-data fallback.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Account") {
@@ -167,6 +213,10 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .task { notificationHealth = await notificationPermissions.health() }
+            .onChange(of: scenePhase) { phase in
+                if phase == .active { Task { notificationHealth = await notificationPermissions.health() } }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
                 guard let destination = note.object as? InboxNotificationDestination,
                       destination.kind == .commuteSubscription,
@@ -238,6 +288,34 @@ struct SettingsView: View {
                 accountDeletionError = "We couldn't confirm account deletion. Please contact Rallyroo support before signing in again."
             }
         }
+    }
+}
+
+struct SystemNotificationPermissionProvider: NotificationPermissionProvider {
+    func health() async -> NotificationPermissionHealth {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_NOTIFICATION_PERMISSION"],
+           let authorization = NotificationPermissionHealth.Authorization(rawValue: raw) {
+            return NotificationPermissionHealth(authorization: authorization,
+                alertsEnabled: authorization == .authorized, badgesEnabled: authorization == .authorized)
+        }
+        #endif
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        let authorization: NotificationPermissionHealth.Authorization
+        switch settings.authorizationStatus {
+        case .notDetermined: authorization = .notRequested
+        case .denied: authorization = .denied
+        case .authorized: authorization = .authorized
+        case .provisional: authorization = .provisional
+        case .ephemeral: authorization = .ephemeral
+        @unknown default: authorization = .denied
+        }
+        return NotificationPermissionHealth(authorization: authorization,
+            alertsEnabled: settings.alertSetting == .enabled, badgesEnabled: settings.badgeSetting == .enabled)
+    }
+
+    func request() async throws -> Bool {
+        try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
     }
 }
 
@@ -1508,9 +1586,15 @@ private struct ShoppingCatalogView: View {
     @State private var requestingItem: PantryItem?
     @State private var observingItem: PantryItem?
     @State private var errorMessage: String?
+    @State private var searchText = ""
+
+    private var searchedItems: [PantryItem] {
+        catalog.items.filter { AppSearch.matches(searchText, in: [$0.name, $0.category ?? ""]) }
+    }
 
     var body: some View {
         List {
+            if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Section("Shopping routines") {
                 if catalog.routines.isEmpty {
                     Text("No shopping routines yet")
@@ -1580,14 +1664,18 @@ private struct ShoppingCatalogView: View {
                 }
             }
 
+            }
+            if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, searchedItems.isEmpty {
+                Text("No matching Pantry items")
+            }
             if catalog.items.isEmpty {
                 Section("Pantry catalog") {
                     Text("No Pantry items yet").foregroundStyle(.secondary)
                 }
             }
-            ForEach(PantryItemPresets.orderedCategories(in: catalog.items.map(\.category)), id: \.self) { category in
+            ForEach(PantryItemPresets.orderedCategories(in: searchedItems.map(\.category)), id: \.self) { category in
                 Section("Pantry · \(category)") {
-                    ForEach(catalog.items.filter { PantryItemPresets.displayCategory($0.category) == category }) { item in
+                    ForEach(searchedItems.filter { PantryItemPresets.displayCategory($0.category) == category }) { item in
                         VStack(alignment: .leading, spacing: 10) {
                             itemRow(item)
                             HStack {
@@ -1611,6 +1699,7 @@ private struct ShoppingCatalogView: View {
             }
         }
         .navigationTitle("Shopping and Pantry")
+        .searchable(text: $searchText, prompt: "Search Pantry")
         .toolbar {
             if canManage {
                 ToolbarItemGroup(placement: .primaryAction) {

@@ -78,6 +78,7 @@ public actor RemoteEventStore: EventStore {
     private struct CachedEvents: Codable {
         let accountID: String
         let events: [FamilyEvent]
+        let refreshedAt: Date?
     }
 
     private struct ImportedEventSettingsRequest: Encodable {
@@ -143,11 +144,15 @@ public actor RemoteEventStore: EventStore {
             let response = try await transport.send(HTTPRequest(method: .get, url: eventsURL))
             try response.requireSuccess()
             let events = try decoder.decode([FamilyEvent].self, from: response.body)
+            guard try await accountID() == activeAccountID else { throw CancellationError() }
+            let refreshedAt = Date.now
             if let activeAccountID {
-                try? writeCache(CachedEvents(accountID: activeAccountID, events: events))
+                try? writeCache(CachedEvents(accountID: activeAccountID, events: events, refreshedAt: refreshedAt))
             }
-            return EventSnapshot(events: events, freshness: .fresh)
+            return EventSnapshot(events: events, freshness: .fresh, refreshedAt: refreshedAt)
         } catch {
+            if error is CancellationError { throw error }
+            guard try await accountID() == activeAccountID else { throw CancellationError() }
             if case RemoteStoreError.requestFailed(let statusCode) = error,
                statusCode == 401 || statusCode == 403 {
                 throw error
@@ -157,7 +162,7 @@ public actor RemoteEventStore: EventStore {
                   cached.accountID == activeAccountID else {
                 throw error
             }
-            return EventSnapshot(events: cached.events, freshness: .cached)
+            return EventSnapshot(events: cached.events, freshness: .cached, refreshedAt: cached.refreshedAt)
         }
     }
 

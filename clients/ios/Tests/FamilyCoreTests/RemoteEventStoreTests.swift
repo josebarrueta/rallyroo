@@ -128,6 +128,9 @@ final class RemoteEventStoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.events, [event])
         XCTAssertEqual(snapshot.freshness, .cached)
+        XCTAssertNotNil(onlineSnapshot.refreshedAt)
+        XCTAssertEqual(try XCTUnwrap(snapshot.refreshedAt).timeIntervalSince1970,
+                       try XCTUnwrap(onlineSnapshot.refreshedAt).timeIntervalSince1970, accuracy: 1)
     }
 
     func testClearsTheCachedScheduleAtSessionEnd() async throws {

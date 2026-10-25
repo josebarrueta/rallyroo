@@ -15,6 +15,14 @@ struct NotificationsView: View {
     @State private var isPresentingDayBrief = false
     @State private var isPresentingDeleteAllConfirmation = false
     @State private var isUpdatingInbox = false
+    @State private var filter: InboxFilter = .all
+    @State private var nextCursor: String?
+    @State private var isLoadingMore = false
+    @State private var freshness: InboxFreshness = .local
+    @State private var refreshedAt: Date?
+    @State private var loadToken = UUID()
+
+    private var visibleConflicts: [ConflictNotification] { filter == .all ? conflicts : [] }
 
     var body: some View {
         NavigationStack {
@@ -25,13 +33,34 @@ struct NotificationsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("alerts-unread-count")
-                if isLoading && inbox.isEmpty && conflicts.isEmpty {
+                Picker("Show alerts", selection: $filter) {
+                    Text("All").tag(InboxFilter.all)
+                    Text("Unread").tag(InboxFilter.unread)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("alerts-filter")
+                if let refreshedAt {
+                    Label {
+                        Text(freshness == .cached ? "Saved alerts from \(refreshedAt.formatted()) — refresh unavailable" : "Updated \(refreshedAt.formatted())")
+                    } icon: {
+                        Image(systemName: freshness == .cached ? "wifi.slash" : "checkmark.circle")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("alerts-freshness")
+                }
+                if freshness == .cached {
+                    Text("Only the saved first page is available. Refresh when connected to load older alerts.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Retry refresh") { Task { await load() } }
+                }
+                if isLoading && inbox.isEmpty && visibleConflicts.isEmpty {
                     ProgressView("Loading alerts…")
-                } else if inbox.isEmpty && conflicts.isEmpty {
+                } else if inbox.isEmpty && visibleConflicts.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "bell.slash").font(.title).foregroundStyle(.secondary)
-                        Text("You're all caught up").font(.headline)
-                        Text("New family schedule alerts will appear here.")
+                        Text(filter == .unread ? "No unread alerts" : "You're all caught up").font(.headline)
+                        Text(filter == .unread ? "Switch to All to see read alerts." : "New family schedule alerts will appear here.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -50,7 +79,14 @@ struct NotificationsView: View {
                     let ids = offsets.map { inbox[$0].id }
                     Task { await delete(ids) }
                 }
-                ForEach(conflicts.reversed()) { conflict in
+                if nextCursor != nil {
+                    Button(isLoadingMore ? "Loading older alerts…" : "Load more alerts") {
+                        Task { await loadMore() }
+                    }
+                    .disabled(isLoadingMore || isLoading || isUpdatingInbox)
+                    .accessibilityIdentifier("alerts-load-more")
+                }
+                ForEach(visibleConflicts.reversed()) { conflict in
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 4) {
@@ -66,6 +102,11 @@ struct NotificationsView: View {
             .navigationTitle("Alerts")
             .refreshable { await load() }
             .task { await load() }
+            .onChange(of: filter) { _ in
+                inbox = []
+                nextCursor = nil
+                Task { await load() }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .notificationInboxDidChange)) { _ in
                 Task { await load() }
             }
@@ -121,7 +162,7 @@ struct NotificationsView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This removes every alert and saved conflict from your inbox.")
+                Text("This removes every alert and saved conflict, including alerts outside this filter and older pages.")
             }
             .tint(AppTheme.purple)
         }
@@ -171,18 +212,45 @@ struct NotificationsView: View {
     }
 
     @MainActor private func load() async {
+        let token = UUID()
+        loadToken = token
+        let requestedFilter = filter
         isLoading = true
-        defer { isLoading = false }
+        defer { if loadToken == token { isLoading = false } }
         do {
-            async let remote = inboxStore.notifications()
-            async let local = conflictStore.notifications()
-            inbox = try await remote
+            let page = try await inboxStore.page(filter: requestedFilter, cursor: nil)
+            guard loadToken == token, filter == requestedFilter else { return }
+            inbox = page.items
+            nextCursor = page.nextCursor
+            freshness = page.freshness
+            refreshedAt = page.refreshedAt
+            errorMessage = nil
             onInboxChanged()
-            conflicts = try await local
+            let saved = try await conflictStore.notifications()
+            guard loadToken == token else { return }
+            conflicts = saved
+        } catch {
+            guard loadToken == token else { return }
+            errorMessage = "Couldn't refresh alerts. Showing what is available."
+        }
+    }
+
+    @MainActor private func loadMore() async {
+        guard let cursor = nextCursor, !isLoadingMore, !isLoading else { return }
+        let token = loadToken
+        let requestedFilter = filter
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let page = try await inboxStore.page(filter: requestedFilter, cursor: cursor)
+            guard token == loadToken, requestedFilter == filter else { return }
+            let existing = Set(inbox.map(\.id))
+            inbox += page.items.filter { !existing.contains($0.id) }
+            nextCursor = page.nextCursor
             errorMessage = nil
         } catch {
-            conflicts = (try? await conflictStore.notifications()) ?? conflicts
-            errorMessage = "Couldn't refresh alerts. Showing what is available."
+            guard token == loadToken else { return }
+            errorMessage = "Couldn't load older alerts. Tap Load more alerts to retry."
         }
     }
 
@@ -206,6 +274,7 @@ struct NotificationsView: View {
             try await conflictStore.clear()
             inbox = []
             conflicts = []
+            nextCursor = nil
             errorMessage = nil
         } catch {
             await load()

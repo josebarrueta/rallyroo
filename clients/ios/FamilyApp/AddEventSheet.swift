@@ -45,6 +45,9 @@ struct AddEventSheet: View {
     @State private var locationSearchMessage: String?
     @State private var mutationID = UUID()
     @State private var deletionID = UUID()
+    @State private var initialDraft: FamilyEvent?
+    @State private var isConfirmingDiscard = false
+    @State private var plansTravelAfterDiscard = false
     @FocusState private var isLocationFieldFocused: Bool
 
     init(
@@ -281,6 +284,7 @@ struct AddEventSheet: View {
                     }
                 }
             }
+            .disabled(isSaving)
             .navigationTitle(existingEvent == nil ? "Add Event" : "Edit Event")
             .onChange(of: arrivalTargetEnabled) { enabled in
                 if enabled {
@@ -338,6 +342,16 @@ struct AddEventSheet: View {
                     locationSearchMessage = "Location suggestions are unavailable. You can still enter a location manually."
                 }
             }
+            .onAppear { if initialDraft == nil { initialDraft = comparableDraft } }
+            .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+            .alert("Discard unsaved changes?", isPresented: $isConfirmingDiscard) {
+                Button("Keep Editing", role: .cancel) { plansTravelAfterDiscard = false }
+                Button("Discard Changes", role: .destructive) {
+                    if plansTravelAfterDiscard { openTravelAfterDismissal() } else { dismiss() }
+                }
+            } message: {
+                Text("Your changes haven't been saved.")
+            }
             .toolbar {
                 if existingEvent != nil, onDelete != nil {
                     ToolbarItem(placement: .topBarLeading) {
@@ -352,8 +366,10 @@ struct AddEventSheet: View {
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        dismiss()
+                        plansTravelAfterDiscard = false
+                        if hasUnsavedChanges { isConfirmingDiscard = true } else { dismiss() }
                     }
+                    .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
@@ -437,7 +453,19 @@ struct AddEventSheet: View {
         }
     }
 
+    private var comparableDraft: FamilyEvent {
+        var draft = event
+        draft.participantIDs.sort { $0.rawValue < $1.rawValue }
+        draft.kidID = draft.participantIDs.first
+        return draft
+    }
+
+    private var hasUnsavedChanges: Bool {
+        initialDraft.map { $0 != comparableDraft } ?? false
+    }
+
     private func save(notifyParticipants: Bool) {
+        guard !isSaving else { return }
         isSaving = true
         Task {
             defer { isSaving = false }
@@ -526,7 +554,7 @@ struct AddEventSheet: View {
 
     private var event: FamilyEvent {
         FamilyEvent(
-            id: existingEvent?.id ?? UUID(),
+            id: existingEvent?.id ?? mutationID,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
             kidID: selectedParticipantIDs.first,
             participantIDs: Array(selectedParticipantIDs),
@@ -559,6 +587,15 @@ struct AddEventSheet: View {
             isShowingAlert = true
             return
         }
+        if hasUnsavedChanges {
+            plansTravelAfterDiscard = true
+            isConfirmingDiscard = true
+        } else {
+            openTravelAfterDismissal()
+        }
+    }
+
+    private func openTravelAfterDismissal() {
         dismiss()
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(250))

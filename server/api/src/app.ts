@@ -1675,6 +1675,26 @@ export function buildApp({
       deduplicationDigest: _deduplicationDigest, ...record }) => record);
   });
 
+  app.get("/v1/notifications/page", async (request, reply) => {
+    const account = requiredAccount(request);
+    if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });
+    const query = z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      filter: z.enum(["all", "unread"]).default("all"), cursor: z.string().min(1).max(600).optional(),
+    }).strict().safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ error: "invalid_inbox_page" });
+    try {
+      const page = await notificationCenter.page(account, query.data.limit, query.data.filter, query.data.cursor);
+      return { items: page.items.map(({ familyID: _familyID, memberID: _memberID,
+        deduplicationDigest: _deduplicationDigest, ...record }) => record), nextCursor: page.nextCursor };
+    } catch (error) {
+      if (error instanceof Error && error.message === "invalid_inbox_page") {
+        return reply.code(400).send({ error: "invalid_inbox_page" });
+      }
+      throw error;
+    }
+  });
+
   app.get("/v1/notifications/unread-count", async (request, reply) => {
     const account = requiredAccount(request);
     if (!notificationCenter) return reply.code(503).send({ error: "notification_center_unavailable" });

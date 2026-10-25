@@ -1,5 +1,6 @@
 import type {
   MemberInboxRecord,
+  InboxPageQuery,
   NotificationCenterRepository,
 } from "./notification-center.js";
 
@@ -27,6 +28,16 @@ export class InMemoryNotificationCenterRepository implements NotificationCenterR
       .filter((record) => record.familyID === familyID && record.memberID === memberID)
       .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
       .slice(0, limit);
+  }
+
+  async inboxRecordPage(familyID: string, memberID: string, query: InboxPageQuery): Promise<MemberInboxRecord[]> {
+    return [...this.recordsByDeduplication.values()]
+      .filter((record) => record.familyID === familyID && record.memberID === memberID
+        && (!query.unreadOnly || record.readAt === null)
+        && (!query.before || record.occurredAt < query.before.occurredAt
+          || (record.occurredAt.getTime() === query.before.occurredAt.getTime() && record.id < query.before.id)))
+      .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
+      .slice(0, query.limit);
   }
 
   async unreadInboxCount(familyID: string, memberID: string): Promise<number> {

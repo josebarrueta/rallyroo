@@ -41,8 +41,23 @@ public struct InboxNotification: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public enum InboxFilter: String, CaseIterable, Sendable { case all, unread }
+public enum InboxFreshness: Sendable { case local, live, cached }
+
+public struct InboxNotificationPage: Sendable {
+    public let items: [InboxNotification]
+    public let nextCursor: String?
+    public let freshness: InboxFreshness
+    public let refreshedAt: Date?
+
+    public init(items: [InboxNotification], nextCursor: String?, freshness: InboxFreshness, refreshedAt: Date? = nil) {
+        self.items = items; self.nextCursor = nextCursor; self.freshness = freshness; self.refreshedAt = refreshedAt
+    }
+}
+
 public protocol NotificationInboxStore: Sendable {
     func notifications() async throws -> [InboxNotification]
+    func page(filter: InboxFilter, cursor: String?) async throws -> InboxNotificationPage
     func unreadCount() async throws -> Int
     func markAllRead() async throws
     func markRead(id: UUID) async throws
@@ -52,6 +67,20 @@ public protocol NotificationInboxStore: Sendable {
 }
 
 public extension NotificationInboxStore {
+    func page(filter: InboxFilter, cursor: String? = nil) async throws -> InboxNotificationPage {
+        let records = try await notifications().filter { filter == .all || $0.readAt == nil }
+            .sorted { $0.occurredAt == $1.occurredAt ? $0.id.uuidString > $1.id.uuidString : $0.occurredAt > $1.occurredAt }
+        let offset: Int
+        if let cursor {
+            guard let parsed = Int(cursor), String(parsed) == cursor else { throw URLError(.badURL) }
+            offset = parsed
+        } else { offset = 0 }
+        guard offset >= 0, offset <= records.count else { throw URLError(.badURL) }
+        let items = Array(records.dropFirst(offset).prefix(50))
+        let end = offset + items.count
+        return InboxNotificationPage(items: items, nextCursor: end < records.count ? String(end) : nil, freshness: .local)
+    }
+
     func markAllRead() async throws {
         for item in try await notifications() where item.readAt == nil {
             try await markRead(id: item.id)
@@ -161,6 +190,49 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
         }
     }
 
+    public func page(filter: InboxFilter, cursor: String? = nil) async throws -> InboxNotificationPage {
+        let account = try await accountID()
+        var components = URLComponents(url: notificationsURL.appending(path: "page"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "filter", value: filter.rawValue)]
+        if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        do {
+            let response = try await transport.send(HTTPRequest(method: .get, url: components.url!))
+            try response.requireSuccess()
+            let page = try decoder.decode(InboxPageResponse.self, from: response.body)
+            guard try await accountID() == account else { throw CancellationError() }
+            let refreshedAt = Date.now
+            if cursor == nil, let url = pageCacheURL(filter: filter), let account {
+                let envelope = InboxPageCache(accountID: account, page: page, refreshedAt: refreshedAt)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try encoder.encode(envelope).write(to: url, options: .atomic)
+            }
+            return InboxNotificationPage(items: page.items, nextCursor: page.nextCursor, freshness: .live, refreshedAt: refreshedAt)
+        } catch {
+            if error is CancellationError { throw error }
+            if case RemoteStoreError.requestFailed(let status) = error, status == 401 || status == 403 { throw error }
+            guard cursor == nil, try await accountID() == account,
+                  let account, let url = pageCacheURL(filter: filter),
+                  let data = try? Data(contentsOf: url),
+                  let cached = try? decoder.decode(InboxPageCache.self, from: data), cached.accountID == account else { throw error }
+            // Only the first page is cached. Older pages require a successful connection.
+            return InboxNotificationPage(items: cached.page.items, nextCursor: nil, freshness: .cached, refreshedAt: cached.refreshedAt)
+        }
+    }
+
+    private func pageCacheURL(filter: InboxFilter) -> URL? {
+        cacheURL?.appendingPathExtension("page-\(filter.rawValue)")
+    }
+
+    private func invalidatePageCaches(account: String?) async throws {
+        guard try await accountID() == account else { throw CancellationError() }
+        for filter in InboxFilter.allCases {
+            guard let url = pageCacheURL(filter: filter),
+                  let data = try? Data(contentsOf: url),
+                  let cached = try? decoder.decode(InboxPageCache.self, from: data), cached.accountID == account else { continue }
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
     public func unreadCount() async throws -> Int {
         let account = try await accountID()
         do {
@@ -187,7 +259,7 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
             method: .post, url: notificationsURL.appending(path: "read-all")
         ))
         try response.requireSuccess()
-        guard try await accountID() == account else { throw CancellationError() }
+        try await invalidatePageCaches(account: account)
         if let envelope = try await cachedEnvelope() {
             let records = envelope.records.map { item in
                 InboxNotification(
@@ -202,10 +274,12 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
     public func ingest(_ notification: InboxNotification) async throws {}
 
     public func delete(id: UUID) async throws {
+        let account = try await accountID()
         let response = try await transport.send(HTTPRequest(
             method: .delete, url: notificationsURL.appending(path: id.uuidString)
         ))
         try response.requireSuccess()
+        try await invalidatePageCaches(account: account)
         if let envelope = try await cachedEnvelope() {
             let wasUnread = envelope.records.contains { $0.id == id && $0.readAt == nil }
             let count = envelope.unreadCount.map { max(0, $0 - (wasUnread ? 1 : 0)) }
@@ -217,16 +291,18 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
         let account = try await accountID()
         let response = try await transport.send(HTTPRequest(method: .delete, url: notificationsURL))
         try response.requireSuccess()
-        guard try await accountID() == account else { throw CancellationError() }
+        try await invalidatePageCaches(account: account)
         try await saveCache([], account: account, unreadCount: 0)
     }
 
     public func markRead(id: UUID) async throws {
+        let account = try await accountID()
         let response = try await transport.send(HTTPRequest(
             method: .patch,
             url: notificationsURL.appending(path: id.uuidString).appending(path: "read")
         ))
         try response.requireSuccess()
+        try await invalidatePageCaches(account: account)
         if let envelope = try await cachedEnvelope(),
            let index = envelope.records.firstIndex(where: { $0.id == id }) {
             var cached = envelope.records
@@ -262,6 +338,16 @@ public actor RemoteNotificationInboxStore: NotificationInboxStore {
         let envelope = try decoder.decode(InboxCacheEnvelope.self, from: Data(contentsOf: cacheURL))
         return envelope.accountID == account ? envelope : nil
     }
+}
+
+private struct InboxPageResponse: Codable {
+    let items: [InboxNotification]
+    let nextCursor: String?
+}
+private struct InboxPageCache: Codable {
+    let accountID: String
+    let page: InboxPageResponse
+    let refreshedAt: Date
 }
 
 private struct InboxCacheEnvelope: Codable {

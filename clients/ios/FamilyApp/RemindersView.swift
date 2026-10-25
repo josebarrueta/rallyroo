@@ -11,6 +11,7 @@ struct RemindersView: View {
     @State private var members: [FamilyMember] = []
     @State private var editingReminder: FamilyReminder?
     @State private var linkedReminder: FamilyReminder?
+    @State private var searchText = ""
     @State private var errorMessage: String?
 
     var body: some View {
@@ -24,7 +25,10 @@ struct RemindersView: View {
                 reminderSection("Today", reminders: oneTimeOpenReminders.filter { Calendar.current.isDateInToday($0.dueAt) })
                 reminderSection("Upcoming", reminders: oneTimeOpenReminders.filter { $0.dueAt >= endOfToday })
                 reminderSection("Recurring", reminders: recurringOpenReminders)
-                reminderSection("Completed", reminders: reminders.filter { $0.status == .completed })
+                reminderSection("Completed", reminders: searchedReminders.filter { $0.status == .completed })
+                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, searchedReminders.isEmpty {
+                    Text("No matching reminders")
+                }
                 if reminders.isEmpty, errorMessage == nil {
                     VStack(spacing: 8) {
                         Image(systemName: "checklist")
@@ -43,6 +47,8 @@ struct RemindersView: View {
                 }
             }
             .navigationTitle("Reminders")
+            .searchable(text: $searchText, prompt: "Search reminders")
+            .refreshable { await load() }
             .toolbar {
                 if session.role == .parent {
                     Button {
@@ -139,12 +145,20 @@ struct RemindersView: View {
         )]
     }
 
+    private var searchedReminders: [FamilyReminder] {
+        reminders.filter { reminder in
+            AppSearch.matches(searchText, in: [reminder.title] + availableMembers.filter {
+                reminder.assigneeIDs.contains($0.id)
+            }.map(\.name))
+        }
+    }
+
     private var oneTimeOpenReminders: [FamilyReminder] {
-        reminders.filter { $0.status == .open && !$0.hasRecurrence }
+        searchedReminders.filter { $0.status == .open && !$0.hasRecurrence }
     }
 
     private var recurringOpenReminders: [FamilyReminder] {
-        reminders.filter { $0.status == .open && $0.hasRecurrence }
+        searchedReminders.filter { $0.status == .open && $0.hasRecurrence }
     }
 
     private var startOfToday: Date { Calendar.current.startOfDay(for: .now) }
@@ -159,6 +173,9 @@ struct RemindersView: View {
             async let loadedMembers = memberStore.members()
             reminders = try await loadedReminders
             members = try await loadedMembers
+            for reminder in reminders where reminder.status == .open {
+                try? await alertScheduler?.schedule(reminder)
+            }
             errorMessage = nil
         }
         catch {
@@ -265,6 +282,8 @@ private struct ReminderEditorSheet: View {
     @State private var selectedWeekdays: Set<ReminderRecurrence.Weekday> = []
     @State private var hasEndDate = false
     @State private var endDate = Date.now.addingTimeInterval(60 * 60 * 24 * 90)
+    @State private var initialDraft: FamilyReminder?
+    @State private var isConfirmingDiscard = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -359,10 +378,22 @@ private struct ReminderEditorSheet: View {
                     Text(errorMessage).foregroundStyle(.red)
                 }
             }
+            .disabled(isSaving)
             .navigationTitle(originalReminder.title.isEmpty ? "Add Reminder" : "Edit Reminder")
+            .onAppear { if initialDraft == nil { initialDraft = draftReminder } }
+            .interactiveDismissDisabled(hasUnsavedChanges || isSaving)
+            .alert("Discard unsaved changes?", isPresented: $isConfirmingDiscard) {
+                Button("Keep Editing", role: .cancel) {}
+                Button("Discard Changes", role: .destructive) { dismiss() }
+            } message: {
+                Text("Your changes haven't been saved.")
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        if hasUnsavedChanges { isConfirmingDiscard = true } else { dismiss() }
+                    }
+                    .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
@@ -380,32 +411,36 @@ private struct ReminderEditorSheet: View {
         }
     }
 
+    private var draftReminder: FamilyReminder {
+        var updated = originalReminder
+        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.assigneeIDs = assigneeIDs.sorted { $0.rawValue < $1.rawValue }
+        updated.dueAt = dueAt
+        updated.alertLeadTime = alertChoice.leadTime
+        if isRecurring {
+            updated.recurrenceFrequency = frequency
+            updated.recurrenceInterval = 1
+            updated.recurrenceWeekdays = frequency == .weekly || frequency == .biweekly ? Array(selectedWeekdays).sorted() : []
+            updated.recurrenceEndDate = hasEndDate ? endDate : nil
+            updated.recurrenceTimeZone = originalReminder.recurrenceTimeZone ?? TimeZone.autoupdatingCurrent.identifier
+        } else {
+            updated.recurrenceFrequency = nil
+            updated.recurrenceWeekdays = []
+            updated.recurrenceEndDate = nil
+            updated.recurrenceTimeZone = nil
+        }
+        return updated
+    }
+
+    private var hasUnsavedChanges: Bool { initialDraft.map { $0 != draftReminder } ?? false }
+
     private func save() {
+        guard !isSaving else { return }
         isSaving = true
         Task {
             defer { isSaving = false }
             do {
-                var updated = originalReminder
-                updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                updated.assigneeIDs = Array(assigneeIDs)
-                updated.dueAt = dueAt
-                updated.alertLeadTime = alertChoice.leadTime
-                if isRecurring {
-                    updated.recurrenceFrequency = frequency
-                    updated.recurrenceInterval = 1
-                    updated.recurrenceWeekdays = frequency == .weekly || frequency == .biweekly
-                        ? Array(selectedWeekdays).sorted()
-                        : []
-                    updated.recurrenceEndDate = hasEndDate ? endDate : nil
-                    updated.recurrenceTimeZone = originalReminder.recurrenceTimeZone
-                        ?? TimeZone.autoupdatingCurrent.identifier
-                } else {
-                    updated.recurrenceFrequency = nil
-                    updated.recurrenceWeekdays = []
-                    updated.recurrenceEndDate = nil
-                    updated.recurrenceTimeZone = nil
-                }
-                try await onSave(updated)
+                try await onSave(draftReminder)
                 dismiss()
             }
             catch {

@@ -23,6 +23,7 @@ struct WeeklyScheduleView: View {
     @State private var importedEvent: FamilyEvent?
     @State private var linkedCalendarSourceID: String?
     @State private var selectedParticipantID: KidID?
+    @State private var searchText = ""
     @State private var isCapturingSchedule = false
     @State private var captureImageData: Data?
     @Binding private var incomingSharedCaptureImageData: Data?
@@ -122,7 +123,7 @@ struct WeeklyScheduleView: View {
                  }
 
                 if viewModel.isShowingCachedEvents {
-                    Label("Offline — showing saved schedule", systemImage: "wifi.slash")
+                    Label("Refresh unavailable — showing saved schedule", systemImage: "wifi.slash")
                          .font(.caption.weight(.semibold))
                          .foregroundStyle(.secondary)
                          .frame(maxWidth: .infinity)
@@ -130,7 +131,21 @@ struct WeeklyScheduleView: View {
                          .background(AppTheme.purple.opacity(0.08))
                  }
 
+                if let refreshedAt = viewModel.refreshedAt {
+                    Text("Last updated \(refreshedAt.formatted())")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("schedule-last-updated")
+                }
+                if viewModel.errorMessage != nil, !viewModel.events.isEmpty {
+                    Label("Refresh failed — showing the previous schedule", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if viewModel.isShowingCachedEvents || viewModel.errorMessage != nil {
+                    Button("Retry refresh") { Task { await viewModel.loadEvents() } }
+                        .disabled(viewModel.isRefreshing)
+                }
                 daySections
+                     .refreshable { await viewModel.loadEvents() }
                      .scrollContentBackground(.hidden)
                      .background(AppTheme.background)
                      .onAppear {
@@ -163,6 +178,7 @@ struct WeeklyScheduleView: View {
                      }
             }
             .navigationTitle("Rallyroo")
+            .searchable(text: $searchText, prompt: "Search events")
             .task { await loadConnectionSummaries() }
             .toolbar { toolbarContent }
             .sheet(isPresented: Binding(
@@ -457,7 +473,9 @@ struct WeeklyScheduleView: View {
 
     @ViewBuilder
     private var daySections: some View {
-        if let errorMessage = viewModel.errorMessage {
+        if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            eventSearchResults
+        } else if let errorMessage = viewModel.errorMessage, viewModel.events.isEmpty {
             List {
                 Label(errorMessage, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
@@ -466,6 +484,31 @@ struct WeeklyScheduleView: View {
             monthSections
         } else {
             weekSections
+        }
+    }
+
+    private var eventSearchResults: some View {
+        let matches = viewModel.events.filter { event in
+            (selectedParticipantID.map { event.participantIDs.contains($0) } ?? true)
+                && AppSearch.matches(searchText, in: [event.title, event.location ?? ""])
+        }.sorted { $0.startTime < $1.startTime }
+        return List {
+            Text("Searches loaded events and recurring series across all dates. Repeating events show their series start.")
+                .font(.caption).foregroundStyle(.secondary)
+            if matches.isEmpty { Text("No matching events") }
+            ForEach(matches) { event in
+                Button { linkedEvent = event } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(event.title).font(.headline)
+                        Text(event.startTime.formatted()).font(.subheadline).foregroundStyle(.secondary)
+                        if let recurrence = event.recurrence {
+                            Label("Repeats \(recurrence.frequency.rawValue)", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .accessibilityHint("Open event details")
+            }
         }
     }
 
