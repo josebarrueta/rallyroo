@@ -1319,7 +1319,9 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No matching Pantry items"].waitForExistence(timeout: 5))
         app.buttons["Clear text"].tap()
         if app.buttons["Close"].exists { app.buttons["Close"].tap() }
-        else if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() }
+        else if app.navigationBars["Shopping and Pantry"].buttons["Cancel"].exists {
+            app.navigationBars["Shopping and Pantry"].buttons["Cancel"].tap()
+        }
         let restored = app.staticTexts["Oat milk"]
         for _ in 0..<6 where !restored.isHittable { app.swipeUp() }
         XCTAssertTrue(restored.waitForExistence(timeout: 5))
