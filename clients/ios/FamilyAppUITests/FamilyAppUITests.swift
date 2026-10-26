@@ -805,7 +805,18 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(grid.waitForExistence(timeout: 5))
         XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
 
+        // Cover a slow, held drag as well as quick flicks and repeated paging.
+        grid.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).press(
+            forDuration: 0.05,
+            thenDragTo: grid.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)),
+            withVelocity: .slow,
+            thenHoldForDuration: 1.5
+        )
+        XCTAssertEqual(title.label, next.formatted(.dateTime.month(.wide).year()))
         grid.swipeLeft()
+        let following = try XCTUnwrap(calendar.date(byAdding: .month, value: 2, to: month))
+        XCTAssertEqual(title.label, following.formatted(.dateTime.month(.wide).year()))
+        grid.swipeRight()
         XCTAssertEqual(title.label, next.formatted(.dateTime.month(.wide).year()))
         grid.swipeRight()
         XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
@@ -816,6 +827,69 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertEqual(title.label, month.formatted(.dateTime.month(.wide).year()))
         app.buttons["schedule-previous-page"].tap()
         XCTAssertEqual(title.label, previous.formatted(.dateTime.month(.wide).year()))
+    }
+
+    func testMonthPagerFitsASixWeekMonthWithoutClippingTheLastRow() throws {
+        let app = localApp()
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Month"].tap()
+
+        let calendar = Calendar.autoupdatingCurrent
+        let grid = app.otherElements["schedule-month-grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        var month = try XCTUnwrap(calendar.dateInterval(of: .month, for: .now))
+        var lastShownDay = month.start
+        var foundSixWeeks = false
+        for _ in 0..<12 {
+            let firstWeek = try XCTUnwrap(calendar.dateInterval(of: .weekOfYear, for: month.start))
+            let lastDay = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: month.end))
+            let lastWeek = try XCTUnwrap(calendar.dateInterval(of: .weekOfYear, for: lastDay))
+            let days = calendar.dateComponents([.day], from: firstWeek.start, to: lastWeek.end).day
+            if days == 42 {
+                foundSixWeeks = true
+                lastShownDay = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: lastWeek.end))
+                break
+            }
+            grid.swipeLeft()
+            month = try XCTUnwrap(calendar.dateInterval(of: .month, for: month.end))
+        }
+        XCTAssertTrue(foundSixWeeks)
+        XCTAssertEqual(app.staticTexts["schedule-month-title"].label, month.start.formatted(.dateTime.month(.wide).year()))
+        XCTAssertEqual(grid.buttons.count, 42, "Only the current page's dates should be accessible")
+        app.swipeUp()
+        XCTAssertTrue(grid.buttons[lastShownDay.formatted(.dateTime.weekday(.wide).month(.wide).day())].isHittable)
+    }
+
+    func testPartialMonthDragsSettleBackWithoutChangingTheMonth() throws {
+        let app = localApp()
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.buttons["schedule-view-menu"].tap()
+        app.buttons["Month"].tap()
+
+        let grid = app.otherElements["schedule-month-grid"]
+        let title = app.staticTexts["schedule-month-title"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        let originalTitle = title.label
+        let start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        // More than the former 50-point threshold, but well short of a full page.
+        // Holding removes flick velocity: both directions must settle back.
+        let distance = grid.frame.width * 0.2
+        for direction in [-1.0, 1.0] {
+            start.press(
+                forDuration: 0.05,
+                thenDragTo: start.withOffset(CGVector(dx: distance * direction, dy: 0)),
+                withVelocity: .slow,
+                thenHoldForDuration: 1.5
+            )
+            XCTAssertEqual(title.label, originalTitle)
+        }
+
+        grid.swipeLeft()
+        let next = try XCTUnwrap(Calendar.autoupdatingCurrent.date(byAdding: .month, value: 1, to: .now))
+        XCTAssertEqual(title.label, next.formatted(.dateTime.month(.wide).year()))
     }
 
     func testMonthCalendarStillSelectsDaysAndScrollsVerticallyWithoutPaging() throws {

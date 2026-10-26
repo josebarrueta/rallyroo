@@ -522,48 +522,21 @@ struct WeeklyScheduleView: View {
     }
 
     private var monthSections: some View {
-        List {
+        let pages = (-1...1).map { offset in
+            var page = viewport
+            page.move(by: offset)
+            return (viewport: page, occurrences: EventOccurrenceExpander.occurrences(
+                of: viewModel.events, in: page.visibleInterval
+            ))
+        }
+        return List {
             Section {
-                VStack(spacing: 10) {
-                    Text(viewport.anchorDate.formatted(.dateTime.month(.wide).year()))
-                        .font(.title3.bold())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("schedule-month-title")
-                    // Keep this grid eager and deterministically sized. A LazyVGrid inside
-                    // List can repeatedly change its preferred cell height during UIKit's
-                    // collection-view layout pass and trigger a recursive-layout trap.
-                    VStack(spacing: 8) {
-                        HStack(spacing: 4) {
-                            ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
-                                Text(symbol)
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity)
-                                    .accessibilityIdentifier("schedule-month-weekday-\(index)")
-                            }
-                        }
-                        ForEach(Array(monthWeeks.enumerated()), id: \.offset) { _, week in
-                            HStack(spacing: 4) {
-                                ForEach(week, id: \.self) { day in
-                                    monthDayButton(day)
-                                }
-                            }
-                        }
-                    }
+                MonthCalendarPager(onPage: { viewport.move(by: $0) }) { offset in
+                    let page = pages[offset + 1]
+                    monthCalendar(in: page.viewport, occurrences: page.occurrences)
                 }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 30)
-                        .onEnded { value in
-                            let horizontal = value.translation.width
-                            let vertical = value.translation.height
-                            // Require a deliberate horizontal swipe, not a tap or list scroll.
-                            guard abs(horizontal) >= 50, abs(horizontal) > abs(vertical) * 1.5 else { return }
-                            viewport.move(by: horizontal < 0 ? 1 : -1)
-                        }
-                )
-                .accessibilityElement(children: .contain)
+                // Recenter the three-page window only after native paging completes.
+                .id(viewport.anchorDate)
                 .accessibilityIdentifier("schedule-month-grid")
                 .accessibilityHint("Swipe left for next month or right for previous month, or use the arrow buttons.")
             }
@@ -613,11 +586,40 @@ struct WeeklyScheduleView: View {
         }
     }
 
-    private func monthDayButton(_ day: Date) -> some View {
+    private func monthCalendar(in page: ScheduleViewport, occurrences: [EventOccurrence]) -> some View {
+        VStack(spacing: 10) {
+            Text(page.anchorDate.formatted(.dateTime.month(.wide).year()))
+                .font(.title3.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("schedule-month-title")
+            // Keep the grid eager: lazy grids inside List can trigger recursive layout.
+            VStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { index, symbol in
+                        Text(symbol)
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .accessibilityIdentifier("schedule-month-weekday-\(index)")
+                    }
+                }
+                ForEach(Array(monthWeeks(in: page).enumerated()), id: \.offset) { _, week in
+                    HStack(spacing: 4) {
+                        ForEach(week, id: \.self) { day in
+                            monthDayButton(day, in: page, occurrences: occurrences)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func monthDayButton(_ day: Date, in page: ScheduleViewport, occurrences: [EventOccurrence]) -> some View {
         let calendar = Calendar.autoupdatingCurrent
-        let isSelected = calendar.isDate(day, inSameDayAs: viewport.selectedDate)
-        let isCurrentMonth = viewport.monthInterval?.contains(day) == true
-        let dayEvents = events(on: day)
+        let isSelected = calendar.isDate(day, inSameDayAs: page.selectedDate)
+        let isCurrentMonth = page.monthInterval?.contains(day) == true
+        let dayEvents = events(on: day, in: occurrences)
         return Button {
             viewport.select(day)
         } label: {
@@ -651,8 +653,8 @@ struct WeeklyScheduleView: View {
         return Color(familyColorTag: colorTag)
     }
 
-    private var monthWeeks: [[Date]] {
-        let dates = viewport.visibleDates
+    private func monthWeeks(in page: ScheduleViewport) -> [[Date]] {
+        let dates = page.visibleDates
         return stride(from: 0, to: dates.count, by: 7).map { start in
             Array(dates[start..<min(start + 7, dates.count)])
         }
@@ -804,15 +806,59 @@ struct WeeklyScheduleView: View {
          )
      }
 
-    private func events(on day: Date) -> [EventOccurrence] {
+    private func events(on day: Date, in occurrences: [EventOccurrence]? = nil) -> [EventOccurrence] {
         let calendar = Calendar.autoupdatingCurrent
-        return visibleOccurrences.filter {
+        return (occurrences ?? visibleOccurrences).filter {
             calendar.isDate($0.event.startTime, inSameDayAs: day)
                  && (selectedParticipantID == nil || $0.event.participantIDs.contains(selectedParticipantID!))
          }
      }
 
  }
+
+// Native paging supplies finger tracking, velocity, cancellation and settling without
+// custom animation timers. Only the center page participates in accessibility/taps.
+private struct MonthCalendarPager<Content: View>: View {
+    @State private var selection = 0
+    private let onPage: (Int) -> Void
+    private let content: (Int) -> Content
+
+    init(onPage: @escaping (Int) -> Void, @ViewBuilder content: @escaping (Int) -> Content) {
+        self.onPage = onPage
+        self.content = content
+    }
+
+    var body: some View {
+        ZStack {
+            // Reserve enough intrinsic height for every preview, including six-week
+            // months and wrapped large-text titles. No lazy grid or guessed height.
+            ForEach(-1...1, id: \.self) { index in
+                content(index).hidden().accessibilityHidden(true)
+            }
+        }
+        .overlay {
+            TabView(selection: $selection) {
+                ForEach(-1...1, id: \.self) { index in
+                    content(index)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .tag(index)
+                        .accessibilityHidden(index != 0)
+                        .allowsHitTesting(index == 0)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+        }
+        .accessibilityElement(children: .contain)
+        .onChange(of: selection) { page in
+            guard page != 0 else { return }
+            // The parent replaces this pager at the new month. Recenter without
+            // a second animation after the native transition has already settled.
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { onPage(page) }
+        }
+    }
+}
 
  // MARK: - Lifecycle scope sheet
 
