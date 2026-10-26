@@ -64,6 +64,34 @@ final class ScheduleViewportTests: XCTestCase {
         XCTAssertEqual(viewport.visibleDates.last, try date(2026, 9, 29))
     }
 
+    func testMonthMoveForwardAndBackAcrossYearBoundaryKeepsSelectedDay() throws {
+        var viewport = ScheduleViewport(
+            mode: .month,
+            anchorDate: try date(2026, 12, 15),
+            calendar: calendar
+        )
+
+        viewport.move(by: 1)
+        XCTAssertEqual(viewport.monthInterval?.start, try date(2027, 1, 1))
+        XCTAssertEqual(viewport.selectedDate, try date(2027, 1, 15))
+
+        viewport.move(by: -1)
+        XCTAssertEqual(viewport.monthInterval?.start, try date(2026, 12, 1))
+        XCTAssertEqual(viewport.selectedDate, try date(2026, 12, 15))
+    }
+
+    func testMonthMoveForwardClampsSelectedDayInLeapFebruary() throws {
+        var viewport = ScheduleViewport(
+            mode: .month,
+            anchorDate: try date(2028, 1, 31),
+            calendar: calendar
+        )
+
+        viewport.move(by: 1)
+        XCTAssertEqual(viewport.monthInterval?.start, try date(2028, 2, 1))
+        XCTAssertEqual(viewport.selectedDate, try date(2028, 2, 29))
+    }
+
     private func date(_ year: Int, _ month: Int, _ day: Int) throws -> Date {
         try XCTUnwrap(calendar.date(from: DateComponents(year: year, month: month, day: day)))
     }
