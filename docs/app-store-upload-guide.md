@@ -2,10 +2,17 @@
 
 ## Current status
 
-The previous manual upload workflow was defective and has been replaced by
-`.github/workflows/testflight.yml`. Static checks and archive-validation unit tests
-are available; a real signed upload is still required before this is operational.
-Issue #8 must remain open until that acceptance run succeeds.
+The internal upload workflow `.github/workflows/testflight.yml` is operational.
+For example, version 1.0 build **187** was processed from source
+`176fc26b78a6964dd2dc8258b10b43c3b7d13a05` (upload run `40264805635`,
+successful deployment `7323514597`). Issue #8 is closed. Queue, signing/archive
+validation and diagnostic-redaction tests remain part of CI; the macOS delivery
+job additionally executes the real temporary-keychain lifecycle test.
+
+Internal upload success is **not** external beta approval. See the
+[external TestFlight readiness guide](external-testflight-readiness.md) for
+reviewer access, Apple-owned requirements, metadata drafts and operator submission.
+The uploader still does not submit external review or publish a public link.
 
 ## Trigger and destination
 

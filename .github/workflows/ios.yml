@@ -8,11 +8,45 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  verification:
+    name: iOS verification
+    needs: [changes, core-contract, ui, ui-narrow, delivery-contracts]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every applicable verification job
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          IOS_CHANGED: ${{ needs.changes.outputs.ios }}
+          DELIVERY_CHANGED: ${{ needs.changes.outputs.delivery }}
+          CORE_RESULT: ${{ needs.core-contract.result }}
+          UI_RESULT: ${{ needs.ui.result }}
+          NARROW_RESULT: ${{ needs.ui-narrow.result }}
+          DELIVERY_RESULT: ${{ needs.delivery-contracts.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CHANGES_RESULT" == success ]] || exit 1
+          case "$IOS_CHANGED" in
+            true) expected=success ;;
+            false) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          [[ "$CORE_RESULT" == "$expected" && "$UI_RESULT" == "$expected" && "$NARROW_RESULT" == "$expected" ]] || exit 1
+          case "$DELIVERY_CHANGED" in
+            true) [[ "$DELIVERY_RESULT" == success ]] || exit 1 ;;
+            false) [[ "$DELIVERY_RESULT" == skipped ]] || exit 1 ;;
+            *) exit 1 ;;
+          esac
+
   changes:
     runs-on: ubuntu-24.04
     outputs:
       ios: ${{ steps.filter.outputs.ios }}
+      delivery: ${{ steps.filter.outputs.delivery }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -29,6 +63,7 @@ jobs:
             comparison_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
           elif [[ -z "$BEFORE_SHA" || "$BEFORE_SHA" =~ ^0+$ ]]; then
             echo "ios=true" >> "$GITHUB_OUTPUT"
+            echo "delivery=true" >> "$GITHUB_OUTPUT"
             exit 0
           else
             comparison_base=$BEFORE_SHA
@@ -41,11 +76,31 @@ jobs:
             server/api/package.json \
             server/api/package-lock.json \
             scripts/test-ai-capture-concurrency.sh \
+            scripts/verify-xctest-results.py \
+            scripts/test_xctest_results.py \
+            scripts/ios-narrow-tests.txt \
             .github/workflows/ios.yml; then
             echo "ios=false" >> "$GITHUB_OUTPUT"
           else
             echo "ios=true" >> "$GITHUB_OUTPUT"
           fi
+
+          if git diff --quiet "$comparison_base" "$HEAD_SHA" -- \
+            scripts .github/workflows/testflight.yml .github/workflows/ios.yml .github/workflows/security.yml; then
+            echo "delivery=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "delivery=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  delivery-contracts:
+    needs: changes
+    if: needs.changes.outputs.delivery == 'true'
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Test delivery scripts including real macOS Security CLI lifecycle
+        run: ./scripts/test-app-store-upload-workflow.sh
 
   core-contract:
     needs: changes
@@ -71,7 +126,7 @@ jobs:
       - name: Start API contract server
         working-directory: server/api
         run: |
-          nohup npm run contract-server >/tmp/rallyroo-contract-server.log 2>&1 &
+          nohup node --import tsx test/support/contract-server.ts >/tmp/rallyroo-contract-server.log 2>&1 &
           echo $! >/tmp/rallyroo-contract-server.pid
           for attempt in {1..30}; do
             curl --fail --silent http://127.0.0.1:3100/health >/dev/null && exit 0
@@ -84,7 +139,23 @@ jobs:
       - name: Test core and live API contract
         env:
           RALLYROO_CONTRACT_BASE_URL: http://127.0.0.1:3100
-        run: swift test
+        run: |
+          set -o pipefail
+          swift test --disable-swift-testing 2>&1 | tee "$RUNNER_TEMP/core-tests.log"
+      - name: Verify every core test executed without skips
+        working-directory: .
+        run: >-
+          python3 scripts/verify-xctest-results.py
+          --source clients/ios/Tests/FamilyCoreTests
+          --report "$RUNNER_TEMP/core-tests.log" --format xctest-log
+      - name: Retain core test report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-test-results
+          path: ${{ runner.temp }}/core-tests.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Stop API contract server
         if: always()
         working-directory: server/api
@@ -125,6 +196,7 @@ jobs:
         run: >-
           xcodebuild -project FamilyApp.xcodeproj -scheme FamilyAppCI
           -sdk iphonesimulator -destination "platform=iOS Simulator,id=$RALLYROO_SIMULATOR_ID"
+          -derivedDataPath "$RUNNER_TEMP/ios-derived"
           CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Test UI smoke paths
         run: |
@@ -133,4 +205,62 @@ jobs:
           echo "Simulator ready after $((SECONDS - started)) seconds in this step"
           xcodebuild -project FamilyApp.xcodeproj -scheme FamilyAppCI \
             -sdk iphonesimulator -destination "platform=iOS Simulator,id=$RALLYROO_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/ios-derived" -resultBundlePath "$RUNNER_TEMP/ios-ui.xcresult" \
             CODE_SIGNING_ALLOWED=NO test-without-building
+      - name: Verify every UI test executed without skips
+        working-directory: .
+        run: |
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-ui.xcresult" > "$RUNNER_TEMP/ios-ui-tests.json"
+          python3 scripts/verify-xctest-results.py --source clients/ios/FamilyAppUITests/FamilyAppUITests.swift \
+            --report "$RUNNER_TEMP/ios-ui-tests.json" --format xcresult
+      - name: Retain synthetic UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-ui-test-results
+          path: ${{ runner.temp }}/ios-ui.xcresult
+          if-no-files-found: error
+          retention-days: 7
+
+  ui-narrow:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Select pinned Xcode and create small-screen simulator
+        run: |
+          test -d /Applications/Xcode_26.3.app
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          runtime=$(xcrun simctl list runtimes -j | python3 -c '
+          import json, sys
+          print(next(r["identifier"] for r in json.load(sys.stdin)["runtimes"]
+                     if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")))')
+          device=$(xcrun simctl create Rallyroo-Narrow-CI com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation "$runtime")
+          echo "RALLYROO_SIMULATOR_ID=$device" >> "$GITHUB_ENV"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+      - name: Run small-screen and accessible-calendar regressions
+        run: |
+          tests=()
+          while IFS= read -r name; do
+            tests+=("-only-testing:FamilyAppUITests/FamilyAppUITests/$name")
+          done < scripts/ios-narrow-tests.txt
+          xcodebuild test -project clients/ios/FamilyApp.xcodeproj -scheme FamilyAppCI \
+            -destination "platform=iOS Simulator,id=$RALLYROO_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/ios-narrow-derived" -resultBundlePath "$RUNNER_TEMP/ios-narrow.xcresult" \
+            "${tests[@]}" CODE_SIGNING_ALLOWED=NO
+      - name: Verify every selected small-screen test executed
+        run: |
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-narrow.xcresult" > "$RUNNER_TEMP/ios-narrow-tests.json"
+          python3 scripts/verify-xctest-results.py --source clients/ios/FamilyAppUITests/FamilyAppUITests.swift \
+            --selection scripts/ios-narrow-tests.txt --report "$RUNNER_TEMP/ios-narrow-tests.json" --format xcresult
+      - name: Retain synthetic small-screen test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ios-narrow-test-results
+          path: ${{ runner.temp }}/ios-narrow.xcresult
+          if-no-files-found: error
+          retention-days: 7

@@ -26,6 +26,15 @@ jobs:
       - run: ./deploy/flux/rallyroo/test-flux-contract.sh
       - run: ./deploy/gcp/test-backup-job.sh
 
+  http-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: azure/setup-helm@v5
+      - name: Test rendered NGINX routing against an isolated synthetic API
+        run: ./deploy/local/test-ci-http-contract.sh
+
   quality:
     runs-on: ubuntu-24.04
     defaults:
