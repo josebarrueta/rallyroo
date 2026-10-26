@@ -17,8 +17,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Explicit allow-list: no .env, host npm config, credentials or node_modules
-# can enter the build context, even on an operator's workstation.
+# Explicit source allow-list: do not copy the API root .env, host npm config
+# or node_modules into the build context.
 mkdir -p "$scratch/context/test/support"
 cp "$ROOT/server/api/package.json" "$ROOT/server/api/package-lock.json" "$scratch/context/"
 cp -R "$ROOT/server/api/src" "$scratch/context/"
@@ -37,8 +37,14 @@ container = documents.find { |d| d['kind'] == 'Deployment' }.fetch('spec')
   .fetch('template').fetch('spec').fetch('containers').find { |c| c['name'] == 'nginx' }
 File.write(ARGV[2], container.fetch('image'))
 RUBY
+# Match ConfigMap's non-secret 0644 mode. The chart uses non-root NGINX;
+# Docker Desktop can mask the Linux bind-mount permission difference.
+chmod 0644 "$scratch/default.conf"
 nginx_image=$(<"$scratch/nginx-image")
 docker build --quiet --file "$ROOT/deploy/local/Dockerfile.contract" --tag "$image" "$scratch/context" >/dev/null
+docker run --rm --network none \
+  --mount "type=bind,source=$scratch/default.conf,target=/etc/nginx/conf.d/default.conf,readonly" \
+  "$nginx_image" /bin/sh -c 'test -r /etc/nginx/conf.d/default.conf'
 # The API remains loopback-only inside its namespace. Publish only NGINX on a
 # random loopback port; the second container shares that isolated namespace.
 docker run --detach --name "$api" --publish 127.0.0.1::8080 "$image" >/dev/null
@@ -51,6 +57,12 @@ for _ in {1..45}; do
   if curl --fail --silent --max-time 2 "$base_url/ready" >/dev/null; then ready=true; break; fi
   sleep 1
 done
-[[ "$ready" == true ]] || { echo 'Synthetic HTTP stack did not become ready' >&2; exit 1; }
+if [[ "$ready" != true ]]; then
+  # These containers contain only the synthetic fixture, never live credentials.
+  docker logs --tail 20 "$nginx" >&2 || true
+  docker logs --tail 20 "$api" >&2 || true
+  echo 'Synthetic HTTP stack did not become ready' >&2
+  exit 1
+fi
 "$ROOT/deploy/local/test-http-contract.sh" "$base_url"
 echo 'Synthetic NGINX/API smoke passed; this is not a live Kubernetes deployment acceptance.'
