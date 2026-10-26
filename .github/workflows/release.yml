@@ -76,13 +76,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:8.10.1-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       INTEGRATION_DATABASE_URL: postgres://rallyroo:rallyroo@localhost:5432/postgres
+      INTEGRATION_REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v5
       - run: ./deploy/helm/rallyroo/test-chart-contract.sh
       - run: ./deploy/flux/rallyroo/test-flux-contract.sh
+      - run: ./deploy/gcp/test-backup-job.sh
+      - name: Verify rendered HTTP edge before release publication
+        run: ./deploy/local/test-ci-http-contract.sh
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -101,6 +114,7 @@ jobs:
           run_timed "npm ci" npm ci --no-audit --no-fund
           run_timed "unit tests" npm run test:unit
           run_timed "migration tests" npm run test:migrations
+          run_timed "PostgreSQL and Redis integration tests" npm run test:integration
           run_timed "typecheck" npm run typecheck
           run_timed "TypeScript build" npm run build
 
@@ -211,7 +225,7 @@ jobs:
           if-no-files-found: error
 
   create-release:
-    needs: [prepare, verify, build-image]
+    needs: [prepare, publish]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

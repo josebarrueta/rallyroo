@@ -18,7 +18,7 @@ ruby -ryaml -e '
     abort "Invalid shell" unless $?.success?
   end
 '
-python3 -B -m unittest discover -s scripts -p 'test_*testflight*.py'
+python3 -B -m unittest discover -s scripts -p 'test_*.py'
 python3 - <<'PY'
 from pathlib import Path
 source = Path('scripts/upload-testflight.py').read_text()

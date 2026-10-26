@@ -36,6 +36,8 @@ The [ADR directory](adr/) records why foundational boundaries exist:
 - [GCP VM, backups, and isolated restore](../deploy/gcp/README.md)
 - [Site build and publishing](../site/README.md)
 - [App Store and TestFlight upload](app-store-upload-guide.md)
+- [Test-suite coverage and CI verification](test-suite-and-ci-verification.md)
+- [External TestFlight review and public beta](external-testflight-readiness.md)
 - [Deployment architecture journal](deployment-architecture-journal.md)
 - [Production configuration and secret bootstrap](production-configuration-and-secret-bootstrap.md)
 - [Secure Ollama tunnel](secure-ollama-tunnel.md)
