@@ -4,7 +4,7 @@ Audit base: `176fc26b78a6964dd2dc8258b10b43c3b7d13a05` (TestFlight 187).
 Date: 2026-10-26. External-beta tracking: [#210](https://github.com/josebarrueta/rallyroo/issues/210).
 These checks use synthetic data and disposable services, not production credentials.
 The table below records the original CI audit, not a permanent suite size. Subsequent
-submission-readiness changes expand the source inventory to 250 core/live cases,
+submission-readiness changes expand the source inventory to 251 core/live cases,
 64 full UI cases and seven small-screen selections (including signed-in legal/support
 access and screenshot review above the keyboard). Current CI verifies those source identities rather than trusting these counts.
 

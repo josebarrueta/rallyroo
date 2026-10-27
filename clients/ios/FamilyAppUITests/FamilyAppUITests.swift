@@ -1174,18 +1174,26 @@ final class FamilyAppUITests: XCTestCase {
         title.typeText(" edited")
         app.swipeUp()
         let member = app.switches["Alex"]
-        // On compact phones the keyboard covers this row. Scroll the visible
-        // form area, not the keyboard, before tapping the actual switch.
+        // Hittable alone can be true behind the translucent navigation bar.
+        // Keep the entire switch inside the visible form, avoiding QuickType,
+        // and hold at the end of each drag so momentum cannot overshoot it.
         for _ in 0..<6 {
             let keyboard = app.keyboards.firstMatch
-            let bottom = keyboard.exists ? keyboard.frame.minY : app.frame.maxY
-            if member.isHittable && member.frame.maxY < bottom { break }
+            let bottom = keyboard.exists ? keyboard.frame.minY - 50 : app.frame.maxY - 15
+            let top = app.navigationBars["Review screenshot"].frame.maxY + 15
+            if member.isHittable && member.frame.minY >= top && member.frame.maxY <= bottom { break }
+            let delta = member.frame.midY - (top + bottom) / 2
+            let distance = min(abs(delta), (bottom - top) * 0.7)
+            let start = delta > 0 ? bottom - 15 : top + 15
+            let end = start + (delta > 0 ? -distance : distance)
             let origin = app.coordinate(withNormalizedOffset: .zero)
-            let top = app.navigationBars["Review screenshot"].frame.maxY + 25
-            origin.withOffset(CGVector(dx: app.frame.midX, dy: bottom - 25))
-                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: app.frame.midX, dy: top)))
+            let x = app.frame.width * 0.15
+            origin.withOffset(CGVector(dx: x, dy: start))
+                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: end)),
+                       withVelocity: .slow, thenHoldForDuration: 0.3)
         }
         XCTAssertTrue(member.isHittable)
+        XCTAssertGreaterThan(member.frame.minY, app.navigationBars["Review screenshot"].frame.maxY)
         member.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertEqual(member.value as? String, "1")
         XCTAssertTrue(app.buttons["Add Event"].isEnabled)

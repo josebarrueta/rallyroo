@@ -100,6 +100,17 @@ final class SharedScheduleCaptureQueueTests: XCTestCase {
         XCTAssertEqual(try relaunched.dequeueOldest(for: "account-b"), image)
     }
 
+    func testSignedOutLaunchPreservesOwnershipOfOldCapturesAndAcceptsOnlyFreshSharesForNextLogin() throws {
+        let queue = try SharedScheduleCaptureQueue(directory: directory)
+        let image = try captureImage()
+        XCTAssertNil(try queue.dequeueOldest(for: "account-a"))
+        try queue.enqueue(image)
+        try queue.markSignedOut()
+        try queue.enqueue(image)
+        XCTAssertEqual(try queue.dequeueOldest(for: "account-b"), image)
+        XCTAssertNil(try queue.dequeueOldest(for: "account-b"))
+    }
+
     func testColdLaunchKeepsSameAccountCaptureWithoutLeakingAccountIdentifier() throws {
         let queue = try SharedScheduleCaptureQueue(directory: directory)
         let image = try captureImage()

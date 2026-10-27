@@ -760,6 +760,10 @@ struct FamilyActivityCoordinatorApp: App {
                         // Initial signed-out launch is different: preserve a fresh
                         // image deliberately shared before the member signs in.
                         await MainActor.run { sharedCaptureInbox.discard() }
+                    } else {
+                        // Existing captures keep their prior ownership; only new
+                        // shares from the signed-out screen belong to the next login.
+                        try? SharedScheduleCaptureQueue.appGroup().markSignedOut()
                     }
                 }
             ) { session, signOut, deleteAccount in

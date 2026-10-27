@@ -137,10 +137,15 @@ public struct SharedScheduleCaptureQueue: Sendable {
         return nil
     }
 
-    public func discardAll() throws {
+    /// Preserve existing ownership tags, but mark subsequent explicit shares as signed out.
+    public func markSignedOut() throws {
         if FileManager.default.fileExists(atPath: ownerURL.path) {
             try FileManager.default.removeItem(at: ownerURL)
         }
+    }
+
+    public func discardAll() throws {
+        try markSignedOut()
         for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             if url.pathExtension == "rrcapture" || url.pathExtension == "processing" {
                 try FileManager.default.removeItem(at: url)
