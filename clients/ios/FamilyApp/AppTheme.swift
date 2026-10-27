@@ -24,6 +24,22 @@ struct RallyrooToolbarLabel: View {
     }
 }
 
+/// Compact attribution for text-only Places suggestions, adjacent to their rows.
+/// Use Google's exact non-localized name; no custom/recreated logo or font download.
+struct GoogleMapsAttributionLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Text(verbatim: "Google Maps")
+            .font(.system(size: 14, weight: .regular))
+            .foregroundStyle(colorScheme == .dark ? Color.white : Color(red: 31 / 255, green: 31 / 255, blue: 31 / 255))
+            .lineLimit(1)
+            .fixedSize()
+            .accessibilityLabel("Address suggestions provided by Google Maps")
+            .accessibilityIdentifier("google-maps-attribution")
+    }
+}
+
 extension Color {
     init(familyColorTag: String?) {
         switch familyColorTag?.lowercased() {

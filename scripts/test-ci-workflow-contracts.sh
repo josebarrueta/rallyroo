@@ -53,6 +53,8 @@ require_contract(runs(jobs.fetch('core-contract')).include?('--format xctest-log
   require_contract(job.fetch('steps').any? { |s| s['uses'].to_s.start_with?('actions/upload-artifact@') && s['if'] == 'always()' },
                    'UI failure diagnostics must be retained')
 end
+require_contract(runs(jobs.fetch('ui')).include?('verify-submission-assets.py'), 'Compiled privacy asset gate missing')
+require_contract(runs(jobs.fetch('ui')).include?('--app "$RUNNER_TEMP/ios-derived/Build/Products/Debug-iphonesimulator/FamilyApp.app"'), 'Privacy gate must check built resources')
 require_contract(runs(jobs.fetch('ui-narrow')).include?('iPhone-SE-3rd-generation'), 'Small-screen device missing')
 require_contract(runs(jobs.fetch('ui-narrow')).include?('--selection scripts/ios-narrow-tests.txt'), 'Narrow inventory selection missing')
 require_contract(jobs.fetch('delivery-contracts').fetch('runs-on').start_with?('macos-'), 'Signing lifecycle must run on macOS')

@@ -123,6 +123,9 @@ struct TravelPlanSheet: View {
                         Label(suggestion.address, systemImage: "mappin.and.ellipse")
                     }
                 }
+                if !model.suggestions.isEmpty, model.locationAttribution == .googleMaps {
+                    GoogleMapsAttributionLabel()
+                }
                 Text("To reuse an address, add it under Settings › Saved places.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -212,6 +215,7 @@ final class TravelPlanViewModel: ObservableObject {
 
     private let store: any TravelPlanningStore
     private let locationSearch: any LocationSearch
+    var locationAttribution: LocationSearchAttribution? { locationSearch.attribution }
     private var selectedOriginPlaceID: String?
     private var selectedOriginAddress: String?
     private var previewTask: Task<Void, Never>?

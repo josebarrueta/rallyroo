@@ -3,6 +3,15 @@ import XCTest
 @testable import FamilyCore
 
 final class RemoteLocationSearchTests: XCTestCase {
+    func testRemoteSuggestionsDeclareTheirActualProvider() {
+        let search = RemoteLocationSearch(baseURL: URL(string: "https://api.example.com")!)
+        XCTAssertEqual(search.attribution, .googleMaps)
+    }
+
+    func testUnavailableLocalSearchDoesNotFalselyAttributeGoogle() {
+        XCTAssertNil(EmptyLocationSearch().attribution)
+    }
+
     func testSearchesAddressesThroughRallyrooBackend() async throws {
         let expected = [LocationSuggestion(
             id: "place-1",

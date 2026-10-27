@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const publicDirectory = join(root, "public");
 const developerDocsURL = "https://github.com/josebarrueta/rallyroo/blob/main/docs/README.md";
+const legalReferenceURLs = new Set([
+  "https://policies.google.com/privacy",
+  "https://policies.google.com/terms",
+  "https://www.google.com/intl/en_us/help/terms_maps/",
+  "https://weatherkit.apple.com/legal-attribution.html",
+]);
 const requiredPages = ["index.html", "docs.html", "privacy.html", "terms.html", "support.html", "invite.html", "404.html"];
 
 for (const page of requiredPages) {
@@ -15,17 +21,21 @@ for (const page of requiredPages) {
   for (const [url] of html.matchAll(/https?:\/\/[^"<>\s]+/g)) {
     assert.ok(
       url === "https://api.rallyroo.dev" || url.startsWith("https://api.rallyroo.dev/")
-        || url === developerDocsURL,
+        || url === developerDocsURL || legalReferenceURLs.has(url),
       `${page} must remain tracker-free: unexpected external URL`
     );
   }
+  assert.doesNotMatch(
+    html, /<(?:script|link|img|iframe|video|audio|source|embed|object|form)\b[^>]*\b(?:src|href|data|action)=["'](?:https?:)?\/\//i,
+    `${page} must not load third-party resources or submit external forms`
+  );
   if (page !== "invite.html") {
     assert.doesNotMatch(html, /<script\b/i, `${page} must remain script-free`);
   }
 
   for (const [, href] of html.matchAll(/href="([^"]+)"/g)) {
-    if (href === developerDocsURL) {
-      assert.ok(html.includes(`href="${developerDocsURL}" rel="noopener noreferrer"`));
+    if (href === developerDocsURL || legalReferenceURLs.has(href)) {
+      assert.ok(html.includes(`href="${href}" rel="noopener noreferrer"`));
       continue;
     }
     if (href.startsWith("mailto:") || href === "https://api.rallyroo.dev"
@@ -141,11 +151,17 @@ assert.equal(invitationDeepLink(""), null);
 const privacy = await readFile(join(publicDirectory, "privacy.html"), "utf8");
 assert.match(privacy, /support@rallyroo\.dev/);
 assert.match(privacy, /account deletion/i);
+assert.match(privacy, /purchase history/);
+assert.match(privacy, /expense details/);
+assert.match(privacy, /excluded from device backups/);
+assert.match(privacy, /https:\/\/policies\.google\.com\/privacy/);
 assert.match(privacy, /creating a family without an invitation must be an adult/);
 assert.match(privacy, /child may join only after an adult parent or legal guardian sends a child invitation/);
 
 const terms = await readFile(join(publicDirectory, "terms.html"), "utf8");
 assert.match(terms, /California/);
+assert.match(terms, /https:\/\/policies\.google\.com\/terms/);
+assert.match(terms, /https:\/\/www\.google\.com\/intl\/en_us\/help\/terms_maps\//);
 assert.match(terms, /TestFlight/);
 assert.match(terms, /creating a family without an invitation must be at least 18 years old/);
 assert.match(terms, /parent or legal guardian/);

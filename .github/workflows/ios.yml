@@ -78,6 +78,9 @@ jobs:
             scripts/test-ai-capture-concurrency.sh \
             scripts/verify-xctest-results.py \
             scripts/test_xctest_results.py \
+            scripts/upload-testflight.py \
+            scripts/verify-submission-assets.py \
+            scripts/test_submission_assets.py \
             scripts/ios-narrow-tests.txt \
             .github/workflows/ios.yml; then
             echo "ios=false" >> "$GITHUB_OUTPUT"
@@ -198,6 +201,11 @@ jobs:
           -sdk iphonesimulator -destination "platform=iOS Simulator,id=$RALLYROO_SIMULATOR_ID"
           -derivedDataPath "$RUNNER_TEMP/ios-derived"
           CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Verify privacy assets in the compiled app and Share Extension
+        working-directory: .
+        run: >-
+          python3 -B scripts/verify-submission-assets.py
+          --app "$RUNNER_TEMP/ios-derived/Build/Products/Debug-iphonesimulator/FamilyApp.app"
       - name: Test UI smoke paths
         run: |
           started=$SECONDS

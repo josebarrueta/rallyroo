@@ -10,8 +10,17 @@ public struct LocationSuggestion: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public enum LocationSearchAttribution: Equatable, Sendable {
+    case googleMaps
+}
+
 public protocol LocationSearch: Sendable {
+    var attribution: LocationSearchAttribution? { get }
     func suggestions(for query: String) async throws -> [LocationSuggestion]
+}
+
+public extension LocationSearch {
+    var attribution: LocationSearchAttribution? { nil }
 }
 
 public enum LocationSearchError: Error, Equatable, Sendable {
@@ -26,6 +35,9 @@ public struct EmptyLocationSearch: LocationSearch {
 }
 
 public actor RemoteLocationSearch: LocationSearch {
+    // The current locations endpoint is backed by Google Places. Keep local/
+    // unavailable implementations unattributed rather than crediting Google falsely.
+    public nonisolated let attribution: LocationSearchAttribution? = .googleMaps
     private let searchURL: URL
     private let transport: any HTTPTransport
 

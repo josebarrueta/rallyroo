@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A10000000000000000000046 /* Share PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000047 /* PrivacyInfo.xcprivacy */; };
 		071D60B7E2B80E7B79B0C917 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA393B0B48A7B9487B625E0 /* ShareViewController.swift */; };
 		A10000000000000000000001 /* FamilyActivityCoordinatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* FamilyActivityCoordinatorApp.swift */; };
 		A10000000000000000000002 /* WeeklyScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* WeeklyScheduleView.swift */; };
@@ -64,6 +65,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A10000000000000000000047 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		2F878792A48BC90CB1752726 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3AA393B0B48A7B9487B625E0 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		507A72A96619BCA105302709 /* FamilyAppShare.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = FamilyAppShare.entitlements; sourceTree = "<group>"; };
@@ -124,6 +126,7 @@
 				3AA393B0B48A7B9487B625E0 /* ShareViewController.swift */,
 				2F878792A48BC90CB1752726 /* Info.plist */,
 				507A72A96619BCA105302709 /* FamilyAppShare.entitlements */,
+				A10000000000000000000047 /* PrivacyInfo.xcprivacy */,
 				FE3779A4E1C486800B69730C /* SharedScheduleCaptureQueue.swift */,
 			);
 			name = FamilyAppShare;
@@ -318,6 +321,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000046 /* Share PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

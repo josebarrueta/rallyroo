@@ -19,7 +19,7 @@ final class ShareViewController: UIViewController {
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.font = .preferredFont(forTextStyle: .headline)
         statusLabel.textAlignment = .center
-        detailLabel.text = "Images stay on this device. You will review drafts in Rallyroo before adding them."
+        detailLabel.text = "Rallyroo reads images on this device. Recognized text is sent to Rallyroo’s AI service when you open the app; you review drafts before saving."
         detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.font = .preferredFont(forTextStyle: .subheadline)
         detailLabel.textColor = .secondaryLabel
@@ -57,7 +57,7 @@ final class ShareViewController: UIViewController {
             try queue.enqueue(data)
             activityIndicator.stopAnimating()
             statusLabel.text = "Ready to review in Rallyroo"
-            detailLabel.text = "Tap Done, then open Rallyroo to review this screenshot. Images stay on-device; only recognized text is used to create drafts."
+            detailLabel.text = "Tap Done, then open Rallyroo. The image stays on-device; recognized text and Family member names are sent to Rallyroo’s AI service to create drafts for your review."
             doneButton.setTitle("Done", for: .normal)
             UIAccessibility.post(notification: .announcement, argument: statusLabel.text)
         } catch {

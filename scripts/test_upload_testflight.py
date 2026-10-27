@@ -58,20 +58,23 @@ Actionable: Unauthorized (401)
         }
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
+            good.update({key: 'Rallyroo uses this optional feature when you ask.' for key in upload.PURPOSE_KEYS})
             extension = app / "PlugIns/FamilyAppShare.appex"
             extension.mkdir(parents=True)
             (extension / "Info.plist").write_bytes(plistlib.dumps({
                 "CFBundleIdentifier": "dev.rallyroo.app.share",
                 "CFBundleVersion": "101.1.0",
             }))
-            (app / "PrivacyInfo.xcprivacy").write_bytes(plistlib.dumps({}))
+            root = Path(__file__).resolve().parent.parent / 'clients/ios'
+            (app / "PrivacyInfo.xcprivacy").write_bytes((root / 'FamilyApp/PrivacyInfo.xcprivacy').read_bytes())
+            (extension / "PrivacyInfo.xcprivacy").write_bytes((root / 'FamilyAppShare/PrivacyInfo.xcprivacy').read_bytes())
             def signing_output(args):
                 selected = extension_entitlements if str(extension) in args else entitlements
                 return plistlib.dumps(selected)
             with patch.object(upload, "run", side_effect=signing_output):
                 (app / "Info.plist").write_bytes(plistlib.dumps(good))
                 self.assertEqual(upload.verify(app, "101.1.0"), "1.0")
-                for key in good.keys() - {"CFBundleShortVersionString"}:
+                for key in good.keys() - {"CFBundleShortVersionString", *upload.PURPOSE_KEYS}:
                     with self.subTest(key=key):
                         bad = {**good, key: "wrong"}
                         (app / "Info.plist").write_bytes(plistlib.dumps(bad))

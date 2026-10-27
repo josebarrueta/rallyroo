@@ -28,9 +28,55 @@ final class FamilyAppUITests: XCTestCase {
         app.swipeUp()
         XCTAssertTrue(app.buttons["Terms of Service"].exists)
         XCTAssertTrue(app.buttons["Privacy Policy"].exists)
+        XCTAssertTrue(app.buttons["sign-in-support"].exists)
         XCTAssertEqual(appleButton.frame.width, googleButton.frame.width, accuracy: 1)
         XCTAssertEqual(appleButton.frame.height, googleButton.frame.height, accuracy: 1)
         XCTAssertFalse(app.textFields["Invitation code (optional)"].exists)
+    }
+
+    func testSignedInParentsAndKidsCanReachLegalSupportAndVersion() {
+        for role in ["parent", "kid"] {
+            let app = localApp()
+            app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = role
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+            app.tabBars.buttons["Settings"].tap()
+            for name in ["privacy", "terms", "support"] {
+                let link = app.buttons["settings-link-\(name)"]
+                for _ in 0..<10 where !link.isHittable { app.swipeUp() }
+                XCTAssertTrue(link.isHittable, "\(role) must reach \(name) without signing out")
+            }
+            let version = app.descendants(matching: .any)["settings-app-version"]
+            for _ in 0..<5 where !version.isHittable { app.swipeUp() }
+            XCTAssertTrue(version.isHittable)
+            app.terminate()
+        }
+    }
+
+    func testGoogleAddressResultsShowProviderAttribution() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_LOCATION_SUGGESTIONS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        openAddEvent(in: app)
+        let field = app.textFields["Location or latitude, longitude"]
+        for _ in 0..<8 where !field.isHittable { app.swipeUp() }
+        field.tap()
+        field.typeText("Example")
+        XCTAssertTrue(app.buttons["100 Example Street"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["google-maps-attribution"].exists)
+    }
+
+    func testSessionExpiryDiscardsUnreviewedSharedScreenshotBeforeSigningInAgain() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SCREENSHOT"] = "single"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPIRE_SESSION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Your session expired. Sign in again to continue."].waitForExistence(timeout: 15))
+        app.buttons["Continue with Apple"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Review screenshot"].exists)
     }
 
     func testExpiredSessionReturnsToLoginWithoutRestartingTheApp() {
@@ -519,6 +565,7 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Clear skies"].exists)
         XCTAssertTrue(app.staticTexts["High 68°F · Low 50°F"].exists)
         reveal(app.descendants(matching: .any)["day-brief-weather-sources"], in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["day-brief-apple-weather-mark"].exists)
         reveal(app.staticTexts["School drop-off"], in: app)
         XCTAssertTrue(app.staticTexts["You drive"].exists)
         XCTAssertTrue(app.staticTexts["Lincoln Elementary"].exists)
@@ -1127,7 +1174,18 @@ final class FamilyAppUITests: XCTestCase {
         title.typeText(" edited")
         app.swipeUp()
         let member = app.switches["Alex"]
-        reveal(member, in: app)
+        // On compact phones the keyboard covers this row. Scroll the visible
+        // form area, not the keyboard, before tapping the actual switch.
+        for _ in 0..<6 {
+            let keyboard = app.keyboards.firstMatch
+            let bottom = keyboard.exists ? keyboard.frame.minY : app.frame.maxY
+            if member.isHittable && member.frame.maxY < bottom { break }
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let top = app.navigationBars["Review screenshot"].frame.maxY + 25
+            origin.withOffset(CGVector(dx: app.frame.midX, dy: bottom - 25))
+                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: app.frame.midX, dy: top)))
+        }
+        XCTAssertTrue(member.isHittable)
         member.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertEqual(member.value as? String, "1")
         XCTAssertTrue(app.buttons["Add Event"].isEnabled)

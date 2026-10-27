@@ -250,6 +250,9 @@ struct AddEventSheet: View {
                                 .foregroundStyle(.primary)
                         }
                     }
+                    if locationSuggestions.contains(where: { $0.address != location }), locationSearch.attribution == .googleMaps {
+                        GoogleMapsAttributionLabel()
+                    }
                     if let locationSearchMessage {
                         Label(locationSearchMessage, systemImage: "exclamationmark.triangle")
                             .font(.caption)

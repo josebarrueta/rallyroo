@@ -3,6 +3,10 @@
 Audit base: `176fc26b78a6964dd2dc8258b10b43c3b7d13a05` (TestFlight 187).
 Date: 2026-10-26. External-beta tracking: [#210](https://github.com/josebarrueta/rallyroo/issues/210).
 These checks use synthetic data and disposable services, not production credentials.
+The table below records the original CI audit, not a permanent suite size. Subsequent
+submission-readiness changes expand the source inventory to 250 core/live cases,
+64 full UI cases and seven small-screen selections (including signed-in legal/support
+access and screenshot review above the keyboard). Current CI verifies those source identities rather than trusting these counts.
 
 ## Verified inventory and ownership
 
@@ -49,7 +53,8 @@ Two real SwiftPM pitfalls were reproduced during this audit:
 Accordingly, core CI uses **serial XCTest completion records**, not that parallel
 JUnit export. `--disable-swift-testing` removes the unrelated Swift Testing
 runner's “0 tests passed” footer. `pipefail` preserves the real test exit status
-through `tee`; the verifier independently requires all 237 source cases to pass.
+through `tee`; the verifier independently requires every current source case to pass
+(237 at the original audit base).
 The real skipped-test probe was correctly rejected by the verifier.
 
 UI CI exports structured `xcresulttool get test-results tests` JSON, checks all
@@ -62,8 +67,8 @@ reuse of a stale UI test bundle. No signing or production logs are uploaded.
 The real Security CLI temporary-keychain test existed but ran only inside a Linux
 workflow, where its platform guard skipped it. The new macOS delivery job executes
 it on applicable script/workflow changes. No production signing material is needed.
-The small-screen job independently creates an iPhone SE 3 and executes the five
-calendar/large-text regressions with an explicit result inventory. A larger default
+The small-screen job independently creates an iPhone SE 3 and executes the
+calendar/large-text, legal/support and screenshot-review regressions with an explicit result inventory. A larger default
 simulator is not a substitute for this bounded small-screen regression lane.
 
 ### 3. Tagged API releases had weaker runtime gates than API PRs

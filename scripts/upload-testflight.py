@@ -61,6 +61,52 @@ def activate_keychain(keychain, original_keychains):
          str(keychain), *original_keychains])
 
 
+MAIN_PRIVACY_TYPES = {
+    'NSPrivacyCollectedDataTypeName', 'NSPrivacyCollectedDataTypeEmailAddress',
+    'NSPrivacyCollectedDataTypePhysicalAddress', 'NSPrivacyCollectedDataTypeUserID',
+    'NSPrivacyCollectedDataTypeOtherUserContent', 'NSPrivacyCollectedDataTypeDeviceID',
+    'NSPrivacyCollectedDataTypePurchaseHistory', 'NSPrivacyCollectedDataTypeOtherFinancialInfo',
+}
+PURPOSE_KEYS = ('NSCameraUsageDescription', 'NSMicrophoneUsageDescription', 'NSSpeechRecognitionUsageDescription')
+
+
+def verify_privacy_manifest(path, *, main_app):
+    with path.open('rb') as stream:
+        manifest = plistlib.load(stream)
+    if not isinstance(manifest, dict) or manifest.get('NSPrivacyTracking') is not False:
+        raise RuntimeError('Privacy validation failed: tracking declaration')
+    if manifest.get('NSPrivacyTrackingDomains') != []:
+        raise RuntimeError('Privacy validation failed: tracking domains')
+    collected = manifest.get('NSPrivacyCollectedDataTypes')
+    if not isinstance(collected, list) or any(not isinstance(item, dict) for item in collected):
+        raise RuntimeError('Privacy validation failed: collected data structure')
+    types = [item.get('NSPrivacyCollectedDataType') for item in collected]
+    expected = MAIN_PRIVACY_TYPES if main_app else set()
+    if any(not isinstance(value, str) for value in types) or len(types) != len(set(types)) or set(types) != expected:
+        raise RuntimeError('Privacy validation failed: approved data inventory')
+    for item in collected:
+        if (item.get('NSPrivacyCollectedDataTypeLinked') is not True
+                or item.get('NSPrivacyCollectedDataTypeTracking') is not False
+                or item.get('NSPrivacyCollectedDataTypePurposes') != ['NSPrivacyCollectedDataTypePurposeAppFunctionality']):
+            raise RuntimeError('Privacy validation failed: data purpose/linkage')
+    accessed = manifest.get('NSPrivacyAccessedAPITypes')
+    expected_apis = [{'NSPrivacyAccessedAPIType': 'NSPrivacyAccessedAPICategoryUserDefaults',
+                      'NSPrivacyAccessedAPITypeReasons': ['CA92.1']}] if main_app else []
+    if accessed != expected_apis:
+        raise RuntimeError('Privacy validation failed: required-reason API inventory')
+
+
+def verify_app_assets(app):
+    # Structural consistency with the documented data inventory, not Apple/legal approval.
+    verify_privacy_manifest(app / 'PrivacyInfo.xcprivacy', main_app=True)
+    extension = app / 'PlugIns/FamilyAppShare.appex'
+    verify_privacy_manifest(extension / 'PrivacyInfo.xcprivacy', main_app=False)
+    with (app / 'Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    if any(not isinstance(info.get(key), str) or not info[key].strip() for key in PURPOSE_KEYS):
+        raise RuntimeError('Privacy validation failed: missing permission explanation')
+
+
 def verify(app, build):
     with (app / "Info.plist").open("rb") as f:
         info = plistlib.load(f)
@@ -75,8 +121,7 @@ def verify(app, build):
     sdk_match = re.fullmatch(r'iphoneos(\d+)(?:\.\d+)*', sdk_name) if isinstance(sdk_name, str) else None
     if not sdk_match or int(sdk_match.group(1)) < 26:
         raise RuntimeError('Archive validation failed: iOS 26 SDK or later required')
-    with (app / "PrivacyInfo.xcprivacy").open("rb") as f:
-        plistlib.load(f)
+    verify_app_assets(app)
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
     entitlements = plistlib.loads(run(["codesign", "-d", "--entitlements", ":-", str(app)]))
     for key, value in {"application-identifier": "5LS29Z8553.dev.rallyroo.app",

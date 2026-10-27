@@ -24,6 +24,37 @@ Apple decides approval; neither this checklist nor passing CI guarantees it.
 CI-only changes need not replace build 187. If product fixes are needed, upload
 and re-pin the replacement build/SHA before submission; do not submit a moving target.
 
+## Repository preparation after build 187
+
+The submission-readiness changes are **not in build 187** and are not evidence of
+ASC approval or owner acceptance. They add:
+
+- Privacy, Terms, Support and version/build in signed-in Settings for both roles,
+  plus Support before sign-in and guidance for reporting privacy/safety concerns.
+- Google Maps attribution beside Google address suggestions (not local results),
+  and the official Apple Weather light/dark wordmarks beside weather/legal sources.
+- Clearer schedule/receipt text-processing and speech disclosures; Share Extension
+  privacy resources; purchase-history/financial-information manifest entries.
+- Backup exclusion, session-end discard and hashed account ownership for queued
+  screenshots, including cold-launch/account-switch filtering. Fresh shares made
+  while explicitly signed out remain available after sign-in; legacy unscoped
+  captures are discarded rather than attributed to an arbitrary Family. Original
+  Photos are unchanged. Local conflict alerts are account-scoped too.
+- Source and compiled-bundle privacy/permission checks in CI and signed uploads;
+  regression tests for legal-link access, provider attribution and screenshot expiry.
+- Proposed public-policy updates covering household records and actual providers.
+  The owner must approve this wording before deployment; this is not legal advice.
+
+Google's compact text-attribution rules permit the exact non-localized **Google Maps**
+name in constrained interfaces; the suggestion label uses a 14-point regular system
+sans-serif with light/dark contrast. Recheck actual small-screen visibility and any
+additional provider-specific terms. [Places policies][places]
+
+Apple Weather assets are unmodified official PNGs from the English attribution
+response at `https://weatherkit.apple.com/attribution/en-US` (`logoLight@3x` and
+`logoDark@3x`, fetched 2026-10-26), bundled in `Assets.xcassets/AppleWeather.imageset`.
+They are Apple's marks, used only to attribute Apple weather data. [WeatherKit][weatherkit]
+
 ## Apple-owned requirements
 
 1. Create an internal group before an external group. An Account Holder, Admin
@@ -92,11 +123,28 @@ and re-pin the replacement build/SHA before submission; do not submit a moving t
   child-member invitations and any applicable privacy obligations with appropriate
   expertise; public-link device/OS criteria do **not** enforce an adult audience.
   Guidelines 1.3, 2.3.6, 2.3.8 and 5.1.4.
+- [ ] Confirm applicable Google/Apple/transit attribution and provider storage
+  terms, not just the presence of a footer. In particular, Google's selected-street-
+  address exception does not authorize retaining arbitrary Places/POI data or
+  coordinates indefinitely; reconcile Saved places and route-provider behavior
+  with the actual agreement. [Places policies][places].
 - [ ] Review closed-Family sharing / user-generated-content safeguards against
   Guideline 1.2 rather than assuming private sharing is automatically exempt.
 - [ ] Exercise Apple and Google sign-in parity and withdrawal/account deletion.
   Explain exactly what happens to shared Family records and backup copies after
   deletion; do not promise instant erasure everywhere. Guidelines 4.8 and 5.1.1(v).
+- [ ] **Resolve Apple grant revocation before submission.** The backend currently
+  calls Stytch `users.delete` in `stytch-identity-provider.ts`. Do not equate deletion
+  of a Stytch user or revocation of a Rallyroo session with revoking Apple's OAuth
+  grant. Stytch documents Apple tokens as valid until revoked, but the reviewed
+  public material does not establish whether user deletion performs that upstream
+  revocation. Obtain explicit vendor confirmation and controlled disposable-account
+  evidence; if it does not, implement and test the supported revocation flow before
+  declaring deletion ready. Do not delete the operator's real account to test this,
+  expose OAuth tokens, or add an undocumented token endpoint. [Apple guidance][apple-deletion],
+  [Stytch OAuth][stytch-oauth]. Vendor question: “Does Consumer `users.delete` revoke
+  upstream Sign in with Apple access/refresh tokens, and what supported integration
+  satisfies Apple's account-deletion revocation requirement?”
 - [ ] Verify optional microphone/camera/speech permission explanations and denied
   permission flows. Notifications must not be required for the core app. Explain
   where optional AI/speech data goes and obtain appropriate permission; do not
@@ -111,6 +159,12 @@ and re-pin the replacement build/SHA before submission; do not submit a moving t
 
 - [ ] Clean-install and upgrade from the prior beta; launch, sign in, sign out,
   relaunch and account-switch without another Family's cached data appearing.
+- [ ] Check signed-in Privacy/Terms/Support links and version, including the child
+  role and largest supported text size. Confirm live policy wording matches the
+  approved shipped build, not just this branch's proposed HTML.
+- [ ] Check screenshot queue behavior across cold launch, expired credentials,
+  sign-out and account switching; CI session-expiry coverage is not proof of all
+  extension/OS lifecycle paths. Never expose another Family's queued image.
 - [ ] Create/edit recurring Events, test unsaved drafts and native month dragging
   (partial cancellation, quick flicks, arrows, Today, year/short-month boundaries).
 - [ ] Exercise Alerts All/Unread/older pages and badge settings; verify actual APNs
@@ -207,6 +261,10 @@ Record completed readiness/device checks, reviewed metadata/access, exact approv
 build/SHA and ASC review status, actual non-team installation, and owner-approved
 public link/criteria/limit. Keep any sensitive values outside public evidence.
 
+[places]: https://developers.google.com/maps/documentation/places/web-service/policies
+[weatherkit]: https://developer.apple.com/weatherkit/#attribution-requirements
+[apple-deletion]: https://developer.apple.com/documentation/technotes/tn3194-handling-account-deletions-and-revoking-tokens-for-sign-in-with-apple
+[stytch-oauth]: https://stytch.com/docs/consumer-auth/authentication/oauth/overview
 [external]: https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers/
 [information]: https://developer.apple.com/help/app-store-connect/test-a-beta-version/provide-test-information/
 [overview]: https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/
