@@ -7,6 +7,12 @@ The table below records the original CI audit, not a permanent suite size. Subse
 submission-readiness changes expand the source inventory to 251 core/live cases,
 64 full UI cases and seven small-screen selections (including signed-in legal/support
 access and screenshot review above the keyboard). Current CI verifies those source identities rather than trusting these counts.
+The small-screen lane additionally compiles the actual alert scheduler into an
+unbundled simulator executable. This reproduced the early
+`UNUserNotificationCenter.current()` bundle-proxy assertion (exit 134); deferring
+lookup to the actor's first scheduling/cancellation call makes construction pass
+without an application bundle. This is a separate native startup contract, not
+an extra XCTest case or proof of real-device notification delivery.
 
 ## Verified inventory and ownership
 

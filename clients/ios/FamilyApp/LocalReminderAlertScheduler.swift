@@ -3,7 +3,9 @@ import Foundation
 @preconcurrency import UserNotifications
 
 actor LocalReminderAlertScheduler: ReminderAlertScheduler, EventAlertScheduler {
-    nonisolated(unsafe) private let notificationCenter = UNUserNotificationCenter.current()
+    // App.init constructs this actor before UIKit has registered the application
+    // bundle. Defer platform lookup until scheduling/cancellation after launch.
+    private lazy var notificationCenter = UNUserNotificationCenter.current()
     private let pendingAlertCapacity = 60
 
     // MARK: - Reminder

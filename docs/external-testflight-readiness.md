@@ -40,6 +40,10 @@ ASC approval or owner acceptance. They add:
   while explicitly signed out remain available after sign-in; legacy unscoped
   captures are discarded rather than attributed to an arbitrary Family. Original
   Photos are unchanged. Local conflict alerts are account-scoped too.
+- Deferred native notification-center lookup until scheduling/cancellation after
+  application launch, rather than constructing it in `App.init`. An unbundled
+  simulator regression compiles the real scheduler and verifies its constructor
+  does not require UIKit's application bundle registration.
 - Source and compiled-bundle privacy/permission checks in CI and signed uploads;
   regression tests for legal-link access, provider attribution and screenshot expiry.
 - Proposed public-policy updates covering household records and actual providers.

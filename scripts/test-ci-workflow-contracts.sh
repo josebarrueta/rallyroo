@@ -57,6 +57,8 @@ require_contract(runs(jobs.fetch('ui')).include?('verify-submission-assets.py'),
 require_contract(runs(jobs.fetch('ui')).include?('--app "$RUNNER_TEMP/ios-derived/Build/Products/Debug-iphonesimulator/FamilyApp.app"'), 'Privacy gate must check built resources')
 require_contract(runs(jobs.fetch('ui-narrow')).include?('iPhone-SE-3rd-generation'), 'Small-screen device missing')
 require_contract(runs(jobs.fetch('ui-narrow')).include?('--selection scripts/ios-narrow-tests.txt'), 'Narrow inventory selection missing')
+require_contract(runs(jobs.fetch('ui-narrow')).include?('test-ios-scheduler-startup.sh'), 'Real scheduler startup regression missing')
+require_contract(runs(jobs.fetch('changes')).include?('scripts/test-ios-scheduler-startup.sh'), 'Startup regression changes must trigger iOS verification')
 require_contract(jobs.fetch('delivery-contracts').fetch('runs-on').start_with?('macos-'), 'Signing lifecycle must run on macOS')
 require_contract(runs(jobs.fetch('delivery-contracts')).include?('test-app-store-upload-workflow.sh'), 'macOS delivery tests missing')
 

@@ -81,6 +81,7 @@ jobs:
             scripts/upload-testflight.py \
             scripts/verify-submission-assets.py \
             scripts/test_submission_assets.py \
+            scripts/test-ios-scheduler-startup.sh \
             scripts/ios-narrow-tests.txt \
             .github/workflows/ios.yml; then
             echo "ios=false" >> "$GITHUB_OUTPUT"
@@ -264,6 +265,8 @@ jobs:
           xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/ios-narrow.xcresult" > "$RUNNER_TEMP/ios-narrow-tests.json"
           python3 scripts/verify-xctest-results.py --source clients/ios/FamilyAppUITests/FamilyAppUITests.swift \
             --selection scripts/ios-narrow-tests.txt --report "$RUNNER_TEMP/ios-narrow-tests.json" --format xcresult
+      - name: Verify alert scheduler defers application-dependent APIs
+        run: bash scripts/test-ios-scheduler-startup.sh "$RALLYROO_SIMULATOR_ID" "$RUNNER_TEMP/ios-narrow-derived"
       - name: Retain synthetic small-screen test diagnostics
         if: always()
         uses: actions/upload-artifact@v6
