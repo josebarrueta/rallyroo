@@ -44,11 +44,11 @@ final class FamilyAppUITests: XCTestCase {
             app.tabBars.buttons["Settings"].tap()
             for name in ["privacy", "terms", "support"] {
                 let link = app.buttons["settings-link-\(name)"]
-                for _ in 0..<10 where !link.isHittable { app.swipeUp() }
+                revealInVisibleForm(link, navigationTitle: "Settings", in: app)
                 XCTAssertTrue(link.isHittable, "\(role) must reach \(name) without signing out")
             }
             let version = app.descendants(matching: .any)["settings-app-version"]
-            for _ in 0..<5 where !version.isHittable { app.swipeUp() }
+            revealInVisibleForm(version, navigationTitle: "Settings", in: app)
             XCTAssertTrue(version.isHittable)
             app.terminate()
         }
@@ -1216,6 +1216,28 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(reminder.exists)
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+    }
+
+    private func revealInVisibleForm(_ element: XCUIElement, navigationTitle: String, in app: XCUIApplication) {
+        for _ in 0..<24 {
+            let top = app.navigationBars[navigationTitle].frame.maxY + 10
+            let bottom = app.tabBars.firstMatch.frame.minY - 10
+            let visibleHeight = bottom - top
+            let frame = element.exists ? element.frame : .zero
+            if frame != .zero && element.isHittable && frame.minY >= top && frame.maxY <= bottom { return }
+            // Search with overlapping, momentum-free steps. Once discovered,
+            // scroll either direction to center the complete control.
+            let delta = frame == .zero ? visibleHeight * 0.4 : frame.midY - (top + bottom) / 2
+            let distance = min(abs(delta), visibleHeight * 0.4)
+            let start = delta > 0 ? bottom - 15 : top + 15
+            let end = start + (delta > 0 ? -distance : distance)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = app.frame.width * 0.15
+            origin.withOffset(CGVector(dx: x, dy: start))
+                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: end)),
+                       withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTFail("Control must be fully visible between navigation and tab bars: \(element.identifier)")
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
