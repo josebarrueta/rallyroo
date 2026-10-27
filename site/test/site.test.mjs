@@ -154,6 +154,8 @@ assert.match(privacy, /account deletion/i);
 assert.match(privacy, /purchase history/);
 assert.match(privacy, /expense details/);
 assert.match(privacy, /excluded from device backups/);
+assert.match(privacy, /In updated beta builds/);
+assert.match(privacy, /Older beta installations may retain these copies until they are upgraded and signed out/);
 assert.match(privacy, /https:\/\/policies\.google\.com\/privacy/);
 assert.match(privacy, /creating a family without an invitation must be an adult/);
 assert.match(privacy, /child may join only after an adult parent or legal guardian sends a child invitation/);
