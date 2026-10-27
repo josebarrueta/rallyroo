@@ -385,9 +385,15 @@ private struct DayBriefDetailView: View {
                 } header: {
                     Text("Weather at \(weather.locationLabel)")
                 } footer: {
-                    HStack {
-                        Text(weather.attribution.serviceName)
-                        Spacer()
+                    VStack(alignment: .leading, spacing: 6) {
+                        if weather.attribution.serviceName == "Apple Weather" || weather.attribution.serviceName == "WeatherKit" {
+                            Image("AppleWeather")
+                                .renderingMode(.original)
+                                .accessibilityLabel("Apple Weather")
+                                .accessibilityIdentifier("day-brief-apple-weather-mark")
+                        } else {
+                            Text(weather.attribution.serviceName)
+                        }
                         Link("Weather data sources & legal", destination: weather.attribution.legalPageURL)
                             .accessibilityIdentifier("day-brief-weather-sources")
                     }

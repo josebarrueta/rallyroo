@@ -28,9 +28,55 @@ final class FamilyAppUITests: XCTestCase {
         app.swipeUp()
         XCTAssertTrue(app.buttons["Terms of Service"].exists)
         XCTAssertTrue(app.buttons["Privacy Policy"].exists)
+        XCTAssertTrue(app.buttons["sign-in-support"].exists)
         XCTAssertEqual(appleButton.frame.width, googleButton.frame.width, accuracy: 1)
         XCTAssertEqual(appleButton.frame.height, googleButton.frame.height, accuracy: 1)
         XCTAssertFalse(app.textFields["Invitation code (optional)"].exists)
+    }
+
+    func testSignedInParentsAndKidsCanReachLegalSupportAndVersion() {
+        for role in ["parent", "kid"] {
+            let app = localApp()
+            app.launchEnvironment["RALLYROO_UI_TEST_SAVED_PLACES"] = role
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 10))
+            app.tabBars.buttons["Settings"].tap()
+            for name in ["privacy", "terms", "support"] {
+                let link = app.buttons["settings-link-\(name)"]
+                revealInVisibleForm(link, navigationTitle: "Settings", in: app)
+                XCTAssertTrue(link.isHittable, "\(role) must reach \(name) without signing out")
+            }
+            let version = app.descendants(matching: .any)["settings-app-version"]
+            revealInVisibleForm(version, navigationTitle: "Settings", in: app)
+            XCTAssertTrue(version.isHittable)
+            app.terminate()
+        }
+    }
+
+    func testGoogleAddressResultsShowProviderAttribution() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_LOCATION_SUGGESTIONS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        openAddEvent(in: app)
+        let field = app.textFields["Location or latitude, longitude"]
+        for _ in 0..<8 where !field.isHittable { app.swipeUp() }
+        field.tap()
+        field.typeText("Example")
+        XCTAssertTrue(app.buttons["100 Example Street"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["google-maps-attribution"].exists)
+    }
+
+    func testSessionExpiryDiscardsUnreviewedSharedScreenshotBeforeSigningInAgain() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_SCREENSHOT"] = "single"
+        app.launchEnvironment["RALLYROO_UI_TEST_EXPIRE_SESSION"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Your session expired. Sign in again to continue."].waitForExistence(timeout: 15))
+        app.buttons["Continue with Apple"].tap()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Review screenshot"].exists)
     }
 
     func testExpiredSessionReturnsToLoginWithoutRestartingTheApp() {
@@ -519,6 +565,7 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Clear skies"].exists)
         XCTAssertTrue(app.staticTexts["High 68°F · Low 50°F"].exists)
         reveal(app.descendants(matching: .any)["day-brief-weather-sources"], in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["day-brief-apple-weather-mark"].exists)
         reveal(app.staticTexts["School drop-off"], in: app)
         XCTAssertTrue(app.staticTexts["You drive"].exists)
         XCTAssertTrue(app.staticTexts["Lincoln Elementary"].exists)
@@ -1127,7 +1174,26 @@ final class FamilyAppUITests: XCTestCase {
         title.typeText(" edited")
         app.swipeUp()
         let member = app.switches["Alex"]
-        reveal(member, in: app)
+        // Hittable alone can be true behind the translucent navigation bar.
+        // Keep the entire switch inside the visible form, avoiding QuickType,
+        // and hold at the end of each drag so momentum cannot overshoot it.
+        for _ in 0..<6 {
+            let keyboard = app.keyboards.firstMatch
+            let bottom = keyboard.exists ? keyboard.frame.minY - 50 : app.frame.maxY - 15
+            let top = app.navigationBars["Review screenshot"].frame.maxY + 15
+            if member.isHittable && member.frame.minY >= top && member.frame.maxY <= bottom { break }
+            let delta = member.frame.midY - (top + bottom) / 2
+            let distance = min(abs(delta), (bottom - top) * 0.7)
+            let start = delta > 0 ? bottom - 15 : top + 15
+            let end = start + (delta > 0 ? -distance : distance)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = app.frame.width * 0.15
+            origin.withOffset(CGVector(dx: x, dy: start))
+                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: end)),
+                       withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTAssertTrue(member.isHittable)
+        XCTAssertGreaterThan(member.frame.minY, app.navigationBars["Review screenshot"].frame.maxY)
         member.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertEqual(member.value as? String, "1")
         XCTAssertTrue(app.buttons["Add Event"].isEnabled)
@@ -1150,6 +1216,28 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(reminder.exists)
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 5))
+    }
+
+    private func revealInVisibleForm(_ element: XCUIElement, navigationTitle: String, in app: XCUIApplication) {
+        for _ in 0..<24 {
+            let top = app.navigationBars[navigationTitle].frame.maxY + 10
+            let bottom = app.tabBars.firstMatch.frame.minY - 10
+            let visibleHeight = bottom - top
+            let frame = element.exists ? element.frame : .zero
+            if frame != .zero && element.isHittable && frame.minY >= top && frame.maxY <= bottom { return }
+            // Search with overlapping, momentum-free steps. Once discovered,
+            // scroll either direction to center the complete control.
+            let delta = frame == .zero ? visibleHeight * 0.4 : frame.midY - (top + bottom) / 2
+            let distance = min(abs(delta), visibleHeight * 0.4)
+            let start = delta > 0 ? bottom - 15 : top + 15
+            let end = start + (delta > 0 ? -distance : distance)
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = app.frame.width * 0.15
+            origin.withOffset(CGVector(dx: x, dy: start))
+                .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: end)),
+                       withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTFail("Control must be fully visible between navigation and tab bars: \(element.identifier)")
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {

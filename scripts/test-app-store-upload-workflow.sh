@@ -19,6 +19,7 @@ ruby -ryaml -e '
   end
 '
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
+python3 -B scripts/verify-submission-assets.py --source
 python3 - <<'PY'
 from pathlib import Path
 source = Path('scripts/upload-testflight.py').read_text()

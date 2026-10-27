@@ -526,6 +526,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let eventStore: any EventStore
     private let memberStore: any FamilyMemberStore
     private let notificationStore: any ConflictNotificationStore
+    private let sessionConflictStores = SessionConflictStores(storageURL: AppStorage.notificationsURL)
     private let inboxStore: any NotificationInboxStore
     private let reminderStore: any ReminderStore
     private let reminderAlertScheduler: (any ReminderAlertScheduler)?
@@ -602,7 +603,13 @@ struct FamilyActivityCoordinatorApp: App {
             reminderAlertScheduler = localAlertScheduler
             eventAlertScheduler = localAlertScheduler
             memberStore = LocalFamilyMemberStore(storageURL: AppStorage.membersURL)
+            #if DEBUG
+            locationSearch = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_LOCATION_SUGGESTIONS"] == "1"
+                ? SubmissionLocationUITestSearch()
+                : EmptyLocationSearch()
+            #else
             locationSearch = EmptyLocationSearch()
+            #endif
             invitationStore = nil
             #if DEBUG
             occurrenceLifecycleStore = testsOccurrenceLifecycle ? OccurrenceLifecycleUITestStore() : nil
@@ -743,17 +750,32 @@ struct FamilyActivityCoordinatorApp: App {
         WindowGroup {
             SessionGateView(
                 authentication: authentication,
-                onSessionEnded: {
+                onSessionEnded: { endedAccountID in
                     await alertBadge.endSession()
                     try? await eventStore.clearCache()
+                    try? await notificationStore.clear()
+                    if let endedAccountID {
+                        await sessionConflictStores.discard(for: endedAccountID)
+                        // Do not carry one Family's screenshots into the next login.
+                        // Initial signed-out launch is different: preserve a fresh
+                        // image deliberately shared before the member signs in.
+                        await MainActor.run { sharedCaptureInbox.discard() }
+                    } else {
+                        // Existing captures keep their prior ownership; only new
+                        // shares from the signed-out screen belong to the next login.
+                        try? SharedScheduleCaptureQueue.appGroup().markSignedOut()
+                    }
                 }
             ) { session, signOut, deleteAccount in
+                let scopedConflicts: any ConflictNotificationStore = dataIsSynced
+                    ? sessionConflictStores.store(for: session.accountID)
+                    : notificationStore
                 AlertBadgeContent(coordinator: alertBadge) { badge in
                 TabView(selection: $selectedTab) {
                     WeeklyScheduleView(
                         eventStore: eventStore,
                         memberStore: memberStore,
-                        notificationStore: notificationStore,
+                        notificationStore: scopedConflicts,
                         allowsEditing: session.role == .parent,
                         locationSearch: locationSearch,
                         alertScheduler: eventAlertScheduler,
@@ -792,7 +814,7 @@ struct FamilyActivityCoordinatorApp: App {
                     }
                     NotificationsView(
                         inboxStore: inboxStore,
-                        conflictStore: notificationStore,
+                        conflictStore: scopedConflicts,
                         dayBriefStore: session.role == .parent ? dayBriefStore : nil,
                         unreadCount: badge.displayedCount,
                         onInboxChanged: {
@@ -840,7 +862,7 @@ struct FamilyActivityCoordinatorApp: App {
             // No global .tint: destructive buttons stay native-red, each
             // NavigationStack applies its own screen-specific accent colour.
                 .task {
-                    sharedCaptureInbox.receiveNext()
+                    sharedCaptureInbox.receiveNext(for: session.accountID)
                     await monitorFamilyChanges()
                 }
                 .task(id: session.accountID) {
@@ -869,7 +891,7 @@ struct FamilyActivityCoordinatorApp: App {
                 }
                 .onChange(of: scenePhase) { phase in
                     if phase == .active {
-                        sharedCaptureInbox.receiveNext()
+                        sharedCaptureInbox.receiveNext(for: session.accountID)
                         NotificationCenter.default.post(name: .familyDataDidChange, object: nil)
                         NotificationCenter.default.post(name: .notificationInboxDidChange, object: nil)
                         Task { await requestPushNotifications() }
@@ -942,6 +964,26 @@ extension Notification.Name {
     static let familyDataDidChange = Notification.Name("familyDataDidChange")
     static let scheduleUpdateNotice = Notification.Name("scheduleUpdateNotice")
     static let focusOccurrenceStart = Notification.Name("focusOccurrenceStart")
+}
+
+@MainActor
+private final class SessionConflictStores {
+    private let storageURL: URL
+    private var stores: [String: LocalConflictNotificationStore] = [:]
+
+    init(storageURL: URL) { self.storageURL = storageURL }
+
+    func store(for accountID: String) -> LocalConflictNotificationStore {
+        if let store = stores[accountID] { return store }
+        let store = LocalConflictNotificationStore(storageURL: storageURL, accountID: accountID)
+        stores[accountID] = store
+        return store
+    }
+
+    func discard(for accountID: String) async {
+        try? await store(for: accountID).clear()
+        stores.removeValue(forKey: accountID)
+    }
 }
 
 enum AppStorage {
@@ -1027,6 +1069,13 @@ private actor DraftSaveFailureUITestStore: EventStore, ReminderStore {
     func complete(_ reminder: FamilyReminder, by memberID: KidID) async throws { throw URLError(.unsupportedURL) }
     func reopen(_ reminder: FamilyReminder) async throws { throw URLError(.unsupportedURL) }
     func occurrences(_ series: [FamilyReminder], in range: DateInterval) async throws -> [FamilyReminder] { series }
+}
+
+private struct SubmissionLocationUITestSearch: LocationSearch {
+    let attribution: LocationSearchAttribution? = .googleMaps
+    func suggestions(for query: String) async throws -> [LocationSuggestion] {
+        [LocationSuggestion(id: "fixture-google-place", address: "100 Example Street")]
+    }
 }
 
 private actor SavedPlacesUITestAuthentication: Authentication {
@@ -1149,7 +1198,7 @@ private actor DayBriefUITestStore: DayBriefStore {
                     afternoonTemperatureCelsius: 19,
                     precipitationChance: 0.1,
                     attribution: DayBriefWeatherAttribution(
-                        serviceName: "Weather",
+                        serviceName: "Apple Weather",
                         legalPageURL: URL(string: "https://weather.example/legal")!
                     )
                 )

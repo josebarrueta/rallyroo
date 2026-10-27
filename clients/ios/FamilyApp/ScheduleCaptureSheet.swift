@@ -84,6 +84,11 @@ struct ScheduleCaptureSheet: View {
                     Text("AI creates drafts only. Review every item before adding it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("Typed or recognized text and Family member names are sent to Rallyroo’s AI service to create drafts. Images are read on this device, not uploaded by Rallyroo. Speech recognition may use Apple’s servers depending on your device and language.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("schedule-capture-data-disclosure")
+                    Link("Privacy Policy", destination: RallyrooPublicLink.privacy.url)
                     if !intake.drafts.isEmpty {
                         Button("Update drafts from revised text") { intake.extract() }
                             .disabled(

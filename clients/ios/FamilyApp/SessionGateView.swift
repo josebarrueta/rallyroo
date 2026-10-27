@@ -8,7 +8,7 @@ struct SessionGateView<Content: View>: View {
 
     init(
         authentication: any Authentication,
-        onSessionEnded: @escaping @Sendable () async -> Void = {},
+        onSessionEnded: @escaping @Sendable (_ endedAccountID: String?) async -> Void = { _ in },
         @ViewBuilder content: @escaping (
             AuthSession,
             SignOutAction,
@@ -65,14 +65,14 @@ final class SessionGateViewModel: ObservableObject {
     @Published private(set) var lastUsedProvider: AuthenticationProvider?
     @Published var invitationCode = ""
     private let authentication: any Authentication
-    private let onSessionEnded: @Sendable () async -> Void
+    private let onSessionEnded: @Sendable (String?) async -> Void
     private let preferences: UserDefaults
 
     private static let lastUsedProviderKey = "RallyrooLastAuthenticationProvider"
 
     init(
         authentication: any Authentication,
-        onSessionEnded: @escaping @Sendable () async -> Void = {},
+        onSessionEnded: @escaping @Sendable (_ endedAccountID: String?) async -> Void = { _ in },
         preferences: UserDefaults = .standard
     ) {
         self.authentication = authentication
@@ -83,23 +83,25 @@ final class SessionGateViewModel: ObservableObject {
     }
 
     func restoreSession() async {
+        let previousAccountID = session?.accountID
         session = try? await authentication.currentSession()
-        if session == nil { await onSessionEnded() }
+        if session == nil { await onSessionEnded(previousAccountID) }
         isLoading = false
     }
 
     func sessionDidExpire() async {
-        guard session != nil else { return }
+        guard let endedAccountID = session?.accountID else { return }
         session = nil
         isLoading = false
         errorMessage = "Your session expired. Sign in again to continue."
-        await onSessionEnded()
+        await onSessionEnded(endedAccountID)
     }
 
     func signOut() async {
+        let endedAccountID = session?.accountID
         do {
             try await authentication.signOut()
-            await onSessionEnded()
+            await onSessionEnded(endedAccountID)
             session = nil
         } catch {
             errorMessage = "We couldn't sign you out. Please try again."
@@ -107,8 +109,9 @@ final class SessionGateViewModel: ObservableObject {
     }
 
     func deleteAccount() async throws {
+        let endedAccountID = session?.accountID
         try await authentication.deleteAccount()
-        await onSessionEnded()
+        await onSessionEnded(endedAccountID)
         session = nil
         errorMessage = nil
         lastUsedProvider = nil
@@ -278,10 +281,12 @@ private struct SignInView: View {
     }
 
     @ViewBuilder private var legalLinks: some View {
-        Link("Terms", destination: URL(string: "https://rallyroo.dev/terms")!)
-            .accessibilityLabel("Terms of Service")
-        Link("Privacy", destination: URL(string: "https://rallyroo.dev/privacy")!)
-            .accessibilityLabel("Privacy Policy")
+        Link("Terms", destination: RallyrooPublicLink.terms.url)
+            .accessibilityLabel(RallyrooPublicLink.terms.title)
+        Link("Privacy", destination: RallyrooPublicLink.privacy.url)
+            .accessibilityLabel(RallyrooPublicLink.privacy.title)
+        Link(RallyrooPublicLink.support.title, destination: RallyrooPublicLink.support.url)
+            .accessibilityIdentifier("sign-in-support")
     }
 }
 

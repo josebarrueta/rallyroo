@@ -191,8 +191,23 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Help & Legal") {
+                    ForEach(RallyrooPublicLink.allCases) { resource in
+                        Link(resource.title, destination: resource.url)
+                            .accessibilityIdentifier("settings-link-\(resource.rawValue)")
+                    }
+                    Text("Use Support to report a privacy, safety, or abuse concern. Do not send passwords, private calendar links, or sensitive Family information.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("About") {
                     LabeledContent("App", value: "Rallyroo")
+                    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                       let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+                        LabeledContent("Version", value: "\(version) (\(build))")
+                            .accessibilityIdentifier("settings-app-version")
+                    }
                     LabeledContent("Data", value: dataIsSynced ? "Cloud-backed" : "Stored on this device")
                     if dataIsSynced {
                         Text("Cloud-backed does not mean up to date. Schedule and Alerts show their last successful refresh and any saved-data fallback.")
@@ -204,6 +219,7 @@ struct SettingsView: View {
                     Button("Sign Out") {
                         isConfirmingSignOut = true
                     }
+                    .disabled(isDeletingAccount)
                     if dataIsSynced {
                         Button("Delete Account", role: .destructive) {
                             isConfirmingAccountDeletion = true
@@ -246,7 +262,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier("confirm-sign-out")
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("You can sign in again at any time.")
+                Text("You can sign in again at any time. Saved conflict alerts and unreviewed shared screenshots on this device will be cleared; signing out does not delete your saved plans.")
             }
             .confirmationDialog(
                 "Permanently delete your account?",
@@ -510,6 +526,9 @@ private struct SavedPlaceEditor: View {
                             } label: {
                                 Label(suggestion.address, systemImage: "mappin.and.ellipse")
                             }
+                        }
+                        if !suggestions.isEmpty, locationSearch.attribution == .googleMaps {
+                            GoogleMapsAttributionLabel()
                         }
                     } else {
                         Text(place?.waypoint.address ?? "Saved map location")
