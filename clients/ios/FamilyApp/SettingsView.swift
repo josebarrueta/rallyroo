@@ -155,7 +155,7 @@ struct SettingsView: View {
                                 currentMemberID: currentMemberID
                             )
                         }
-                        Text("Add TeamSnap, school, sports, or other iCalendar subscription links.")
+                        Text("Connect Google Calendar, TeamSnap, Outlook, or another calendar with guided subscription instructions.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -673,6 +673,8 @@ struct CalendarSourcesView: View {
                 RallyrooToolbarLabel(title: "Add calendar", systemImage: "plus")
             }
             .disabled(members.isEmpty)
+            .accessibilityLabel("Add connected calendar")
+            .accessibilityIdentifier("add-calendar-source")
         }
         .task { await load() }
         .sheet(item: $selectedSource) { source in
@@ -870,10 +872,54 @@ private struct CalendarSourceDetailView: View {
     }
 }
 
+private enum CalendarProvider: String, CaseIterable, Identifiable {
+    case google, teamsnap, outlook, other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .google: "Google Calendar"
+        case .teamsnap: "TeamSnap"
+        case .outlook: "Outlook / Microsoft 365"
+        case .other: "Other iCalendar calendar"
+        }
+    }
+
+    var steps: [String] {
+        switch self {
+        case .google: [
+            "On a computer, open Google Calendar on the web and choose Settings.",
+            "Under Settings for my calendars, choose your calendar, then Integrate calendar.",
+            "Copy the Secret address in iCal format. Do not make a private calendar public.",
+            "If the secret address is missing for a work or school account, ask your administrator. Do not bypass your organization's policy."
+        ]
+        case .teamsnap: [
+            "Sign in to TeamSnap on the web and choose your roster name under the team name.",
+            "Open Schedule → Settings → Sync Calendar / Export (some versions say Subscribe/Export).",
+            "Copy the calendar subscription link for the schedule you want, not an exported text file."
+        ]
+        case .outlook: [
+            "Open Outlook Calendar on the web, then Settings → Calendar → Shared calendars (or View → Calendar settings).",
+            "Under Publish a calendar, select your calendar and how much detail to expose. Publishing lets anyone with the link view those details. Only proceed if you are comfortable with that access.",
+            "Select Publish and copy the ICS link, not the HTML link. Unpublish at the source to revoke access.",
+            "If publishing is unavailable, your organization may disable it. Ask your administrator; do not make a sensitive calendar public just to connect it."
+        ]
+        case .other: [
+            "In your calendar provider, look for Subscribe, iCal, ICS, or webcal.",
+            "Copy an HTTPS or webcal subscription link that stays reachable for future syncs without signing in.",
+            "Use a subscription, not a normal browser page or a one-time downloaded .ics file. If no link is offered, ask the provider."
+        ]
+        }
+    }
+}
+
 private struct AddCalendarSourceView: View {
     let members: [FamilyMember]
     let onAdd: (String, URL, [KidID], CalendarSourceVisibility) async throws -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var provider: CalendarProvider?
+    @State private var isConfiguring = false
     @State private var name = ""
     @State private var urlText = ""
     @State private var participantIDs = Set<KidID>()
@@ -884,12 +930,46 @@ private struct AddCalendarSourceView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let provider {
+                    Section(provider.title) {
+                        if !isConfiguring {
+                            ForEach(Array(provider.steps.enumerated()), id: \.offset) { index, step in
+                                Text("\(index + 1). \(step)")
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button("Continue to configuration") { isConfiguring = true }
+                                .accessibilityIdentifier("calendar-provider-continue")
+                        }
+                        Button("Change provider") {
+                            self.provider = nil
+                            isConfiguring = false
+                        }
+                        .accessibilityHint("Your entered name, link, visibility, and family members are kept.")
+                        .accessibilityIdentifier("change-calendar-provider")
+                    }
+                } else {
+                    Section("Choose a provider") {
+                        ForEach(CalendarProvider.allCases) { choice in
+                            Button(choice.title) { provider = choice }
+                                .accessibilityIdentifier("calendar-provider-\(choice.id)")
+                        }
+                    }
+                }
+                Section("Before connecting") {
+                    Text("Imports are one-way and read-only. Edit events in the source calendar, not Rallyroo.")
+                    Text("Treat the subscription URL as private: anyone with it may be able to read your calendar. Never share it in screenshots or support messages.")
+                    Text("Use a continuously updated subscription, not a webpage or a one-time .ics file. Changing provider keeps your entered configuration; Cancel discards it.")
+                }
+                if isConfiguring {
                 Section("Calendar") {
                     TextField("Name, such as Emma TeamSnap", text: $name)
+                        .accessibilityIdentifier("new-calendar-name")
                     TextField("Calendar subscription link", text: $urlText)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
+                        .privacySensitive()
+                        .accessibilityIdentifier("new-calendar-url")
                     if let calendarRequirementMessage {
                         Label(calendarRequirementMessage, systemImage: "exclamationmark.circle")
                             .font(.caption)
@@ -901,7 +981,7 @@ private struct AddCalendarSourceView: View {
                         Text("Personal").tag(CalendarSourceVisibility.personal)
                         Text("Shared with family").tag(CalendarSourceVisibility.family)
                     }
-                    .pickerStyle(.segmented)
+                    .pickerStyle(.menu)
                     Text(visibility == .personal
                          ? "Only you can see events imported from this calendar."
                          : "Everyone in your family can see imported events.")
@@ -917,6 +997,7 @@ private struct AddCalendarSourceView: View {
                                 else { participantIDs.remove(member.id) }
                             }
                         ))
+                        .accessibilityIdentifier("calendar-participant-\(member.id)")
                     }
                     if participantIDs.isEmpty {
                         Label("Choose at least one family member.", systemImage: "person.crop.circle.badge.questionmark")
@@ -927,16 +1008,21 @@ private struct AddCalendarSourceView: View {
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
                 }
+                }
             }
-            .navigationTitle("Import Calendar")
+            .disabled(isSaving)
+            .navigationTitle(provider == nil ? "Choose provider" : (isConfiguring ? "Import Calendar" : "Subscription instructions"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isSaving ? "Importing…" : "Import") { add() }
-                        .disabled(importBlockReason != nil || isSaving)
-                        .accessibilityHint(importBlockReason ?? "Imports this calendar subscription.")
+                    if isConfiguring {
+                        Button(isSaving ? "Importing…" : "Import") { add() }
+                            .disabled(importBlockReason != nil || isSaving)
+                            .accessibilityHint(importBlockReason ?? "Imports this calendar subscription.")
+                            .accessibilityIdentifier("import-calendar-source")
+                    }
                 }
             }
         }

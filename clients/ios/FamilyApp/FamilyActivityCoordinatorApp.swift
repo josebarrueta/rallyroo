@@ -470,14 +470,28 @@ private actor CalendarSourceUITestStore: CalendarSourceStore {
         lastSyncedAt: Date().addingTimeInterval(-7 * 60)
     )
 
-    func sources() async throws -> [CalendarSourceConnection] { [source] }
+    private var isRemoved = false
+
+    func sources() async throws -> [CalendarSourceConnection] { isRemoved ? [] : [source] }
 
     func connect(
         name: String,
         url: URL,
         participantIDs: [KidID],
         visibility: CalendarSourceVisibility
-    ) async throws -> CalendarSourceConnection { source }
+    ) async throws -> CalendarSourceConnection {
+        source = CalendarSourceConnection(
+            id: source.id,
+            ownerMemberID: source.ownerMemberID,
+            visibility: visibility,
+            name: name,
+            participantIDs: participantIDs,
+            status: .ready,
+            lastSyncedAt: .now
+        )
+        isRemoved = false
+        return source
+    }
 
     func update(
         _ source: CalendarSourceConnection,
@@ -510,7 +524,7 @@ private actor CalendarSourceUITestStore: CalendarSourceStore {
         return self.source
     }
 
-    func delete(_ source: CalendarSourceConnection) async throws {}
+    func delete(_ source: CalendarSourceConnection) async throws { isRemoved = true }
 }
 #endif
 

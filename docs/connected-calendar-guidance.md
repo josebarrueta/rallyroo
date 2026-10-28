@@ -1,0 +1,19 @@
+# Connected-calendar guidance maintenance
+
+Issue: #183. Product content lives in `clients/ios/FamilyApp/SettingsView.swift` (`CalendarProvider`) and `site/public/docs.html#connected-calendars`. Update both when provider interfaces change. Provider choice is guidance only: no provider credentials, OAuth, or backend security changes.
+
+## Primary sources verified during implementation
+
+- Google Calendar Help, [Sync your calendar with computer programs](https://support.google.com/calendar/answer/37648): web Settings → Settings for my calendars → Integrate calendar → Secret address in iCal format; secret address reset invalidates the old address; workspace administrators may restrict availability. Do not substitute public sharing.
+- TeamSnap, [Subscribe to a Team Schedule](https://helpme-teams.teamsnap.com/article/2783-subscribe-to-a-team-schedule): web team roster name → Schedule → Settings → Sync Calendar / Export → copy calendar link. The provider labels this guide legacy, so also accommodate Subscribe/Export per [Share Schedule with Family and Friends](https://helpme.teamsnap.com/article/131-share-schedule-with-family-and-friends). Copy a subscription link, not a text-file export.
+- Microsoft Support, [Share an Outlook calendar as view-only with others](https://support.microsoft.com/en-us/outlook/sharing/share-an-outlook-calendar-as-view-only-with-others): Outlook web Calendar → View → Calendar settings → Calendar → Shared calendars → Publish a calendar → permissions → Publish → ICS, not HTML.
+- Microsoft Support, [Share your calendar in Outlook on the web](https://support.microsoft.com/en-gb/office/share-your-calendar-in-outlook-on-the-web-7ecef8ae-139c-40d9-bae2-a23977ee58d5): Settings → Shared calendars variant; published calendar is accessible to anyone with its link; Unpublish revokes access; downloading an ICS file is a snapshot whereas subscribing receives updates.
+- Microsoft Learn, [Publish Calendar option is missing](https://learn.microsoft.com/en-us/troubleshoot/exchange/outlook-on-the-web-issues/publish-calendar-option-missing-from-calendar-settings): organizational sharing policy can disable publishing. Product guidance should direct Members to administrators, not instruct them to relax policy.
+
+## Verification
+
+`site/test/site.test.mjs` requires all four provider sections, the Schedule link, troubleshooting, and critical privacy/read-only terminology while retaining the tracker-free, script-free navigation contract. iOS UI tests exercise all provider choices through Settings, configuration preservation, URL/participant requirements, connection, rename, visibility, sync, and removal. Use only reserved-domain synthetic URLs; never capture real subscription links or feed contents in tests, logs, screenshots, or support reports.
+
+Verified locally: `node site/test/site.test.mjs`; `swift test --filter RemoteCalendarSourceStoreTests` (2 tests); isolated iOS simulator `FamilyAppCI` UI tests `testCalendarProviderInstructionsAtLargestAccessibilityText`, `testCalendarProvidersGuideConfigurationAndPreserveInput`, and `testConnectedCalendarHasVisibleSyncAndEditableName` (3 tests, all passed). The first UI attempt exposed missing test participants and switch hit-target assumptions; the fixture now models connection/removal and the test explicitly creates a synthetic participant.
+
+Accessibility: instructions use vertically expanding text in a scrolling Form with natural VoiceOver order. Visibility uses a menu instead of a segmented control to avoid truncating long labels at large text sizes. The largest Dynamic Type simulator pass is automated and passed. Perform a manual VoiceOver device pass before release; automated UI assertions do not replace that check. Deployment and TestFlight distribution are release steps, not verified by local tests.

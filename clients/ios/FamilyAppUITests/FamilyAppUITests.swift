@@ -1129,6 +1129,89 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.alerts["Event settings"].staticTexts["Rallyroo settings saved."].exists)
     }
 
+    func testCalendarProviderInstructionsAtLargestAccessibilityText() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALENDAR_SOURCE"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        addFamilyMember(named: "Synthetic participant", in: app)
+        app.tabBars.buttons["Settings"].tap()
+        let calendars = app.buttons["Connected calendars"]
+        for _ in 0..<8 where !calendars.isHittable { app.swipeUp() }
+        calendars.tap()
+        app.buttons["add-calendar-source"].tap()
+        for provider in ["google", "teamsnap", "outlook", "other"] {
+            let choice = app.buttons["calendar-provider-\(provider)"]
+            for _ in 0..<8 where !choice.isHittable { app.swipeUp() }
+            choice.tap()
+            let next = app.buttons["calendar-provider-continue"]
+            for _ in 0..<15 where !next.isHittable { app.swipeUp() }
+            XCTAssertTrue(next.isHittable)
+            next.tap()
+            let change = app.buttons["change-calendar-provider"]
+            for _ in 0..<15 where !change.isHittable { app.swipeDown() }
+            XCTAssertTrue(change.isHittable)
+            change.tap()
+            for _ in 0..<8 where !app.buttons["calendar-provider-google"].isHittable { app.swipeDown() }
+        }
+    }
+
+    func testCalendarProvidersGuideConfigurationAndPreserveInput() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALENDAR_SOURCE"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        addFamilyMember(named: "Synthetic participant", in: app)
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["Connected calendars"].tap()
+        app.buttons["add-calendar-source"].tap()
+
+        for provider in ["google", "teamsnap", "outlook", "other"] {
+            XCTAssertTrue(app.buttons["calendar-provider-\(provider)"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.textFields["new-calendar-url"].exists)
+            app.buttons["calendar-provider-\(provider)"].tap()
+            XCTAssertTrue(app.navigationBars["Subscription instructions"].waitForExistence(timeout: 5))
+            let next = app.buttons["calendar-provider-continue"]
+            for _ in 0..<5 where !next.isHittable { app.swipeUp() }
+            next.tap()
+            XCTAssertTrue(app.textFields["new-calendar-name"].waitForExistence(timeout: 5))
+            if provider != "other" { app.buttons["change-calendar-provider"].tap() }
+        }
+
+        let name = app.textFields["new-calendar-name"]
+        for _ in 0..<5 where !name.isHittable { app.swipeUp() }
+        name.tap()
+        name.typeText("Synthetic subscription")
+        let url = app.textFields["new-calendar-url"]
+        url.tap()
+        let invalidURL = "http://calendar.example.invalid/synthetic.ics"
+        url.typeText(invalidURL)
+        XCTAssertFalse(app.buttons["import-calendar-source"].isEnabled)
+        url.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: invalidURL.count))
+        url.typeText("webcal://calendar.example.invalid/synthetic.ics")
+        XCTAssertFalse(app.buttons["import-calendar-source"].isEnabled)
+        app.swipeUp()
+        let participant = app.switches.matching(NSPredicate(format: "identifier BEGINSWITH %@", "calendar-participant-")).firstMatch
+        for _ in 0..<5 where !participant.isHittable { app.swipeUp() }
+        participant.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        expectation(for: NSPredicate(format: "isEnabled == true"), evaluatedWith: app.buttons["import-calendar-source"])
+        waitForExpectations(timeout: 5)
+
+        let change = app.buttons["change-calendar-provider"]
+        for _ in 0..<8 where !change.isHittable { app.swipeDown() }
+        change.tap()
+        app.buttons["calendar-provider-google"].tap()
+        let next = app.buttons["calendar-provider-continue"]
+        for _ in 0..<5 where !next.isHittable { app.swipeUp() }
+        next.tap()
+        XCTAssertEqual(app.textFields["new-calendar-name"].value as? String, "Synthetic subscription")
+        XCTAssertEqual(app.textFields["new-calendar-url"].value as? String, "webcal://calendar.example.invalid/synthetic.ics")
+        XCTAssertTrue(app.buttons["import-calendar-source"].isEnabled)
+        app.buttons["import-calendar-source"].tap()
+        XCTAssertTrue(app.staticTexts["Synthetic subscription"].waitForExistence(timeout: 5))
+    }
+
     func testConnectedCalendarHasVisibleSyncAndEditableName() {
         let app = localApp()
         app.launchEnvironment["RALLYROO_UI_TEST_CALENDAR_SOURCE"] = "1"
