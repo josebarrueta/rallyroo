@@ -1,16 +1,17 @@
 # External TestFlight review and public beta
 
-Status: **preparation, not submitted or approved**. Evidence checked 2026-10-26.
+Status: **preparation, not submitted or approved**. Evidence checked 2026-10-28.
 This is external **TestFlight App Review**, not an App Store production release.
 Apple decides approval; neither this checklist nor passing CI guarantees it.
 
 ## Candidate and existing evidence
 
 - App/bundle: Rallyroo, `dev.rallyroo.app`; Share Extension `dev.rallyroo.app.share`.
-- Current internal candidate: marketing version **1.0, build 187**, source
-  `176fc26b78a6964dd2dc8258b10b43c3b7d13a05`.
-- Internal upload run `40264805635` and deployment `7323514597` succeeded.
-  Main iOS run `40262693940` passed 61 UI tests and 237 core/live-contract tests.
+- Current internal candidate: marketing version **1.0, build 189**, source
+  `a8c75a98e84e6da4b0192a9a658c84f358b5a098`.
+- Internal upload run `40780508191` and deployment `7398990969` succeeded.
+  Main iOS run `40775612145` passed 66 UI tests plus core/live-contract and
+  narrow/accessibility verification.
 - API `v0.11.26` responds healthy/ready. Privacy, terms, support and docs URLs
   returned HTTP 200 during this audit. This is a point-in-time check, not an SLA.
 - #2 records earlier production acceptance of OAuth, APNs, privacy disclosures,
@@ -21,13 +22,13 @@ Apple decides approval; neither this checklist nor passing CI guarantees it.
   It is also not evidence that Apple has marked the binary “TestFlight Internal
   Only”; verify actual external eligibility in App Store Connect (ASC).
 
-CI-only changes need not replace build 187. If product fixes are needed, upload
+CI-only changes need not replace build 189. If product fixes are needed, upload
 and re-pin the replacement build/SHA before submission; do not submit a moving target.
 
-## Repository preparation after build 187
+## Submission-readiness changes included in build 189
 
-The submission-readiness changes are **not in build 187** and are not evidence of
-ASC approval or owner acceptance. They add:
+The submission-readiness and connected-calendar guidance changes are included in
+build 189. Their inclusion is not evidence of ASC approval or owner acceptance. They add:
 
 - Privacy, Terms, Support and version/build in signed-in Settings for both roles,
   plus Support before sign-in and guidance for reporting privacy/safety concerns.
@@ -90,7 +91,7 @@ They are Apple's marks, used only to attribute Apple weather data. [WeatherKit][
 
 ### Reviewer access — owner must prove this on a clean device/account
 
-- [ ] Confirm build 187 has finished processing, is not expired and is selectable
+- [ ] Confirm build 189 has finished processing, is not expired and is selectable
   under **External Testing → group → Add Builds**. An internal upload success is
   not an external-eligibility check.
 - [ ] Use an Apple/Google identity that is not a team/internal allow-listed tester
