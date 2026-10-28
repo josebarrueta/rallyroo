@@ -1010,6 +1010,7 @@ private struct AddCalendarSourceView: View {
                 }
                 }
             }
+            .id(isConfiguring)
             .disabled(isSaving)
             .navigationTitle(provider == nil ? "Choose provider" : (isConfiguring ? "Import Calendar" : "Subscription instructions"))
             .toolbar {
