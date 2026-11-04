@@ -5,7 +5,7 @@ import type {
   ScheduleOccurrenceReference,
   ScheduleOccurrenceState,
 } from "./domain.js";
-import { eventOccurrenceStarts } from "./event-recurrence.js";
+import { eventLocalISOWeekday, eventOccurrenceStarts } from "./event-recurrence.js";
 
 export type OccurrenceScope = "this_occurrence" | "this_weekday_future" | "all_future";
 
@@ -136,9 +136,10 @@ export class OccurrenceLifecycleModule {
      // scope === "this_weekday_future"
     const targetWeekday = starts.find((start) => start.getTime() === new Date(reference.scheduledAt).getTime());
     if (!targetWeekday) return [reference];
-    const targetWeekdayIdx = weekdayIndex(targetWeekday);
+    const timeZone = sourceEvent.recurrence?.timeZone;
+    const targetWeekdayIdx = eventLocalISOWeekday(targetWeekday, timeZone);
     return future
-         .filter((start) => weekdayIndex(start) === targetWeekdayIdx)
+         .filter((start) => eventLocalISOWeekday(start, timeZone) === targetWeekdayIdx)
          .map((start) => ({
              kind: "event" as const,
              seriesID: reference.seriesID,
@@ -166,12 +167,6 @@ export class OccurrenceLifecycleModule {
 function occurrenceKey(reference: ScheduleOccurrenceReference): string {
   return `${reference.kind}:${reference.seriesID.toLowerCase()}:${new Date(reference.scheduledAt).toISOString()}`;
 }
-
-function weekdayIndex(date: Date): number {
-   // 0=Monday, 6=Sunday, based on UTC
-    const day = date.getUTCDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-    return day === 0 ? 6 : day - 1;
-   }
 
 function canonicalReference(reference: ScheduleOccurrenceReference): ScheduleOccurrenceReference {
   const scheduledAt = new Date(reference.scheduledAt);

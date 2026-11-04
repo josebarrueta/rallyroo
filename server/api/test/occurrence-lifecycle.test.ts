@@ -177,6 +177,40 @@ describe("OccurrenceLifecycleModule", () => {
     expect(results.every((r) => r.reference.scheduledAt >= "2026-09-17T00:30:00.000Z")).toBe(true);
      });
 
+  it("deletes future Tuesday occurrences across a daylight-saving transition", async () => {
+    const tuesdaySeries: FamilyEvent = {
+      ...series,
+      id: "00000000-0000-4000-8000-000000000302",
+      recurrenceSeriesID: "00000000-0000-4000-8000-000000000302",
+      startTime: "2026-10-27T23:30:00.000Z",
+      endTime: "2026-10-28T00:30:00.000Z",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [2],
+        timeZone: "America/Los_Angeles",
+        endDate: "2026-11-11T00:30:00.000Z",
+      },
+    };
+    class TuesdayRepository extends MemoryOccurrenceRepository {
+      override async eventsForFamily(): Promise<FamilyEvent[]> { return [tuesdaySeries]; }
+    }
+    vi.setSystemTime(new Date("2026-10-27T20:00:00.000Z"));
+    const lifecycle = new OccurrenceLifecycleModule(new TuesdayRepository());
+
+    const results = await lifecycle.delete(account, {
+      kind: "event",
+      seriesID: tuesdaySeries.id,
+      scheduledAt: "2026-10-27T23:30:00.000Z",
+    }, "this_weekday_future");
+
+    expect(results.map((result) => result.reference.scheduledAt)).toEqual([
+      "2026-10-27T23:30:00.000Z",
+      "2026-11-04T00:30:00.000Z",
+      "2026-11-11T00:30:00.000Z",
+    ]);
+  });
+
   it("lets a non-parent skip an Event occurrence", async () => {
     const repo = new MemoryOccurrenceRepository();
     const lifecycle = new OccurrenceLifecycleModule(repo);
