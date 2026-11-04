@@ -75,6 +75,12 @@ function weeklyOccurrenceStarts(
   return starts;
 }
 
+export function eventLocalISOWeekday(date: Date, timeZone?: string): number {
+  if (!timeZone) return date.getUTCDay() || 7;
+  const parts = zonedParts(date, timeZone);
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay() || 7;
+}
+
 export function isSameEventLocalDate(
   left: Date,
   right: Date,
