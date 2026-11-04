@@ -41,6 +41,19 @@ Every event, reminder, or family-member mutation advances this cursor. Remote iO
 poll the small cursor every five seconds and reload visible family data only when
 it changes. The app also refreshes whenever it becomes active.
 
+## Occurrence lifecycle
+
+`POST /v1/occurrences/{skip|restore|delete|acknowledge}` accepts `kind`, `seriesID`,
+`scheduledAt`, and an optional IANA `timeZone`. Scoped actions also accept
+`scope`: `this_occurrence`, `this_weekday_future`, or `all_future`.
+
+For legacy Event rules without a saved timezone, clients must send the calendar
+zone used to expand the displayed occurrence. The server validates the occurrence
+against that rule in the supplied zone; it does not guess a zone or override a
+saved series timezone. The hint is not part of the durable occurrence reference.
+Future Event scopes expand all linked series segments through their bounded ends,
+retain past history, and compare weekdays in each segment's effective local zone.
+
 ## Events
 
 - `GET /v1/events` → JSON array of events.

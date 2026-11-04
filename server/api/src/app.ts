@@ -58,13 +58,6 @@ declare module "fastify" {
   }
 }
 
-const occurrenceReferenceSchema = z.object({
-  kind: z.enum(["event", "reminder"]),
-  seriesID: z.string().uuid(),
-  scheduledAt: z.string().datetime(),
-  scope: z.enum(["this_occurrence", "this_weekday_future", "all_future"]).default("this_occurrence"),
-});
-
 const timeZoneSchema = z.string().refine((value) => {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
@@ -73,6 +66,14 @@ const timeZoneSchema = z.string().refine((value) => {
     return false;
   }
 }, { message: "must be an IANA time-zone identifier" });
+
+const occurrenceReferenceSchema = z.object({
+  kind: z.enum(["event", "reminder"]),
+  seriesID: z.string().uuid(),
+  scheduledAt: z.string().datetime(),
+  timeZone: timeZoneSchema.optional(),
+  scope: z.enum(["this_occurrence", "this_weekday_future", "all_future"]).default("this_occurrence"),
+});
 
 const eventSchema = z.object({
   id: z.string().uuid(),

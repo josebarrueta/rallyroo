@@ -147,11 +147,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
          scope: OccurrenceScope = .thisOccurrence
      ) async {
         guard let store = occurrenceLifecycleStore else { return }
-        let reference = OccurrenceReference(
-            kind: .event,
-            seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.scheduledAt
-        )
+        let reference = occurrence.lifecycleReference()
         do {
             _ = try await store.skip(reference, scope: scope)
             await reload()
@@ -165,11 +161,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
          scope: OccurrenceScope = .thisOccurrence
      ) async {
         guard let store = occurrenceLifecycleStore else { return }
-        let reference = OccurrenceReference(
-            kind: .event,
-            seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.scheduledAt
-        )
+        let reference = occurrence.lifecycleReference()
         do {
             _ = try await store.restore(reference, scope: scope)
             await reload()
@@ -184,11 +176,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
          scope: OccurrenceScope = .thisOccurrence
      ) async -> Bool {
         guard let store = occurrenceLifecycleStore else { return false }
-        let reference = OccurrenceReference(
-            kind: .event,
-            seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.scheduledAt
-        )
+        let reference = occurrence.lifecycleReference()
         do {
             _ = try await store.delete(reference, scope: scope)
             await reload()
@@ -201,11 +189,7 @@ final class WeeklyScheduleViewModel: ObservableObject {
 
      func acknowledgeOccurrence(_ occurrence: EventOccurrence) async {
         guard let store = occurrenceLifecycleStore else { return }
-        let reference = OccurrenceReference(
-            kind: .event,
-            seriesID: occurrence.sourceSeriesID,
-            scheduledAt: occurrence.scheduledAt
-        )
+        let reference = occurrence.lifecycleReference()
         do {
             _ = try await store.acknowledge(reference)
         } catch {

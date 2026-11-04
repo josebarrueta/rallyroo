@@ -4,12 +4,15 @@ public struct OccurrenceReference: Codable, Equatable, Sendable {
     public let kind: ScheduleOccurrenceKind
     public let seriesID: UUID
     public let scheduledAt: Date
+    /// The calendar used to render legacy recurrence rules without a saved timezone.
+    public let timeZone: String?
 
-    public init(kind: ScheduleOccurrenceKind, seriesID: UUID, scheduledAt: Date) {
+    public init(kind: ScheduleOccurrenceKind, seriesID: UUID, scheduledAt: Date, timeZone: String? = nil) {
         self.kind = kind
         self.seriesID = seriesID
         self.scheduledAt = scheduledAt
-        }
+        self.timeZone = timeZone
+    }
 }
 
 public enum OccurrenceScope: String, Codable, Sendable {
@@ -26,18 +29,13 @@ public protocol OccurrenceLifecycleStore: Sendable {
 }
 
 public actor RemoteOccurrenceLifecycleStore: OccurrenceLifecycleStore {
-    private struct SkipRequest: Codable {
+    private struct Request: Encodable {
         let kind: String
         let seriesID: String
         let scheduledAt: String
-        let scope: String
-        }
-
-    private struct AcknowledgeRequest: Codable {
-        let kind: String
-        let seriesID: String
-        let scheduledAt: String
-        }
+        let timeZone: String?
+        let scope: String?
+    }
 
     private let baseURL: URL
     private let transport: any HTTPTransport
@@ -55,76 +53,51 @@ public actor RemoteOccurrenceLifecycleStore: OccurrenceLifecycleStore {
         self.authToken = authToken
         self.encoder = encoder
         encoder.outputFormatting = [.sortedKeys]
-        }
+    }
 
     public func skip(_ reference: OccurrenceReference, scope: OccurrenceScope = .thisOccurrence) async throws {
-        let token = try await authToken()
-        let request = SkipRequest(
-            kind: reference.kind.rawValue,
-            seriesID: reference.seriesID.uuidString,
-            scheduledAt: reference.scheduledAt.iso8601String,
-            scope: scope.rawValue
-        )
-        try await perform("skip", body: try encoder.encode(request), token: token)
-        }
+        try await perform("skip", reference: reference, scope: scope)
+    }
 
     public func restore(_ reference: OccurrenceReference, scope: OccurrenceScope = .thisOccurrence) async throws {
-        let token = try await authToken()
-        let request = SkipRequest(
-            kind: reference.kind.rawValue,
-            seriesID: reference.seriesID.uuidString,
-            scheduledAt: reference.scheduledAt.iso8601String,
-            scope: scope.rawValue
-        )
-        try await perform("restore", body: try encoder.encode(request), token: token)
+        try await perform("restore", reference: reference, scope: scope)
     }
 
     public func delete(_ reference: OccurrenceReference, scope: OccurrenceScope = .thisOccurrence) async throws {
-        let token = try await authToken()
-        let request = SkipRequest(
-            kind: reference.kind.rawValue,
-            seriesID: reference.seriesID.uuidString,
-            scheduledAt: reference.scheduledAt.iso8601String,
-            scope: scope.rawValue
-        )
-        try await perform("delete", body: try encoder.encode(request), token: token)
-        }
+        try await perform("delete", reference: reference, scope: scope)
+    }
 
     public func acknowledge(_ reference: OccurrenceReference) async throws {
-        let token = try await authToken()
-        let request = AcknowledgeRequest(
-            kind: reference.kind.rawValue,
-            seriesID: reference.seriesID.uuidString,
-            scheduledAt: reference.scheduledAt.iso8601String
-        )
-        try await perform("acknowledge", body: try encoder.encode(request), token: token)
-        }
+        try await perform("acknowledge", reference: reference)
+    }
 
     private func perform(
         _ endpoint: String,
-        body: Data,
-        token: String?
-        ) async throws {
+        reference: OccurrenceReference,
+        scope: OccurrenceScope? = nil
+    ) async throws {
+        let token = try await authToken()
+        let body = try encoder.encode(Request(
+            kind: reference.kind.rawValue,
+            seriesID: reference.seriesID.uuidString,
+            scheduledAt: reference.scheduledAt.iso8601String,
+            timeZone: reference.timeZone,
+            scope: scope?.rawValue
+        ))
         let url = baseURL.appending(path: "/v1/occurrences/\(endpoint)")
         var headers = [
             "Content-Type": "application/json",
             "Accept": "application/json",
         ]
         if let token { headers["Authorization"] = "Bearer \(token)" }
-        do {
-            let response = try await transport.send(HTTPRequest(
-                method: .post,
-                url: url,
-                headers: headers,
-                body: body
-            ))
-            try response.requireSuccess()
-        } catch let error as RemoteStoreError {
-            throw error
-        } catch {
-            throw error
-        }
-        }
+        let response = try await transport.send(HTTPRequest(
+            method: .post,
+            url: url,
+            headers: headers,
+            body: body
+        ))
+        try response.requireSuccess()
+    }
 }
 
 // MARK: - ISO 8601 date formatting
@@ -134,7 +107,7 @@ extension Date {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: self)
-        }
+    }
 }
 
 // MARK: - Mock transport for testing
@@ -145,13 +118,12 @@ public actor RecordingTransport: HTTPTransport {
 
     public init() {}
 
-
     public func setResponse(_ response: HTTPResponse) {
         self.response = response
-          }
+    }
 
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         self.lastRequest = request
         return self.response
-        }
+    }
 }
