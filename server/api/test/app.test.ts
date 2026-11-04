@@ -1547,6 +1547,44 @@ describe("Rallyroo API", () => {
     await app.close();
   });
 
+  it("accepts the iOS rendering timezone when deleting a legacy Tuesday occurrence", async () => {
+    const data = repository();
+    const event = (await data.eventsForFamily("family-1"))[0]!;
+    await data.saveEvent({
+      ...event,
+      startTime: "2026-11-04T03:30:00.000Z",
+      endTime: "2026-11-04T05:00:00.000Z",
+      recurrence: {
+        frequency: "weekly", interval: 1, weekdays: [2], endDate: "2027-03-06T23:26:43Z",
+      },
+    });
+    const app = buildApp({ identityProvider, repository: data });
+    try {
+      const payload = {
+        kind: "event", seriesID: event.recurrenceSeriesID ?? event.id,
+        scheduledAt: "2026-11-11T03:30:00.000Z", timeZone: "America/Los_Angeles",
+      };
+      const invalid = await app.inject({
+        method: "POST", url: "/v1/occurrences/delete",
+        headers: { authorization: "Bearer parent-token" },
+        payload: { ...payload, timeZone: "Not/A_Zone" },
+      });
+      expect(invalid.statusCode).toBe(400);
+      const response = await app.inject({
+        method: "POST", url: "/v1/occurrences/delete",
+        headers: { authorization: "Bearer parent-token" }, payload,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()[0]).toMatchObject({
+        reference: { kind: payload.kind, seriesID: payload.seriesID, scheduledAt: payload.scheduledAt },
+        disposition: "deleted",
+      });
+      expect(response.json()[0].reference).not.toHaveProperty("timeZone");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("requires a parent to delete an Event occurrence as a durable tombstone", async () => {
     const app = buildApp({ identityProvider, repository: repository() });
     const reference = {

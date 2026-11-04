@@ -211,6 +211,80 @@ describe("OccurrenceLifecycleModule", () => {
     ]);
   });
 
+  it("deletes a legacy Tuesday evening occurrence expanded by iOS in Los Angeles", async () => {
+    const legacySeries: FamilyEvent = {
+      ...series,
+      startTime: "2026-11-04T03:30:00.000Z",
+      endTime: "2026-11-04T05:00:00.000Z",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: [2],
+        endDate: "2027-03-06T23:26:43Z",
+      },
+    };
+    class LegacyRepository extends MemoryOccurrenceRepository {
+      override async eventsForFamily(): Promise<FamilyEvent[]> { return [legacySeries]; }
+    }
+    vi.setSystemTime(new Date("2026-11-04T17:27:00.000Z"));
+    const lifecycle = new OccurrenceLifecycleModule(new LegacyRepository());
+    const results = await lifecycle.delete(account, {
+      kind: "event", seriesID: legacySeries.id, scheduledAt: "2026-11-11T03:30:00.000Z",
+      timeZone: "America/Los_Angeles",
+    }, "all_future");
+    expect(results[0]?.reference.scheduledAt).toBe("2026-11-11T03:30:00.000Z");
+    expect(results).toHaveLength(17);
+    expect(results.every((result) => result.disposition === "deleted")).toBe(true);
+    expect(results[0]?.reference).not.toHaveProperty("timeZone");
+  });
+
+  it.each(["all_future", "this_weekday_future"] as const)(
+    "deletes %s across historical and future segments of one series",
+    async (scope) => {
+      const historical: FamilyEvent = {
+        ...series,
+        recurrence: { ...series.recurrence!, endDate: "2026-09-10T00:30:00.000Z" },
+      };
+      const future: FamilyEvent = {
+        ...series,
+        id: "00000000-0000-4000-8000-000000000302",
+        startTime: "2026-09-17T00:30:00.000Z",
+        endTime: "2026-09-17T01:30:00.000Z",
+      };
+      class SplitRepository extends MemoryOccurrenceRepository {
+        override async eventsForFamily(): Promise<FamilyEvent[]> { return [historical, future]; }
+      }
+      const repo = new SplitRepository();
+      const results = await new OccurrenceLifecycleModule(repo).delete(account, {
+        kind: "event", seriesID: series.id, scheduledAt: future.startTime,
+      }, scope);
+      expect(results.map((result) => result.reference.scheduledAt)).toEqual([
+        "2026-09-17T00:30:00.000Z", "2026-09-24T00:30:00.000Z",
+      ]);
+      expect(repo.states.every((state) => state.disposition === "deleted")).toBe(true);
+    },
+  );
+
+  it("does not let a timezone hint override a saved series timezone", async () => {
+    const lifecycle = new OccurrenceLifecycleModule(new MemoryOccurrenceRepository());
+    await expect(lifecycle.delete(account, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-16T17:30:00.000Z",
+      timeZone: "UTC",
+    })).rejects.toThrow("occurrence_not_found");
+    const results = await lifecycle.delete(account, {
+      kind: "event", seriesID: series.id, scheduledAt: "2026-09-17T00:30:00.000Z",
+      timeZone: "UTC",
+    });
+    expect(results).toHaveLength(1);
+  });
+
+  it("rejects invalid rendering timezone hints", async () => {
+    await expect(new OccurrenceLifecycleModule(new MemoryOccurrenceRepository()).delete(account, {
+      kind: "event", seriesID: series.id, scheduledAt: series.startTime,
+      timeZone: "Not/A_Zone",
+    })).rejects.toThrow("invalid_occurrence_reference");
+  });
+
   it("lets a non-parent skip an Event occurrence", async () => {
     const repo = new MemoryOccurrenceRepository();
     const lifecycle = new OccurrenceLifecycleModule(repo);

@@ -67,6 +67,15 @@ public struct EventOccurrence: Identifiable, Equatable, Sendable {
     public var sourceSeriesID: UUID {
         sourceEvent.recurrenceSeriesID ?? sourceEvent.id
     }
+
+    public func lifecycleReference(calendar: Calendar = .autoupdatingCurrent) -> OccurrenceReference {
+        OccurrenceReference(
+            kind: .event,
+            seriesID: sourceSeriesID,
+            scheduledAt: scheduledAt,
+            timeZone: sourceEvent.recurrence.map { $0.timeZone ?? calendar.timeZone.identifier }
+        )
+    }
 }
 
 public enum EventOccurrenceExpander {
