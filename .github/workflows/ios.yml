@@ -172,7 +172,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
     # Calendar App Schema adoption requires the iOS 27 SDK; CI and signed archives stay aligned.
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 45
     defaults:
       run:
@@ -234,7 +234,7 @@ jobs:
   ui-narrow:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
