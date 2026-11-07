@@ -31,14 +31,17 @@ require_contract(triggers.key?('pull_request'), 'Required iOS checks must report
 jobs = ios.fetch('jobs')
 gate = jobs.fetch('verification')
 require_contract(gate['if'] == 'always()', 'Final iOS gate must always report')
-require_contract(needs(gate).sort == %w[changes core-contract delivery-contracts ui ui-narrow], 'Final gate dependencies incomplete')
+require_contract(needs(gate).sort == %w[changes core-contract delivery-contracts schema ui ui-narrow], 'Final gate dependencies incomplete')
 base = {'CHANGES_RESULT' => 'success', 'IOS_CHANGED' => 'true', 'DELIVERY_CHANGED' => 'true',
-        'CORE_RESULT' => 'success', 'UI_RESULT' => 'success', 'NARROW_RESULT' => 'success', 'DELIVERY_RESULT' => 'success'}
+        'CORE_RESULT' => 'success', 'SCHEMA_RESULT' => 'success', 'UI_RESULT' => 'success',
+        'NARROW_RESULT' => 'success', 'DELIVERY_RESULT' => 'success'}
 unrelated = base.merge('IOS_CHANGED' => 'false', 'DELIVERY_CHANGED' => 'false', 'CORE_RESULT' => 'skipped',
-                       'UI_RESULT' => 'skipped', 'NARROW_RESULT' => 'skipped', 'DELIVERY_RESULT' => 'skipped')
+                       'SCHEMA_RESULT' => 'skipped', 'UI_RESULT' => 'skipped', 'NARROW_RESULT' => 'skipped',
+                       'DELIVERY_RESULT' => 'skipped')
 [[base, true], [unrelated, true], [unrelated.merge('DELIVERY_CHANGED' => 'true', 'DELIVERY_RESULT' => 'success'), true],
  [base.merge('CHANGES_RESULT' => 'failure'), false], [base.merge('IOS_CHANGED' => ''), false],
- [base.merge('NARROW_RESULT' => 'failure'), false], [base.merge('CORE_RESULT' => 'skipped'), false],
+ [base.merge('NARROW_RESULT' => 'failure'), false], [base.merge('SCHEMA_RESULT' => 'failure'), false],
+ [base.merge('CORE_RESULT' => 'skipped'), false],
  [base.merge('DELIVERY_RESULT' => 'cancelled'), false], [unrelated.merge('UI_RESULT' => 'success'), false]].each_with_index do |(env, expected), index|
   actual = system(env, 'bash', '-eo', 'pipefail', '-c', runs(gate), out: File::NULL, err: File::NULL)
   require_contract(actual == expected, "Final iOS gate mishandles success/failure/skip case #{index + 1}")
@@ -46,6 +49,9 @@ end
 require_contract(runs(jobs.fetch('core-contract')).include?('tee "$RUNNER_TEMP/core-tests.log"'), 'Core XCTest records missing')
 require_contract(runs(jobs.fetch('core-contract')).include?('set -o pipefail'), 'Core test exit status must survive tee')
 require_contract(runs(jobs.fetch('core-contract')).include?('--format xctest-log'), 'Core execution inventory gate missing')
+require_contract(jobs.fetch('schema').fetch('runs-on') == 'xcode-27', 'Calendar schema must build on the Xcode 27 runner')
+require_contract(runs(jobs.fetch('schema')).include?('calendar.createEvent'), 'Calendar schema metadata gate missing')
+require_contract(runs(jobs.fetch('schema')).include?('CODE_SIGNING_ALLOWED=NO build'), 'Unsigned schema build missing')
 %w[ui ui-narrow].each do |name|
   job = jobs.fetch(name)
   require_contract(runs(job).include?('-resultBundlePath'), 'UI xcresult missing')
@@ -75,7 +81,7 @@ require_contract(needs(release.fetch('publish')).include?('verify'), 'Publicatio
 require_contract(needs(release.fetch('create-release')).include?('publish'), 'GitHub Release must wait for artifact publication')
 require_contract(runs(workflows.fetch('api').fetch('jobs').fetch('http-contract')).include?('test-ci-http-contract.sh'), 'HTTP edge smoke missing')
 
-[jobs.fetch('core-contract'), jobs.fetch('ui'), jobs.fetch('ui-narrow'), jobs.fetch('delivery-contracts'), verify].each do |job|
+[jobs.fetch('core-contract'), jobs.fetch('schema'), jobs.fetch('ui'), jobs.fetch('ui-narrow'), jobs.fetch('delivery-contracts'), verify].each do |job|
   require_contract(!job['continue-on-error'], 'Verification job may not ignore failures')
   require_contract(job.fetch('steps').none? { |step| step['continue-on-error'] }, 'Verification step may not ignore failures')
 end
