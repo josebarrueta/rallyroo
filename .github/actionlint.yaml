@@ -1,0 +1,4 @@
+# Xcode 27 hosted runner support landed after actionlint 1.7.7.
+self-hosted-runner:
+  labels:
+    - xcode-27

@@ -14,7 +14,7 @@ permissions:
 jobs:
   verification:
     name: iOS verification
-    needs: [changes, core-contract, ui, ui-narrow, delivery-contracts]
+    needs: [changes, core-contract, schema, ui, ui-narrow, delivery-contracts]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -24,6 +24,7 @@ jobs:
           IOS_CHANGED: ${{ needs.changes.outputs.ios }}
           DELIVERY_CHANGED: ${{ needs.changes.outputs.delivery }}
           CORE_RESULT: ${{ needs.core-contract.result }}
+          SCHEMA_RESULT: ${{ needs.schema.result }}
           UI_RESULT: ${{ needs.ui.result }}
           NARROW_RESULT: ${{ needs.ui-narrow.result }}
           DELIVERY_RESULT: ${{ needs.delivery-contracts.result }}
@@ -35,7 +36,7 @@ jobs:
             false) expected=skipped ;;
             *) exit 1 ;;
           esac
-          [[ "$CORE_RESULT" == "$expected" && "$UI_RESULT" == "$expected" && "$NARROW_RESULT" == "$expected" ]] || exit 1
+          [[ "$CORE_RESULT" == "$expected" && "$SCHEMA_RESULT" == "$expected" && "$UI_RESULT" == "$expected" && "$NARROW_RESULT" == "$expected" ]] || exit 1
           case "$DELIVERY_CHANGED" in
             true) [[ "$DELIVERY_RESULT" == success ]] || exit 1 ;;
             false) [[ "$DELIVERY_RESULT" == skipped ]] || exit 1 ;;
@@ -168,10 +169,38 @@ jobs:
             kill "$(cat /tmp/rallyroo-contract-server.pid)" 2>/dev/null || true
           fi
 
+  schema:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Select pinned Xcode 27.2
+        run: |
+          test -d /Applications/Xcode_27.2.app || {
+            echo "Pinned Xcode 27.2 is unavailable" >&2
+            exit 1
+          }
+          sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
+          xcodebuild -version
+      - name: Build and extract Calendar App Schema metadata
+        run: >-
+          xcodebuild -project clients/ios/FamilyApp.xcodeproj -scheme FamilyApp
+          -sdk iphoneos -destination "generic/platform=iOS"
+          -derivedDataPath "$RUNNER_TEMP/ios-schema-derived"
+          CODE_SIGNING_ALLOWED=NO build
+      - name: Verify shortcut and Calendar schema metadata
+        run: |
+          metadata="$RUNNER_TEMP/ios-schema-derived/Build/Products/Debug-iphoneos/FamilyApp.app/Metadata.appintents/extract.actionsdata"
+          test -f "$metadata"
+          grep -q 'CreateEventIntent' "$metadata"
+          grep -q 'calendar.createEvent' "$metadata"
+
   ui:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    # App Store Connect requires iOS 26 SDK; CI and signed archives stay aligned.
+    # UI regressions stay on the established iOS 26 simulator baseline.
     runs-on: macos-15
     timeout-minutes: 45
     defaults:

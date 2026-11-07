@@ -42,7 +42,7 @@ jobs:
   upload:
     needs: plan
     if: needs.plan.outputs.sha != ''
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -50,13 +50,13 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
-      - name: Select pinned Xcode 26.3
+      - name: Select pinned Xcode 27.2
         run: |
-          test -d /Applications/Xcode_26.3.app || {
-            echo "Pinned Xcode 26.3 is unavailable" >&2
+          test -d /Applications/Xcode_27.2.app || {
+            echo "Pinned Xcode 27.2 is unavailable" >&2
             exit 1
           }
-          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
           xcodebuild -version
       - uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b
         with:
