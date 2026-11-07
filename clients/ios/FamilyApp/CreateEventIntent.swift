@@ -1,7 +1,9 @@
 import AppIntents
 import FamilyCore
 import Foundation
+#if compiler(>=6.4)
 import GeoToolbox
+#endif
 
 actor NoOpOAuthWebSession: OAuthWebSession {
     func authenticate(using authorizationURL: URL, callbackScheme: String) async throws -> URL {
@@ -161,6 +163,7 @@ private enum SiriEventError: Error {
     case signInRequired
 }
 
+#if compiler(>=6.4)
 // MARK: - Calendar App Schema (iOS 27+)
 
 @available(iOS 27.0, *)
@@ -507,3 +510,4 @@ private enum SiriCalendarIntentError: LocalizedError {
         }
     }
 }
+#endif
