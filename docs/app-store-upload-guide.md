@@ -71,8 +71,10 @@ internal TestFlight distribution (App Manager); do not use an Admin key.
 Create/verify the internal group named exactly `Rallyroo Internal` before enabling.
 No beta-group ID or hardcoded numeric app ID is needed.
 
-Both UI CI and signed archives pin Xcode 26.3 on macOS 15, satisfying App Store
-Connect's iOS 26 SDK minimum; upload tooling pins Fastlane 2.232.2. Missing tooling fails the job—there is no silent fallback.
+Both UI CI and signed archives pin Xcode 27.2 on macOS 15. This supplies the
+iOS 27 Calendar App Schema SDK while exceeding App Store Connect's iOS 26 SDK
+minimum. Upload tooling pins Fastlane 2.232.2. Missing tooling fails the job—there
+is no silent fallback.
 Confirm availability on the selected hosted runner during the first acceptance run.
 
 ## Build numbers and recovery

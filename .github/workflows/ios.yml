@@ -171,7 +171,7 @@ jobs:
   ui:
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    # App Store Connect requires iOS 26 SDK; CI and signed archives stay aligned.
+    # Calendar App Schema adoption requires the iOS 27 SDK; CI and signed archives stay aligned.
     runs-on: macos-15
     timeout-minutes: 45
     defaults:
@@ -179,13 +179,13 @@ jobs:
         working-directory: clients/ios
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Select pinned Xcode 26.3
+      - name: Select pinned Xcode 27.2
         run: |
-          test -d /Applications/Xcode_26.3.app || {
-            echo "Pinned Xcode 26.3 is unavailable" >&2
+          test -d /Applications/Xcode_27.2.app || {
+            echo "Pinned Xcode 27.2 is unavailable" >&2
             exit 1
           }
-          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
           xcodebuild -version
       - name: Start simulator boot early
         run: |
@@ -240,8 +240,8 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Select pinned Xcode and create small-screen simulator
         run: |
-          test -d /Applications/Xcode_26.3.app
-          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          test -d /Applications/Xcode_27.2.app
+          sudo xcode-select --switch /Applications/Xcode_27.2.app/Contents/Developer
           runtime=$(xcrun simctl list runtimes -j | python3 -c '
           import json, sys
           print(next(r["identifier"] for r in json.load(sys.stdin)["runtimes"]
