@@ -18,12 +18,15 @@ ruby -ryaml -e '
     abort "Invalid shell" unless $?.success?
   end
 '
+ruby scripts/test_fastlane_altool_resume.rb
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 python3 -B scripts/verify-submission-assets.py --source
 python3 - <<'PY'
 from pathlib import Path
 source = Path('scripts/upload-testflight.py').read_text()
 fastfile = source.split("(fastlane_dir / \"Fastfile\").write_text('''", 1)[1].split("''')", 1)[0]
+assert 'require ENV.fetch("RALLYROO_FASTLANE_WORKAROUND")' in fastfile, 'Upload must load the bounded altool workaround'
+assert 'skip_waiting_for_build_processing: false' in fastfile, 'Upload must verify Apple build processing'
 assert 'skip_submission: true' in fastfile, 'TestFlight must explicitly skip beta submission'
 assert 'groups:' not in fastfile, 'Named groups can invoke external beta review'
 assert 'distribute_external' not in fastfile, 'Automation must not perform distribution'
