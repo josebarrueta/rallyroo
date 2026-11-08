@@ -78,6 +78,28 @@ App Schema while exceeding App Store Connect's iOS 26 SDK minimum. Upload toolin
 pins Fastlane 2.232.2. Missing tooling fails the job—there is no silent fallback.
 Confirm availability on the selected hosted runner during the first acceptance run.
 
+### Known altool resume-state diagnostic
+
+`scripts/fastlane-altool-resume-workaround.rb` is loaded by the generated Fastfile
+for the pinned Fastlane 2.232.2. Apple's uploader can emit an error about the missing
+`CDUploaderStateInfoResumeFilePath` and then report `UPLOAD SUCCEEDED with no errors`.
+The pinned parser otherwise treats that benign diagnostic as an upload failure,
+causing the queue to retry an already-uploaded commit with another build number.
+
+The workaround accepts only an explicit upload-success line with exclusively the
+exact known resume-state diagnostic. Non-zero exits (which the pinned executor
+records as additional errors), authentication/validation failures, other missing
+files, and absent success markers remain failures. It does not bypass the existing
+wait for Apple build processing or mark the queue successful from logs alone.
+Remove the workaround only after verifying an upstream replacement against the
+regression cases. Updating Fastlane alone has not been established as a fix.
+
+Run `ruby scripts/test_fastlane_altool_resume.rb` or the full
+`scripts/test-app-store-upload-workflow.sh` contract suite. For integration replay
+against an independently fetched pinned upstream `itunes_transporter.rb`, set
+`FASTLANE_TRANSPORTER_SOURCE` to its local path when running the Ruby tests; no Apple
+request or actual upload occurs in either test mode.
+
 ## Build numbers and recovery
 
 Build integers start at 101. Before signing, the serialized worker reserves the

@@ -244,7 +244,9 @@ def main():
             ipa, = (root / "export").glob("*.ipa")
             fastlane_dir = root / "fastlane"
             fastlane_dir.mkdir()
-            (fastlane_dir / "Fastfile").write_text('''lane :upload do
+            (fastlane_dir / "Fastfile").write_text('''require ENV.fetch("RALLYROO_FASTLANE_WORKAROUND")
+
+lane :upload do
   key = app_store_connect_api_key(key_id: ENV.fetch("APPLE_API_KEY_ID"),
     issuer_id: ENV.fetch("APPLE_API_ISSUER_ID"), key_content: ENV.fetch("ASC_API_PRIVATE_KEY"))
   latest = latest_testflight_build_number(api_key: key, app_identifier: "dev.rallyroo.app",
@@ -261,6 +263,9 @@ end
             fastlane_environment = {
                 **os.environ, "UPLOAD_IPA": str(ipa),
                 "UPLOAD_VERSION": version, "UPLOAD_BUILD": build,
+                "RALLYROO_FASTLANE_WORKAROUND": str(
+                    Path(__file__).with_name("fastlane-altool-resume-workaround.rb").resolve()
+                ),
             }
             run_fastlane([str(Path(gem_dir) / "bin/fastlane"), "upload"], root,
                          fastlane_environment)
