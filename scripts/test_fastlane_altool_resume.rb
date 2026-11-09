@@ -18,10 +18,19 @@ module FastlaneCore
   end
   module FastlanePty
     class << self
-      attr_accessor :fixture_output, :fixture_exit
+      attr_accessor :fixture_output, :fixture_exit, :fixture_records
       def spawn(command)
         raise 'Tests must not execute a real command' unless command == 'fixture-only'
-        yield StringIO.new(fixture_output), nil, nil
+        stream = if fixture_records
+                   Object.new.tap do |object|
+                     records = fixture_records
+                     object.define_singleton_method(:each) { |&block| records.each(&block) }
+                     object.define_singleton_method(:each_line) { |&block| records.each(&block) }
+                   end
+                 else
+                   StringIO.new(fixture_output)
+                 end
+        yield stream, nil, nil
         fixture_exit
       end
     end
@@ -63,7 +72,8 @@ class AltoolResumeTests < Minitest::Test
   DIAGNOSTIC = "ERROR: [ContentDelivery.Uploader.78E70892C0] Failed to create URL for 'CDUploaderStateInfoResumeFilePath'. The file doesn’t exist. (4) The file doesn’t exist.\n".freeze
   SUCCESS = "UPLOAD SUCCEEDED with no errors\n".freeze
 
-  def execute(output, status = 0, &block)
+  def execute(output, status = 0, records: nil, &block)
+    FastlaneCore::FastlanePty.fixture_records = records
     FastlaneCore::FastlanePty.fixture_output = output
     FastlaneCore::FastlanePty.fixture_exit = status
     executor = FastlaneCore::AltoolTransporterExecutor.new
@@ -79,6 +89,28 @@ class AltoolResumeTests < Minitest::Test
   def test_ascii_apostrophe_and_duplicate_diagnostic
     accepted, = execute(DIAGNOSTIC.gsub('’', "'") * 2 + SUCCESS)
     assert accepted
+  end
+
+  def test_terminal_colored_success_and_error_are_accepted
+    colored = "\e[31m#{DIAGNOSTIC.rstrip}\e[0m\r\n\e[32m#{SUCCESS.rstrip}\e[0m\r\n"
+    accepted, = execute(colored)
+    assert accepted
+  end
+
+  def test_success_is_found_in_multiline_output_records
+    record = "INFO: upload result\n===\n#{SUCCESS}===\n"
+    accepted, = execute(DIAGNOSTIC + record, records: [DIAGNOSTIC, record])
+    assert accepted
+  end
+
+  def test_success_marker_embedded_in_other_text_is_rejected
+    accepted, = execute(DIAGNOSTIC + "NOT AN UPLOAD SUCCEEDED with no errors result\n")
+    refute accepted
+  end
+
+  def test_colored_real_error_remains_rejected
+    accepted, = execute(DIAGNOSTIC + SUCCESS + "\e[31mERROR: Validation failed\e[0m\n")
+    refute accepted
   end
 
   def test_resume_diagnostic_without_success_is_rejected
