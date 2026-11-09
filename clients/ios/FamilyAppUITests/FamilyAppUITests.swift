@@ -1197,9 +1197,13 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
         app.alerts["Allow calendar access?"].buttons["Create password"].tap()
         let hide = app.buttons["Hide password"]
-        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        // Form rows below the viewport are lazily materialized. Scroll before
+        // waiting for existence, then still require the control to be tappable.
         for _ in 0..<8 where !hide.isHittable { app.swipeUp() }
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(hide.isHittable)
         hide.tap()
+        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["synthetic-calendar-password"].exists)
         let revoke = app.buttons["Revoke access"]
         for _ in 0..<8 where !revoke.isHittable { app.swipeUp() }

@@ -35,5 +35,5 @@ Record the device observations in [physical acceptance](caldav-device-acceptance
 - 38 PostgreSQL/Redis integration tests passed against disposable PostgreSQL 17 and Redis 8; migration deployment contract passed.
 - All 275 Swift core/live-contract tests passed with none skipped.
 - Helm contracts and the rendered NGINX/API Docker test passed, including opt-in DAV discovery, HTTPS boundary, PROPFIND, REPORT, PUT, GET and DELETE.
-- iOS app/UI-test targets compile. The new UI regressions have not executed locally because CoreSimulator enumeration hangs; required CI must execute them.
-- Production VM status is running, but the agent's SSH attempt requires interactive operator verification and was denied. No permission weakening, authentication bypass, production preview activation, or new TestFlight delivery has been performed.
+- All three new UI regressions passed locally on iOS 26.5 after CoreSimulator recovered. CI exposed a lazy-Form-row test bug: the consent/revocation test waited for an offscreen password control before scrolling. The test now scrolls first and still asserts existence, tappability, hiding, and revocation; full required CI must pass on that fix.
+- Operator-approved SSH access now works. Production remains healthy on API 0.11.28 with 36 migrations; the latest scheduled backup service reported success. The exact tester identity still needs confirmation before configuring the cohort. No authentication weakening, production preview activation, or new TestFlight delivery has been performed.
