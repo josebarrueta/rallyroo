@@ -12,6 +12,12 @@ api:
     limits:
       memory: 512Mi
 
+# Operator-only opt-in. Keep identity subjects in a separate Secret, never Git.
+calendarPreview:
+  enabled: false
+  publicOrigin: ""
+  identitySubjectsSecret: ""
+
 runtimeSecret: rallyroo-runtime
 
 providerSecrets:

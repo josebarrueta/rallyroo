@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { CalendarConnection, CalendarResource } from "./caldav-persistence.js";
 import type {
   Account,
   FamilyEvent,
@@ -29,6 +30,8 @@ interface SeedData {
 }
 
 export class InMemoryRallyrooRepository implements RallyrooRepository {
+  private readonly connections = new Map<string, CalendarConnection>();
+  private readonly calendarBindings = new Map<string, CalendarResource[]>();
   private readonly accounts: Account[];
   private readonly events: FamilyEvent[];
   private readonly reminders: FamilyReminder[];
@@ -58,6 +61,39 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     this.events = [...(seed.events ?? [])];
     this.reminders = [...(seed.reminders ?? [])];
     this.members = [...(seed.members ?? [])];
+  }
+
+  async createCalendarConnection(connection: CalendarConnection): Promise<boolean> {
+    if ([...this.connections.values()].filter((c) => c.identitySubject === connection.identitySubject).length >= 10) return false;
+    this.connections.set(connection.id, structuredClone(connection));
+    return true;
+  }
+
+  async calendarConnection(id: string): Promise<CalendarConnection | null> {
+    return structuredClone(this.connections.get(id) ?? null);
+  }
+
+  async calendarConnections(account: Account): Promise<CalendarConnection[]> {
+    return [...this.connections.values()].filter((c) => c.identitySubject === account.identitySubject
+      && c.familyID === account.familyID && c.memberID === account.memberID).map((c) => structuredClone(c));
+  }
+
+  async revokeCalendarConnection(account: Account, id: string): Promise<boolean> {
+    const connection = this.connections.get(id);
+    return connection?.identitySubject === account.identitySubject && connection.familyID === account.familyID
+      && connection.memberID === account.memberID ? this.connections.delete(id) : false;
+  }
+
+  async calendarSnapshot(familyID: string): Promise<{ events: FamilyEvent[]; resources: CalendarResource[] }> {
+    // Capture both arrays synchronously, before yielding to a competing mutation.
+    const events = structuredClone(this.events.filter((e) => e.familyID === familyID));
+    const ids = new Set(events.map((e) => e.id));
+    return { events, resources: structuredClone((this.calendarBindings.get(familyID) ?? []).filter((r) => ids.has(r.eventID))) };
+  }
+
+  async calendarResources(familyID: string): Promise<CalendarResource[]> {
+    const ids = new Set(this.events.filter((e) => e.familyID === familyID).map((e) => e.id));
+    return structuredClone((this.calendarBindings.get(familyID) ?? []).filter((r) => ids.has(r.eventID)));
   }
 
   async accountForIdentity(subject: string): Promise<Account | null> {
@@ -90,11 +126,15 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     const accountIndex = this.accounts.findIndex((account) => account.identitySubject === subject);
     if (accountIndex < 0) return;
     const account = this.accounts[accountIndex]!;
+    for (const [id, connection] of this.connections) {
+      if (connection.identitySubject === subject) this.connections.delete(id);
+    }
     const isLastAccount = this.accounts.filter(
       (candidate) => candidate.familyID === account.familyID,
     ).length === 1;
 
     if (isLastAccount) {
+      this.calendarBindings.delete(account.familyID);
       removeWhere(this.accounts, (candidate) => candidate.familyID === account.familyID);
       removeWhere(this.members, (member) => member.familyID === account.familyID);
       removeWhere(this.events, (event) => event.familyID === account.familyID);
@@ -288,12 +328,14 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     familyID: string,
     idempotencyKey: string,
     prepare: (snapshot: EventMutationSnapshot) => EventMutationPlan,
+    options: { includeCalendarResources?: boolean } = {},
   ): Promise<StoredEventMutationResult> {
     const mutationKey = `${familyID}:${idempotencyKey}`;
     const previous = this.eventMutationResults.get(mutationKey);
     if (previous) return structuredClone(previous);
 
     const plan = prepare({
+      ...(options.includeCalendarResources ? { calendarResources: structuredClone(this.calendarBindings.get(familyID) ?? []) } : {}),
       events: this.events.filter((event) => event.familyID === familyID).map((event) => structuredClone(event)),
       members: this.members.filter((member) => member.familyID === familyID).map((member) => structuredClone(member)),
     });
@@ -309,6 +351,11 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
     } else {
       removeWhere(this.events, (event) => event.familyID === familyID && event.id === action.eventID);
     }
+    const liveIDs = new Set(this.events.filter((e) => e.familyID === familyID).map((e) => e.id));
+    const bindings = (this.calendarBindings.get(familyID) ?? []).filter((r) => liveIDs.has(r.eventID)
+      && r.eventID !== plan.calendarResource?.eventID);
+    if (plan.calendarResource) bindings.push(structuredClone(plan.calendarResource));
+    this.calendarBindings.set(familyID, bindings);
     if (plan.occurrenceOverride) {
       const { reference, overrideEntityID } = plan.occurrenceOverride;
       const key = occurrenceStateKey(familyID, reference);
@@ -399,6 +446,7 @@ export class InMemoryRallyrooRepository implements RallyrooRepository {
   async deleteEvent(familyID: string, eventID: string): Promise<void> {
     const index = this.events.findIndex((event) => event.familyID === familyID && event.id === eventID);
     if (index >= 0) this.events.splice(index, 1);
+    this.calendarBindings.set(familyID, (this.calendarBindings.get(familyID) ?? []).filter((r) => r.eventID !== eventID));
     const prefix = `${familyID}:${eventID.toLowerCase()}:`;
     for (const key of this.claimedEventNotifications.keys()) {
       if (key.startsWith(prefix)) this.claimedEventNotifications.delete(key);

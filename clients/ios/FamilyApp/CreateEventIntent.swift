@@ -127,7 +127,9 @@ private enum SiriEventEnvironment {
 
 private enum SiriEventDialog {
     static func success(for result: VoiceEventCreationResult) -> IntentDialog {
-        let time = result.event.startTime.formatted(date: .abbreviated, time: .shortened)
+        let time = result.event.allDay.map {
+            "all day on \($0.dateInterval(in: .autoupdatingCurrent).start.formatted(date: .abbreviated, time: .omitted))"
+        } ?? result.event.startTime.formatted(date: .abbreviated, time: .shortened)
         switch result.conflicts.count {
         case 0:
             return "Added \(result.event.title) for \(time)."
@@ -148,6 +150,8 @@ private enum SiriEventDialog {
             "The event needs a title."
         case .endTimeMustFollowStartTime:
             "The event must end after it starts."
+        case .allDayRecurrenceUnsupported:
+            "Repeating all-day events aren’t supported yet. Create one day or use a timed repeat schedule."
         case .memberStoreUnavailable:
             "I couldn’t look up family members. Try again in the app."
         case .memberNotFound(let name):

@@ -219,8 +219,14 @@ struct WeeklyScheduleView: View {
                         List {
                             Section("Event") {
                                 Text(event.title).font(.headline)
-                                LabeledContent("Starts", value: event.startTime.formatted())
-                                LabeledContent("Ends", value: event.endTime.formatted())
+                                if let dates = event.allDay {
+                                    LabeledContent("Starts", value: dates.startDate)
+                                    LabeledContent("Through", value: dates.inclusiveEndDate)
+                                    Text("All day")
+                                } else {
+                                    LabeledContent("Starts", value: event.startTime.formatted())
+                                    LabeledContent("Ends", value: event.endTime.formatted())
+                                }
                                 if let arrivalTime = event.arrivalTime {
                                     LabeledContent("Arrive by", value: arrivalTime.formatted())
                                 }
@@ -500,7 +506,9 @@ struct WeeklyScheduleView: View {
                 Button { linkedEvent = event } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(event.title).font(.headline)
-                        Text(event.startTime.formatted()).font(.subheadline).foregroundStyle(.secondary)
+                        Text(event.allDay == nil ? event.startTime.formatted()
+                            : "All day · \(event.displayInterval().start.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.subheadline).foregroundStyle(.secondary)
                         if let recurrence = event.recurrence {
                             Label("Repeats \(recurrence.frequency.rawValue)", systemImage: "arrow.triangle.2.circlepath")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -809,7 +817,7 @@ struct WeeklyScheduleView: View {
     private func events(on day: Date, in occurrences: [EventOccurrence]? = nil) -> [EventOccurrence] {
         let calendar = Calendar.autoupdatingCurrent
         return (occurrences ?? visibleOccurrences).filter {
-            calendar.isDate($0.event.startTime, inSameDayAs: day)
+            $0.event.occurs(on: day, calendar: calendar)
                  && (selectedParticipantID == nil || $0.event.participantIDs.contains(selectedParticipantID!))
          }
      }
@@ -952,7 +960,8 @@ struct LifecycleScopeSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(action.occurrence.sourceEvent.title)
                     .font(.title3.bold())
-                Text(action.occurrence.event.startTime.formatted(date: .abbreviated, time: .shortened))
+                Text(action.occurrence.event.startTime.formatted(date: .abbreviated,
+                    time: action.occurrence.event.allDay == nil ? .shortened : .omitted))
                     .foregroundStyle(.secondary)
             }
         }
@@ -1063,7 +1072,9 @@ private struct ScheduleOverlapCluster: Identifiable {
     }
 
     static func make(from occurrences: [EventOccurrence]) -> [Self] {
-        let sorted = occurrences.sorted { $0.event.startTime < $1.event.startTime }
+        // All-day Events use ordinary compact rows, never 24-hour overlap lanes.
+        let allDay = occurrences.filter { $0.event.allDay != nil }.map { makeCluster([$0]) }
+        let sorted = occurrences.filter { $0.event.allDay == nil }.sorted { $0.event.startTime < $1.event.startTime }
         var groups: [[EventOccurrence]] = []
         var current: [EventOccurrence] = []
         var currentEnd = Date.distantPast
@@ -1077,7 +1088,7 @@ private struct ScheduleOverlapCluster: Identifiable {
             currentEnd = max(currentEnd, occurrence.event.endTime)
           }
         if !current.isEmpty { groups.append(current) }
-        return groups.map(makeCluster)
+        return allDay + groups.map(makeCluster)
          }
 
     private static func makeCluster(_ occurrences: [EventOccurrence]) -> Self {
@@ -1495,6 +1506,7 @@ private struct EventRow: View {
          }
 
      private var timeRange: String {
+        if display.event.allDay != nil { return "All day" }
         let start = display.event.startTime.formatted(date: .omitted, time: .shortened)
         let end = display.event.endTime.formatted(date: .omitted, time: .shortened)
         return "\(start)–\(end)"

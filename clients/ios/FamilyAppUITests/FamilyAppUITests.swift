@@ -580,6 +580,43 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Add Event"].waitForExistence(timeout: 5))
     }
 
+    func testAllDayEventCanBeSavedReopenedAndExplicitlyConvertedToTimed() {
+        let app = localApp()
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        openAddEvent(in: app)
+        app.textFields["Title"].tap()
+        app.textFields["Title"].typeText("Family date-only event")
+        let allDay = app.switches["event-all-day"]
+        for _ in 0..<6 where !allDay.isHittable { app.swipeUp() }
+        XCTAssertTrue(allDay.isHittable)
+        allDay.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(allDay.value as? String, "1")
+        XCTAssertTrue(app.descendants(matching: .any)["event-all-day-through"].exists)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Add Event"].waitForNonExistence(timeout: 5))
+        let title = app.staticTexts["Family date-only event"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "All day")).firstMatch.exists)
+        title.tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.switches["event-all-day"].value as? String, "1")
+        XCTAssertTrue(app.descendants(matching: .any)["event-all-day-through"].exists)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForNonExistence(timeout: 5))
+        app.staticTexts["Family date-only event"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        let convert = app.switches["event-all-day"]
+        for _ in 0..<6 where !convert.isHittable { app.swipeUp() }
+        convert.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForNonExistence(timeout: 5))
+        app.staticTexts["Family date-only event"].tap()
+        XCTAssertTrue(app.navigationBars["Edit Event"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.switches["event-all-day"].value as? String, "0")
+        XCTAssertFalse(app.descendants(matching: .any)["event-all-day-through"].exists)
+    }
+
     func testEventAlertAppearsOnlyAfterSelectingAParticipant() {
         let app = localApp()
         app.launch()
@@ -1127,6 +1164,54 @@ final class FamilyAppUITests: XCTestCase {
         app.buttons["save-imported-event-settings"].tap()
         XCTAssertTrue(app.alerts["Event settings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts["Event settings"].staticTexts["Rallyroo settings saved."].exists)
+    }
+
+    func testCalendarAccountPreviewIsHiddenWithoutEnrollment() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALDAV"] = "unavailable"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        let signOut = app.buttons["Sign Out"]
+        for _ in 0..<8 where !signOut.isHittable { app.swipeUp() }
+        XCTAssertTrue(signOut.isHittable)
+        XCTAssertFalse(app.buttons["Use Rallyroo in Apple Calendar"].exists)
+    }
+
+    func testCalendarAccountPreviewRequiresConsentAndCanRevokeOneTimeCredentials() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALDAV"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let setup = app.buttons["Use Rallyroo in Apple Calendar"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !setup.isHittable { app.swipeUp() }
+        XCTAssertTrue(setup.isHittable)
+        setup.tap()
+        let create = app.buttons["create-calendar-connection"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !create.isHittable { app.swipeUp() }
+        create.tap()
+        XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
+        app.alerts["Allow calendar access?"].buttons["Create password"].tap()
+        let hide = app.buttons["Hide password"]
+        // Form rows below the viewport are lazily materialized. Scroll before
+        // waiting for existence, then still require the control to be tappable.
+        for _ in 0..<8 where !hide.isHittable { app.swipeUp() }
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(hide.isHittable)
+        hide.tap()
+        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["synthetic-calendar-password"].exists)
+        let revoke = app.buttons["Revoke access"]
+        for _ in 0..<8 where !revoke.isHittable { app.swipeUp() }
+        revoke.tap()
+        XCTAssertTrue(app.alerts["Revoke calendar access?"].waitForExistence(timeout: 3))
+        app.alerts["Revoke calendar access?"].buttons["Revoke"].tap()
+        XCTAssertTrue(create.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Revoke access"].waitForNonExistence(timeout: 5))
     }
 
     func testCalendarProviderInstructionsAtLargestAccessibilityText() {

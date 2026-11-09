@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
+import type { CalendarConnection, CalendarResource } from "./caldav-persistence.js";
 import type {
   Account,
   AccountRole,
   EventRecurrence,
+  EventAllDay,
   FamilyEvent,
   FamilyInvitation,
   FamilyMember,
@@ -189,7 +191,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         const events = await client.query<EventRow>(
           `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
                   end_time, arrival_time, location, driver, driver_member_id, source, status,
-                  alert_lead_time_minutes, recurrence, recurrence_series_id
+                  alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
            FROM events
            WHERE title NOT LIKE 'rr1.%'
               OR (location IS NOT NULL AND location NOT LIKE 'rr1.%')
@@ -1015,6 +1017,82 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     );
   }
 
+  async createCalendarConnection(connection: CalendarConnection): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT identity_subject FROM accounts WHERE identity_subject = $1 FOR UPDATE", [connection.identitySubject]);
+      const count = await client.query("SELECT count(*)::int AS count FROM calendar_connections WHERE identity_subject = $1", [connection.identitySubject]);
+      if (count.rows[0].count >= 10) { await client.query("ROLLBACK"); return false; }
+      await client.query(
+        `INSERT INTO calendar_connections (id, identity_subject, family_id, member_id, password_hash, created_at, time_zone)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [connection.id, connection.identitySubject, connection.familyID, connection.memberID, connection.passwordHash, connection.createdAt, connection.timeZone ?? "UTC"],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+
+  async calendarConnection(id: string): Promise<CalendarConnection | null> {
+    const result = await this.pool.query("SELECT * FROM calendar_connections WHERE id = $1", [id]);
+    return result.rows[0] ? calendarConnectionFromRow(result.rows[0]) : null;
+  }
+
+  async calendarConnections(account: Account): Promise<CalendarConnection[]> {
+    const result = await this.pool.query(
+      "SELECT * FROM calendar_connections WHERE identity_subject = $1 AND family_id = $2 AND member_id = $3 ORDER BY created_at",
+      [account.identitySubject, account.familyID, account.memberID],
+    );
+    return result.rows.map(calendarConnectionFromRow);
+  }
+
+  async revokeCalendarConnection(account: Account, id: string): Promise<boolean> {
+    const result = await this.pool.query(
+      "DELETE FROM calendar_connections WHERE id = $1 AND identity_subject = $2 AND family_id = $3 AND member_id = $4",
+      [id, account.identitySubject, account.familyID, account.memberID],
+    );
+    return result.rowCount === 1;
+  }
+
+  async calendarResources(familyID: string): Promise<CalendarResource[]> {
+    return this.readCalendarResources(this.pool, familyID);
+  }
+
+  async calendarSnapshot(familyID: string): Promise<{ events: FamilyEvent[]; resources: CalendarResource[] }> {
+    const client = await this.pool.connect();
+    let events: EventRow[];
+    let resources: Array<{ event_id: string; details_ciphertext: string }>;
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      events = (await client.query<EventRow>(
+        `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
+                end_time, arrival_time, location, driver, driver_member_id, source, status,
+                alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
+         FROM events WHERE family_id = $1 ORDER BY start_time`, [familyID],
+      )).rows;
+      resources = (await client.query("SELECT event_id::text, details_ciphertext FROM calendar_resources WHERE family_id = $1", [familyID])).rows;
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+    // Release the snapshot connection before decrypting: key lookup uses the pool.
+    // Concurrent readers must not hold every connection while waiting for keys.
+    return { events: await Promise.all(events.map((row) => this.eventFromRow(row))),
+      resources: await this.revealCalendarResources(familyID, resources) };
+  }
+
+  private async readCalendarResources(client: Pick<PoolClient, "query">, familyID: string): Promise<CalendarResource[]> {
+    const result = await client.query("SELECT event_id::text, details_ciphertext FROM calendar_resources WHERE family_id = $1", [familyID]);
+    return this.revealCalendarResources(familyID, result.rows);
+  }
+
+  private async revealCalendarResources(familyID: string, rows: Array<{ event_id: string; details_ciphertext: string }>): Promise<CalendarResource[]> {
+    return Promise.all(rows.map(async (row) => JSON.parse(await this.familyDataProtector.reveal(
+      familyID, `calendar_resources/${row.event_id}/details`, row.details_ciphertext,
+    )) as CalendarResource));
+  }
+
   async accountForIdentity(subject: string): Promise<Account | null> {
     const result = await this.pool.query<AccountRow>(
       `SELECT identity_subject, family_id, member_id, role
@@ -1530,10 +1608,14 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
   }
 
   async eventsForFamily(familyID: string): Promise<FamilyEvent[]> {
-    const result = await this.pool.query<EventRow>(
+    return this.readFamilyEvents(this.pool, familyID);
+  }
+
+  private async readFamilyEvents(client: Pick<PoolClient, "query">, familyID: string): Promise<FamilyEvent[]> {
+    const result = await client.query<EventRow>(
       `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
               end_time, arrival_time, location, driver, driver_member_id, source, status,
-              alert_lead_time_minutes, recurrence, recurrence_series_id
+              alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
        FROM events WHERE family_id = $1 ORDER BY start_time`,
       [familyID],
     );
@@ -1559,8 +1641,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
          arrival_time, location, driver, driver_member_id, source, status,
-         alert_lead_time_minutes, recurrence, recurrence_series_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
@@ -1570,7 +1652,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence,
-         recurrence_series_id=EXCLUDED.recurrence_series_id`,
+         recurrence_series_id=EXCLUDED.recurrence_series_id,
+         all_day=EXCLUDED.all_day`,
       eventValues(protectedEvent),
     );
   }
@@ -1579,6 +1662,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
     familyID: string,
     idempotencyKey: string,
     prepare: (snapshot: EventMutationSnapshot) => EventMutationPlan,
+    options: { includeCalendarResources?: boolean } = {},
   ): Promise<StoredEventMutationResult> {
     const client = await this.pool.connect();
     try {
@@ -1601,7 +1685,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
                 end_time, arrival_time, location, driver, driver_member_id, source, status,
-                alert_lead_time_minutes, recurrence, recurrence_series_id
+                alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
          FROM events WHERE family_id = $1 ORDER BY start_time`,
         [familyID],
       );
@@ -1611,6 +1695,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         [familyID],
       );
       const plan = prepare({
+        ...(options.includeCalendarResources ? { calendarResources: await this.readCalendarResources(client, familyID) } : {}),
         events: await Promise.all(events.rows.map((row) => this.eventFromRow(row))),
         members: await Promise.all(members.rows.map((row) => this.memberFromRow(row))),
       });
@@ -1628,6 +1713,18 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
         await client.query(
           "DELETE FROM events WHERE family_id = $1 AND id = $2",
           [familyID, plan.action.eventID],
+        );
+      }
+      if (plan.calendarResource) {
+        const resource = plan.calendarResource;
+        const details = await this.familyDataProtector.protect(
+          familyID, `calendar_resources/${resource.eventID}/details`, JSON.stringify(resource),
+        );
+        await client.query(
+          `INSERT INTO calendar_resources (family_id, event_id, details_ciphertext)
+           VALUES ($1,$2,$3)
+           ON CONFLICT (family_id, event_id) DO UPDATE SET details_ciphertext = EXCLUDED.details_ciphertext`,
+          [familyID, resource.eventID, details],
         );
       }
       if (plan.occurrenceOverride) {
@@ -1805,8 +1902,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       `INSERT INTO events (
          family_id, id, title, kid_id, participant_ids, start_time, end_time,
          arrival_time, location, driver, driver_member_id, source, status,
-         alert_lead_time_minutes, recurrence, recurrence_series_id
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (family_id, id) DO UPDATE SET
          title=EXCLUDED.title, kid_id=EXCLUDED.kid_id,
          participant_ids=EXCLUDED.participant_ids, start_time=EXCLUDED.start_time,
@@ -1815,7 +1912,8 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
          driver_member_id=EXCLUDED.driver_member_id, source=EXCLUDED.source, status=EXCLUDED.status,
          alert_lead_time_minutes=EXCLUDED.alert_lead_time_minutes,
          recurrence=EXCLUDED.recurrence,
-         recurrence_series_id=EXCLUDED.recurrence_series_id`,
+         recurrence_series_id=EXCLUDED.recurrence_series_id,
+         all_day=EXCLUDED.all_day`,
       eventValues(protectedEvent),
     );
   }
@@ -1890,7 +1988,7 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
       const events = await client.query<EventRow>(
         `SELECT family_id, id::text, title, kid_id, participant_ids, start_time,
                 end_time, arrival_time, location, driver, driver_member_id, source, status,
-                alert_lead_time_minutes, recurrence, recurrence_series_id
+                alert_lead_time_minutes, recurrence, recurrence_series_id, all_day
          FROM events
          WHERE alert_lead_time_minutes IS NOT NULL
            AND start_time <= $1::timestamptz + interval '1 day'
@@ -4442,6 +4540,7 @@ interface EventRow {
   alert_lead_time_minutes: Exclude<FamilyEvent["alertLeadTimeMinutes"], undefined>;
   recurrence: EventRecurrence | null;
   recurrence_series_id: string | null;
+  all_day: EventAllDay | null;
 }
 
 interface MemberInboxRow {
@@ -4590,6 +4689,7 @@ function eventValues(event: FamilyEvent): unknown[] {
     event.alertLeadTimeMinutes ?? null,
     event.recurrence ? JSON.stringify(event.recurrence) : null,
     event.recurrenceSeriesID ?? null,
+    event.allDay ? JSON.stringify(event.allDay) : null,
   ];
 }
 
@@ -4618,6 +4718,7 @@ function eventFromRow(row: EventRow): FamilyEvent {
     participantIDs: row.participant_ids,
     startTime: asISOString(row.start_time),
     endTime: asISOString(row.end_time),
+    ...(row.all_day ? { allDay: row.all_day } : {}),
     arrivalTime: row.arrival_time ? asISOString(row.arrival_time) : null,
     location: row.location,
     driver: row.driver,
@@ -4651,6 +4752,14 @@ function reminderFromRow(row: ReminderRow): FamilyReminder {
     recurrenceTimeZone: isSeriesTemplate ? row.recurrence_time_zone : null,
     recurrenceSeriesID: row.recurrence_series_id,
   };
+}
+
+function calendarConnectionFromRow(row: {
+  id: string; identity_subject: string; family_id: string; member_id: string;
+  password_hash: string; created_at: Date | string; time_zone: string;
+}): CalendarConnection {
+  return { id: row.id, identitySubject: row.identity_subject, familyID: row.family_id,
+    memberID: row.member_id, passwordHash: row.password_hash, createdAt: asISOString(row.created_at), timeZone: row.time_zone };
 }
 
 function asISOString(value: Date | string): string {

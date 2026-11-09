@@ -42,6 +42,9 @@ const scheduleDraftExtractor = process.env.OLLAMA_BASE_URL
 const app = buildApp({
   identityProvider,
   repository,
+  ...(process.env.CONTRACT_CALDAV_PREVIEW === "1" ? {
+    caldav: { publicOrigin: "https://calendar.example", allowedIdentitySubjects: ["contract-parent"] },
+  } : {}),
   ...(scheduleDraftExtractor ? { scheduleDraftExtractor } : {}),
 });
 const port = Number(process.env.CONTRACT_PORT ?? "3100");

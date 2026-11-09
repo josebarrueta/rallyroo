@@ -143,4 +143,22 @@ if grep -Eq 'helm.sh/chart: [^[:space:]]*\+' "$flux_rendered"; then
   exit 1
 fi
 
+if grep -q 'CALDAV_PREVIEW_' "$rendered"; then
+  echo "Calendar preview must be disabled by default" >&2
+  exit 1
+fi
+helm template rallyroo "$CHART" --values "$VALUES" \
+  --set calendarPreview.enabled=true \
+  --set calendarPreview.publicOrigin=https://calendar.example \
+  --set calendarPreview.identitySubjectsSecret=private-calendar-preview >"$tmp/calendar.yaml"
+grep -A1 'name: CALDAV_PREVIEW_PUBLIC_ORIGIN' "$tmp/calendar.yaml" | grep -q 'value: "https://calendar.example"'
+grep -A5 'name: CALDAV_PREVIEW_IDENTITY_SUBJECTS' "$tmp/calendar.yaml" | grep -q 'name: "private-calendar-preview"'
+grep -A5 'name: CALDAV_PREVIEW_IDENTITY_SUBJECTS' "$tmp/calendar.yaml" | grep -q 'key: identity-subjects'
+if helm template rallyroo "$CHART" --values "$VALUES" \
+  --set calendarPreview.enabled=true \
+  --set calendarPreview.publicOrigin=https://calendar.example >"$tmp/invalid-calendar.yaml" 2>/dev/null; then
+  echo "Enabled calendar preview must require an explicit identity Secret" >&2
+  exit 1
+fi
+
 echo "Helm rollout contract passed"

@@ -102,6 +102,17 @@ public enum EventOccurrenceExpander {
                }
            }
 
+        if source.recurrence == nil, source.allDay != nil {
+            let displayRange = source.displayInterval(calendar: calendar)
+            guard displayRange.start < range.end, displayRange.end > range.start else { return [] }
+            let original = occurrence(source: source, startTime: source.startTime, statesByTime: statesByTime)
+            guard original.disposition != .deleted else { return [] }
+            var displayEvent = original.event
+            displayEvent.startTime = displayRange.start
+            displayEvent.endTime = displayRange.end
+            return [EventOccurrence(id: original.id, event: displayEvent, sourceEvent: source,
+                scheduledAt: original.scheduledAt, disposition: original.disposition, isModified: original.isModified)]
+        }
         guard let recurrence = source.recurrence else {
             guard range.contains(source.startTime) else { return [] }
             return [occurrence(source: source, startTime: source.startTime, statesByTime: statesByTime)]

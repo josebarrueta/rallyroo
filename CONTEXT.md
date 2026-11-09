@@ -16,6 +16,10 @@ _Avoid_: User, attendee
 A scheduled family activity occupying a start-to-end time range and participating in overlap conflict detection.
 _Avoid_: Reminder, task
 
+**All-day Event**:
+An Event occupying one or more whole Gregorian dates, with an exclusive end date. Its calendar dates remain unchanged across viewing time zones; an anchor time zone determines its chronological Schedule range.
+_Avoid_: Midnight appointment, 24-hour timed Event
+
 **Reminder**:
 An alert-oriented family responsibility with one due instant, one or more assignees, and no duration. It never participates in event overlap conflicts.
 _Avoid_: Event, appointment
@@ -105,7 +109,7 @@ A question attached to a schedule draft when required information is ambiguous. 
 _Avoid_: Model guess, default date
 
 **Protected Family detail**:
-Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, Shopping routine, Pantry item, Shopping list, Purchase, Expense, receipt, or notification. Scheduling instants, alert triggers, statuses, cadences, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
+Human-readable information describing a Family, Member, Event, Reminder, invitation, calendar source, commute subscription, Shopping routine, Pantry item, Shopping list, Purchase, Expense, receipt, or notification. Scheduling instants, all-day date bounds and anchor time zones, alert triggers, statuses, cadences, and opaque coordination identifiers are not protected Family details because Rallyroo must query them to coordinate the Family.
 _Avoid_: Schedule metadata, trigger, ciphertext
 
 **Commuter installation**:

@@ -10,13 +10,14 @@ import type {
 import type { DueEventNotification } from "./event-notification-dispatcher.js";
 import type { DueReminderNotification } from "./reminder-notification-dispatcher.js";
 import type { EventMutationPersistence } from "./event-mutation-persistence.js";
+import type { CalendarPersistence } from "./caldav-persistence.js";
 
 export type InvitationConsumptionResult =
   | { status: "accepted"; account: Account }
   | { status: "invalid" }
   | { status: "account_conflict" };
 
-export interface RallyrooRepository extends EventMutationPersistence {
+export interface RallyrooRepository extends EventMutationPersistence, CalendarPersistence {
   accountForIdentity(subject: string): Promise<Account | null>;
   provisionParentAccount(subject: string, displayName: string): Promise<Account>;
   deleteAccount(subject: string): Promise<void>;

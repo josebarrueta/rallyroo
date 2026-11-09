@@ -15,6 +15,7 @@ These are the maintainer-facing guides and design records for Rallyroo. The publ
 
 - [Day Brief and Shopping](day-brief-and-shopping-design.md) — implemented v1 behavior, privacy rules, and explicitly deferred ideas.
 - [Event Travel planning](event-travel-planning-design.md) — arrival targets, route previews, and Leave alerts.
+- [Default calendar through CalDAV](caldav-default-calendar-design.md) — target design and release gates; an [experimental non-recurring calendar preview](caldav-preview.md) is implemented locally with [restricted in-app testing](caldav-in-app-testing.md) requested, **not activated, newly delivered, or release-ready**.
 - [Commuter integration research](511-open-data-module-research.md) — provider data and constraints; consult the current implementation for shipped scope.
 
 ## Architecture decisions
@@ -28,6 +29,7 @@ The [ADR directory](adr/) records why foundational boundaries exist:
 5. [Unified Notification Center](adr/0005-unified-notification-center.md)
 6. [Separate Event Travel planning](adr/0006-separate-event-travel-planning.md)
 7. [Durable recurrence occurrences](adr/0007-durable-recurrence-occurrences.md)
+8. [Preserve all-day calendar dates](adr/0008-preserve-all-day-calendar-dates.md)
 
 ## Development and operations
 

@@ -526,6 +526,29 @@ private actor CalendarSourceUITestStore: CalendarSourceStore {
 
     func delete(_ source: CalendarSourceConnection) async throws { isRemoved = true }
 }
+
+private actor CalendarConnectionUITestStore: CalendarConnectionStore {
+    private let isAvailable: Bool
+    init(isAvailable: Bool = true) { self.isAvailable = isAvailable }
+    private var isConnected = false
+    private let id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    func connections() async throws -> CalendarAccountConnections {
+        guard isAvailable else { throw CalendarConnectionError.unavailable }
+        let connection = isConnected
+            ? "{\"id\":\"\(id)\",\"username\":\"\(id)\",\"createdAt\":\"2027-01-01T00:00:00Z\"}" : ""
+        return try JSONDecoder().decode(CalendarAccountConnections.self, from: Data(
+            "{\"serverURL\":\"https://calendar.example/dav/\",\"connections\":[\(connection)]}".utf8
+        ))
+    }
+    func create() async throws -> CalendarAccountCredentials {
+        guard isAvailable else { throw CalendarConnectionError.unavailable }
+        isConnected = true
+        return try JSONDecoder().decode(CalendarAccountCredentials.self, from: Data(
+            "{\"id\":\"\(id)\",\"username\":\"\(id)\",\"createdAt\":\"2027-01-01T00:00:00Z\",\"serverURL\":\"https://calendar.example/dav/\",\"password\":\"synthetic-calendar-password\"}".utf8
+        ))
+    }
+    func revoke(id: UUID) async throws { isConnected = false }
+}
 #endif
 
 @main
@@ -550,6 +573,7 @@ struct FamilyActivityCoordinatorApp: App {
     private let invitationStore: (any FamilyInvitationStore)?
     private let occurrenceLifecycleStore: (any OccurrenceLifecycleStore)?
     private let calendarSourceStore: (any CalendarSourceStore)?
+    private let calendarConnectionStore: (any CalendarConnectionStore)?
     private let changeMonitor: (any FamilyChangeMonitor)?
     private let deviceRegistrationStore: (any DeviceRegistrationStore)?
     private let scheduleDraftExtractor: (any ScheduleDraftExtractor)?
@@ -578,6 +602,13 @@ struct FamilyActivityCoordinatorApp: App {
         dataIsSynced = configuration.dataMode == .remote
         switch configuration.dataMode {
         case .local:
+            #if DEBUG
+            let calendarPreviewTestMode = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_CALDAV"]
+            calendarConnectionStore = ["1", "unavailable"].contains(calendarPreviewTestMode ?? "")
+                ? CalendarConnectionUITestStore(isAvailable: calendarPreviewTestMode == "1") : nil
+            #else
+            calendarConnectionStore = nil
+            #endif
             AppStorage.resetForUnifiedFamilyMembersIfNeeded()
             #if DEBUG
             let savedPlacesTestMode = ProcessInfo.processInfo.environment["RALLYROO_UI_TEST_SAVED_PLACES"]
@@ -715,6 +746,7 @@ struct FamilyActivityCoordinatorApp: App {
                 baseURL: baseURL,
                 transport: authenticatedTransport
             )
+            calendarConnectionStore = RemoteCalendarConnectionStore(baseURL: baseURL, transport: authenticatedTransport)
             calendarSourceStore = RemoteCalendarSourceStore(
                 baseURL: baseURL,
                 transport: authenticatedTransport
@@ -842,6 +874,7 @@ struct FamilyActivityCoordinatorApp: App {
                         dataIsSynced: dataIsSynced,
                         currentMemberID: session.accountID,
                         calendarSourceStore: session.role == .parent ? calendarSourceStore : nil,
+                        calendarConnectionStore: session.role == .parent ? calendarConnectionStore : nil,
                         memberStore: session.role == .parent ? memberStore : nil,
                         commuterStore: commuterStore,
                         travelPlanningStore: travelPlanningStore,

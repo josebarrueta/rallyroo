@@ -50,6 +50,7 @@ public struct VoiceEventCreationResult: Equatable, Sendable {
 public enum VoiceEventCreationError: Error, Equatable, Sendable {
     case emptyTitle
     case endTimeMustFollowStartTime
+    case allDayRecurrenceUnsupported
     case memberStoreUnavailable
     case memberNotFound(String)
     case ambiguousMember(String)
@@ -76,12 +77,14 @@ public actor VoiceEventCreationService {
     ) async throws -> VoiceEventCreationResult {
         let title = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw VoiceEventCreationError.emptyTitle }
+        if request.isAllDay && request.recurrence != nil { throw VoiceEventCreationError.allDayRecurrenceUnsupported }
 
         let startTime: Date
         let endTime: Date
         if request.isAllDay {
             startTime = calendar.startOfDay(for: request.startTime)
-            endTime = request.endTime ?? calendar.date(byAdding: .day, value: 1, to: startTime)!
+            endTime = request.endTime.map { calendar.startOfDay(for: $0) }
+                ?? calendar.date(byAdding: .day, value: 1, to: startTime)!
         } else {
             startTime = request.startTime
             endTime = request.endTime ?? request.startTime.addingTimeInterval(3_600)
@@ -89,6 +92,12 @@ public actor VoiceEventCreationService {
         guard endTime > startTime else {
             throw VoiceEventCreationError.endTimeMustFollowStartTime
         }
+
+        let allDay: EventAllDay?
+        if request.isAllDay {
+            allDay = try EventAllDay(startDate: EventAllDay.dateString(for: startTime, in: calendar.timeZone),
+                endDate: EventAllDay.dateString(for: endTime, in: calendar.timeZone), timeZone: calendar.timeZone.identifier)
+        } else { allDay = nil }
 
         var participantIDs = request.participantIDs
         let requestedNames = (request.memberNames + [request.memberName].compactMap { $0 })
@@ -127,10 +136,12 @@ public actor VoiceEventCreationService {
             participantIDs: participantIDs,
             startTime: startTime,
             endTime: endTime,
+            allDay: allDay,
             location: normalized(request.location),
             notes: normalized(request.notes),
             source: .voice,
             status: .confirmed,
+            alertLeadTime: request.isAllDay ? nil : .atStart,
             recurrence: request.recurrence
         )
         let mutation = try await eventStore.save(

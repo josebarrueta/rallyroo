@@ -59,6 +59,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
     public var participantIDs: [KidID]
     public var startTime: Date
     public var endTime: Date
+    public var allDay: EventAllDay?
     public var arrivalTime: Date?
     public var location: String?
     public var notes: String?
@@ -77,7 +78,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         case id, title, kidID, participantIDs, startTime, endTime, location, notes
         case driver, driverMemberID, source, status, recurrence, recurrenceSeriesID, provenance
         case alertLeadTime = "alertLeadTimeMinutes"
-        case arrivalTime
+        case arrivalTime, allDay
         case isReadOnly = "readOnly"
         case occurrenceStates
     }
@@ -89,6 +90,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         participantIDs: [KidID] = [],
         startTime: Date,
         endTime: Date,
+        allDay: EventAllDay? = nil,
         arrivalTime: Date? = nil,
         location: String? = nil,
         notes: String? = nil,
@@ -109,6 +111,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         self.participantIDs = participantIDs.isEmpty ? kidID.map { [$0] } ?? [] : participantIDs
         self.startTime = startTime
         self.endTime = endTime
+        self.allDay = allDay
         self.arrivalTime = arrivalTime
         self.location = location
         self.notes = notes
@@ -132,6 +135,7 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         participantIDs = try container.decodeIfPresent([KidID].self, forKey: .participantIDs) ?? []
         startTime = try container.decode(Date.self, forKey: .startTime)
         endTime = try container.decode(Date.self, forKey: .endTime)
+        allDay = try container.decodeIfPresent(EventAllDay.self, forKey: .allDay)
         arrivalTime = try container.decodeIfPresent(Date.self, forKey: .arrivalTime)
         location = try container.decodeIfPresent(String.self, forKey: .location)
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
@@ -147,12 +151,38 @@ public struct FamilyEvent: Codable, Equatable, Identifiable, Sendable {
         provenance = try container.decodeIfPresent([EventProvenance].self, forKey: .provenance) ?? []
         occurrenceStates = try container.decodeIfPresent([ScheduleOccurrenceState].self, forKey: .occurrenceStates)
     }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(kidID, forKey: .kidID)
+        try container.encode(participantIDs, forKey: .participantIDs)
+        try container.encode(startTime, forKey: .startTime)
+        try container.encode(endTime, forKey: .endTime)
+        // Null means an intentional conversion to timed; omission is an older client.
+        try container.encode(allDay, forKey: .allDay)
+        try container.encodeIfPresent(arrivalTime, forKey: .arrivalTime)
+        try container.encodeIfPresent(location, forKey: .location)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(driver, forKey: .driver)
+        try container.encodeIfPresent(driverMemberID, forKey: .driverMemberID)
+        try container.encode(source, forKey: .source)
+        try container.encode(status, forKey: .status)
+        try container.encode(alertLeadTime, forKey: .alertLeadTime)
+        try container.encodeIfPresent(recurrence, forKey: .recurrence)
+        try container.encodeIfPresent(recurrenceSeriesID, forKey: .recurrenceSeriesID)
+        try container.encode(isReadOnly, forKey: .isReadOnly)
+        try container.encode(provenance, forKey: .provenance)
+        try container.encodeIfPresent(occurrenceStates, forKey: .occurrenceStates)
+    }
 }
 
 public enum EventValidationError: Error, Equatable, Sendable {
     case endTimeMustFollowStartTime
     case arrivalTimeMustNotFollowStartTime
     case importedEventSettingsUnsupported
+    case invalidAllDayDates
 }
 
 public struct EventConflict: Codable, Equatable, Sendable {
@@ -306,6 +336,7 @@ public actor LocalEventStore: EventStore {
             throw EventValidationError.arrivalTimeMustNotFollowStartTime
         }
 
+        try event.validateAllDay()
         var savedEvents = try await events()
         savedEvents.removeAll { $0.id == event.id }
         let conflicts = conflicts(for: event, against: savedEvents)
@@ -365,6 +396,7 @@ public actor LocalEventStore: EventStore {
         guard let source = savedEvents.first(where: { $0.id == edit.sourceEventID }) else {
             throw RecurringEventEditError.occurrenceNotInSeries
         }
+        guard source.allDay == nil, edit.editedEvent.allDay == nil else { throw EventValidationError.invalidAllDayDates }
         let seriesID = source.recurrenceSeriesID ?? source.id
         let seriesRows = savedEvents.filter {
             ($0.recurrenceSeriesID ?? ($0.recurrence == nil ? nil : $0.id)) == seriesID

@@ -11,6 +11,7 @@ struct SettingsView: View {
     let onDeleteAccount: DeleteAccountAction
     private let currentMemberID: String?
     private let calendarSourceStore: (any CalendarSourceStore)?
+    private let calendarConnectionStore: (any CalendarConnectionStore)?
     private let memberStore: (any FamilyMemberStore)?
     private let commuterStore: (any CommuterStore)?
     private let travelPlanningStore: (any TravelPlanningStore)?
@@ -28,11 +29,13 @@ struct SettingsView: View {
     @State private var notificationHealth: NotificationPermissionHealth?
     @State private var isRequestingPermission = false
     @State private var permissionError: String?
+    @State private var calendarPreviewAvailable = false
 
     init(
         dataIsSynced: Bool = false,
         currentMemberID: String? = nil,
         calendarSourceStore: (any CalendarSourceStore)? = nil,
+        calendarConnectionStore: (any CalendarConnectionStore)? = nil,
         memberStore: (any FamilyMemberStore)? = nil,
         commuterStore: (any CommuterStore)? = nil,
         travelPlanningStore: (any TravelPlanningStore)? = nil,
@@ -50,6 +53,7 @@ struct SettingsView: View {
         self.dataIsSynced = dataIsSynced
         self.currentMemberID = currentMemberID
         self.calendarSourceStore = calendarSourceStore
+        self.calendarConnectionStore = calendarConnectionStore
         self.memberStore = memberStore
         self.commuterStore = commuterStore
         self.travelPlanningStore = travelPlanningStore
@@ -146,6 +150,16 @@ struct SettingsView: View {
                     }
                 }
 
+                if calendarPreviewAvailable, let calendarConnectionStore {
+                    Section("Apple Calendar preview") {
+                        NavigationLink("Use Rallyroo in Apple Calendar") {
+                            CalendarAccountSetupView(store: calendarConnectionStore)
+                        }
+                        Text("Experimental writable calendar account enabled for your test account.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
                 if let calendarSourceStore, let memberStore {
                     Section("Calendars") {
                         NavigationLink("Connected calendars") {
@@ -230,8 +244,17 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .task { notificationHealth = await notificationPermissions.health() }
+            .task(id: currentMemberID) {
+                calendarPreviewAvailable = false
+                await refreshCalendarPreviewAvailability()
+            }
             .onChange(of: scenePhase) { phase in
-                if phase == .active { Task { notificationHealth = await notificationPermissions.health() } }
+                if phase == .active {
+                    Task {
+                        notificationHealth = await notificationPermissions.health()
+                        await refreshCalendarPreviewAvailability()
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .openNotificationDestination)) { note in
                 guard let destination = note.object as? InboxNotificationDestination,
@@ -291,6 +314,17 @@ struct SettingsView: View {
             .onAppear {
                 conflictAlertsEnabled = preferences.areConflictAlertsEnabled
             }
+        }
+    }
+
+    private func refreshCalendarPreviewAvailability() async {
+        guard let calendarConnectionStore else { calendarPreviewAvailable = false; return }
+        do {
+            _ = try await calendarConnectionStore.connections()
+            if !Task.isCancelled { calendarPreviewAvailable = true }
+        } catch {
+            // Disabled, unenrolled, or offline: do not advertise the preview.
+            if !Task.isCancelled { calendarPreviewAvailable = false }
         }
     }
 
@@ -595,6 +629,115 @@ private struct SavedPlaceEditor: View {
                 errorMessage = "The saved place could not be saved."
             }
         }
+    }
+}
+
+private struct CalendarAccountSetupView: View {
+    let store: any CalendarConnectionStore
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var listing: CalendarAccountConnections?
+    @State private var isVisible = false
+    @State private var credentials: CalendarAccountCredentials?
+    @State private var isBusy = false
+    @State private var isConfirmingAccess = false
+    @State private var revoking: CalendarAccountConnection?
+    @State private var message: String?
+
+    var body: some View {
+        Form {
+            Section("Preview limitations") {
+                Text("Timed and all-day non-recurring native Family events synchronize in this preview. Recurring events, invitations, Reminders, and imported calendars are not supported.")
+                Text("This preview is not yet validated for iPhone default-calendar or Siri routing. You are testing against your live Family: use dummy event titles and restore your previous Default Calendar if a check fails.")
+            }
+            Section("Calendar access") {
+                Text("A calendar account can read, create, edit, and delete your Family events. Apple Calendar keeps local copies; revoking access does not erase copies already on a device.")
+                if let listing {
+                    LabeledContent("Server") { Text(listing.serverURL.absoluteString).textSelection(.enabled) }
+                    Button("Refresh connections") { Task { await reload() } }.disabled(isBusy)
+                    Button("Create calendar password") { isConfirmingAccess = true }
+                        .disabled(isBusy || listing.connections.count >= 10)
+                        .accessibilityIdentifier("create-calendar-connection")
+                } else if message == nil {
+                    ProgressView("Checking preview availability…")
+                }
+                if let message {
+                    Text(message).foregroundStyle(.secondary)
+                    Button("Retry") { Task { await reload() } }.disabled(isBusy)
+                }
+            }
+            if let credentials {
+                Section("One-time password") {
+                    Text("Store these credentials securely before leaving this screen. The password is hidden when the app leaves the foreground and cannot be recovered. Never share it in support messages or screenshots.")
+                    LabeledContent("Calendar time zone", value: credentials.timeZone ?? "UTC")
+                    LabeledContent("Username") { Text(credentials.username).textSelection(.enabled) }
+                    LabeledContent("Password") { Text(credentials.password).textSelection(.enabled).privacySensitive() }
+                    Button("Hide password") { self.credentials = nil }
+                }
+            }
+            if let listing, !listing.connections.isEmpty {
+                Section("Your calendar connections") {
+                    ForEach(listing.connections) { connection in
+                        VStack(alignment: .leading) {
+                            Text(connection.username).font(.caption).textSelection(.enabled)
+                            Text("Calendar time zone: \(connection.timeZone ?? "UTC")").font(.caption).foregroundStyle(.secondary)
+                            Button("Revoke access", role: .destructive) { revoking = connection }
+                                .disabled(isBusy)
+                        }
+                    }
+                }
+            }
+            Section("Set up your iPhone") {
+                Text("1. Open Settings → Apps → Calendar → Calendar Accounts → Add Account → Add Other Account → CalDAV account. Labels may vary by iOS version.")
+                Text("2. Copy the one-time password and paste it into the CalDAV Password field first. You can return here to copy the server and username from your connections list; the password will stay hidden. Keep SSL enabled and use a description such as Rallyroo.")
+                Text("3. After account setup, open Settings → Apps → Calendar → Default Calendar and select Rallyroo Family (calendar preview). Adding the account alone does not change your default.")
+                Text("4. Test a plain request such as ‘Siri, add dentist tomorrow at 3 PM.’ Check which calendar received the event. Existing Google events are not moved or changed.")
+                Text("New connections use your current time zone to anchor all-day events. Existing events keep their saved anchor when you travel. Calendar dates remain date-only.")
+                Text("Sync can be delayed by your iPhone’s Fetch settings. You may receive alerts from both apps.")
+            }
+        }
+        .navigationTitle("Apple Calendar")
+        .onAppear { isVisible = true }
+        .task { await reload() }
+        .onDisappear { isVisible = false; credentials = nil }
+        .onChange(of: scenePhase) { phase in if phase != .active { credentials = nil } }
+        .alert("Allow calendar access?", isPresented: $isConfirmingAccess) {
+            Button("Create password") { Task { await create() } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Anyone with this password can read and change your native Family events. Revoke it here if it is lost or exposed.") }
+        .alert("Revoke calendar access?", isPresented: Binding(
+            get: { revoking != nil }, set: { if !$0 { revoking = nil } }
+        )) {
+            Button("Revoke", role: .destructive) {
+                let connection = revoking
+                revoking = nil
+                if let connection { Task { await revoke(connection) } }
+            }
+            Button("Cancel", role: .cancel) { revoking = nil }
+        } message: { Text("This calendar connection will stop syncing. Existing copies on the device remain until you remove the calendar account in iPhone Settings.") }
+    }
+
+    @MainActor private func reload() async {
+        do { listing = try await store.connections(); message = nil }
+        catch CalendarConnectionError.unavailable { message = "The calendar account preview is not available for this account." }
+        catch { message = "Couldn’t load calendar connections. Please try again." }
+    }
+    @MainActor private func create() async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let created = try await store.create()
+            if isVisible && scenePhase == .active && !Task.isCancelled { credentials = created }
+            await reload()
+        } catch { message = "Couldn’t create a calendar password. Refresh the connections list before retrying; a connection may have been created." }
+    }
+    @MainActor private func revoke(_ connection: CalendarAccountConnection) async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            try await store.revoke(id: connection.id)
+            if credentials?.id == connection.id { credentials = nil }
+            await reload()
+        } catch { message = "Couldn’t revoke calendar access. Please try again." }
     }
 }
 

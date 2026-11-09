@@ -1,3 +1,4 @@
+import type { CalendarResource } from "./caldav-persistence.js";
 import type {
   EventConflict,
   FamilyEvent,
@@ -27,6 +28,7 @@ export interface StoredEventMutationResult extends EventMutationResult {
 }
 
 export interface EventMutationSnapshot {
+  calendarResources?: CalendarResource[];
   events: FamilyEvent[];
   members: FamilyMember[];
 }
@@ -45,6 +47,7 @@ export interface EventMutationPlan {
     | { kind: "delete"; eventID: string }
     | { kind: "replaceRecurringSeries"; events: FamilyEvent[]; deleteIDs: string[] };
   result: StoredEventMutationResult;
+  calendarResource?: CalendarResource;
   occurrenceOverride?: {
     reference: ScheduleOccurrenceReference;
     overrideEntityID: string;
@@ -67,6 +70,7 @@ export interface EventMutationPersistence {
     familyID: string,
     idempotencyKey: string,
     prepare: (snapshot: EventMutationSnapshot) => EventMutationPlan,
+    options?: { includeCalendarResources?: boolean },
   ): Promise<StoredEventMutationResult>;
   claimScheduleUpdateNotifications(
     now: Date,
