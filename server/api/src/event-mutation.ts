@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { allDayTimes, canonicalCalendarTimeZone } from "./all-day-event.js";
+import { CalendarError, type CalendarCondition, type CalendarWrite } from "./caldav-persistence.js";
+import { calendarResourcesForEvents, prepareCalendarSave, requireCalendarCondition } from "./caldav-resource.js";
 import type { Account, EventConflict, FamilyEvent, FamilyMember } from "./domain.js";
 import { eventOccurrenceStarts, isSameEventLocalDate } from "./event-recurrence.js";
 import type {
@@ -24,7 +27,9 @@ export class EventMutationError extends Error {
       | "unknown_participant"
       | "invalid_driver"
       | "invalid_recurring_edit"
-      | "event_not_found",
+      | "event_not_found"
+      | "invalid_all_day_event"
+      | "all_day_metadata_required",
     readonly statusCode: 400 | 403 | 404 | 409,
   ) {
     super(code);
@@ -48,6 +53,7 @@ export class EventMutationModule {
     account: Account;
     eventID: string;
     idempotencyKey: string;
+    calendar?: CalendarCondition & { name: string };
   }): Promise<EventMutationResult> {
     requireParent(input.account);
     const previous = await this.dependencies.persistence.eventMutationResult(
@@ -66,10 +72,20 @@ export class EventMutationModule {
     const result = await this.dependencies.persistence.performEventMutation(
       input.account.familyID,
       input.idempotencyKey,
-      () => ({
-        action: { kind: "delete", eventID },
-        result: { conflicts: [], notificationOutcome: "notRequested" },
-      }),
+      ({ events, calendarResources = [] }) => {
+        const resource = input.calendar
+          ? calendarResourcesForEvents(events, calendarResources).find((r) => r.name === input.calendar!.name)
+          : undefined;
+        if (input.calendar) {
+          requireCalendarCondition(resource, input.calendar);
+          if (!resource) throw new CalendarError(404, "resource-not-found");
+        }
+        return {
+          action: { kind: "delete", eventID: resource?.eventID ?? eventID },
+          result: { conflicts: [], notificationOutcome: "notRequested" },
+        };
+      },
+      { includeCalendarResources: input.calendar !== undefined },
     );
     return { conflicts: result.conflicts, notificationOutcome: result.notificationOutcome };
   }
@@ -79,6 +95,9 @@ export class EventMutationModule {
     event: FamilyEvent;
     idempotencyKey: string;
     notifyParticipants: boolean;
+    /** Native API compatibility default; calendar writes preserve their own alert semantics. */
+    defaultTimedAlertAtStart?: boolean;
+    calendar?: CalendarWrite;
   }): Promise<EventMutationResult> {
     requireParent(input.account);
     const previous = await this.dependencies.persistence.eventMutationResult(
@@ -102,30 +121,58 @@ export class EventMutationModule {
     }
 
     const notificationID = randomUUID();
+    let savedEvent = input.event;
     const storedResult = await this.dependencies.persistence.performEventMutation(
       input.account.familyID,
       input.idempotencyKey,
-      ({ events, members }) => {
-        validateEventMembers(input.event, members);
+      ({ events, members, calendarResources = [] }) => {
+        const prepared = input.calendar ? prepareCalendarSave(events, calendarResources, input.calendar, input.event) : undefined;
+        let requested = prepared?.event ?? input.event;
+        const eventID = requested.id.toLowerCase();
         const existingEvent = events.find((candidate) => candidate.id.toLowerCase() === eventID);
-        if (input.event.driverMemberID !== existingEvent?.driverMemberID) {
+        if (requested.allDay === undefined && existingEvent?.allDay) {
+          if (new Date(requested.startTime).getTime() !== new Date(existingEvent.startTime).getTime()
+            || new Date(requested.endTime).getTime() !== new Date(existingEvent.endTime).getTime()) {
+            throw new EventMutationError("all_day_metadata_required", 409);
+          }
+          requested = { ...requested, allDay: existingEvent.allDay };
+        }
+        if (requested.allDay) {
+          const timeZone = canonicalCalendarTimeZone(requested.allDay.timeZone);
+          const times = allDayTimes(requested.allDay);
+          if (!timeZone || !times || requested.recurrence || requested.recurrenceSeriesID
+            || new Date(times.startTime).getTime() !== new Date(requested.startTime).getTime()
+            || new Date(times.endTime).getTime() !== new Date(requested.endTime).getTime()) {
+            throw new EventMutationError("invalid_all_day_event", 400);
+          }
+          requested = { ...requested, allDay: { ...requested.allDay, timeZone } };
+        }
+        if (input.defaultTimedAlertAtStart && !input.calendar && requested.alertLeadTimeMinutes === undefined) {
+          // Resolve defaults after recovering legacy all-day metadata under the
+          // Family lock; a title edit must not silently enable a midnight alert.
+          requested = { ...requested, alertLeadTimeMinutes: requested.allDay
+            ? (existingEvent?.allDay ? existingEvent.alertLeadTimeMinutes ?? null : null) : 0 };
+        }
+        validateEventMembers(requested, members);
+        if (requested.driverMemberID !== existingEvent?.driverMemberID) {
           driverChanges = [
             ...(existingEvent?.driverMemberID && existingEvent.driverMemberID !== input.account.memberID
               ? [{ memberID: existingEvent.driverMemberID, change: "removed" as const }] : []),
-            ...(input.event.driverMemberID && input.event.driverMemberID !== input.account.memberID
-              ? [{ memberID: input.event.driverMemberID, change: "assigned" as const }] : []),
+            ...(requested.driverMemberID && requested.driverMemberID !== input.account.memberID
+              ? [{ memberID: requested.driverMemberID, change: "assigned" as const }] : []),
           ];
         }
-        const recurrence = preserveWeeklyWeekdays(input.event.recurrence, existingEvent?.recurrence);
+        const recurrence = preserveWeeklyWeekdays(requested.recurrence, existingEvent?.recurrence);
         const recurrenceSeriesID = existingEvent?.recurrenceSeriesID
           ?? (recurrence ? eventID : undefined);
         const event: FamilyEvent = {
-          ...input.event,
+          ...requested,
           id: eventID,
           familyID: input.account.familyID,
           ...(recurrenceSeriesID !== undefined ? { recurrenceSeriesID } : {}),
           ...(recurrence !== undefined ? { recurrence } : {}),
         };
+        savedEvent = event;
         const nativeOthers = events.filter((candidate) => candidate.id.toLowerCase() !== eventID);
         const conflicts = detectEventConflicts(event, [...nativeOthers, ...visibleImportedEvents]);
         const familyVisibleConflicts = detectEventConflicts(event, [
@@ -138,6 +185,7 @@ export class EventMutationModule {
         const shouldNotify = input.notifyParticipants && participantIDs.length > 0;
         return {
           action: { kind: "save", event },
+          ...(prepared ? { calendarResource: prepared.resource } : {}),
           result: {
             conflicts,
             notificationOutcome: input.notifyParticipants
@@ -159,9 +207,10 @@ export class EventMutationModule {
           } : {}),
         };
       },
+      { includeCalendarResources: input.calendar !== undefined },
     );
     for (const change of storedResult.driverChanges ?? []) {
-      await this.recordDriverChange(input, change);
+      await this.recordDriverChange({ ...input, event: savedEvent }, change);
     }
     return this.deliverImmediately(storedResult);
   }
@@ -213,6 +262,9 @@ export class EventMutationModule {
         ({ events, members }) => {
           const source = events.find((event) => event.id.toLowerCase() === sourceEventID);
           if (!source) throw new EventMutationError("event_not_found", 404);
+          if (source.allDay || input.edited.allDay || input.upserts.some((event) => event.allDay)) {
+            throw new EventMutationError("invalid_all_day_event", 400);
+          }
           const edited: FamilyEvent = {
             ...input.edited,
             id: source.id,

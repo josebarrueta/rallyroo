@@ -164,6 +164,22 @@ final class VoiceEventCreationServiceTests: XCTestCase {
         let expectedStart = calendar.startOfDay(for: input)
         XCTAssertEqual(result.event.startTime, expectedStart)
         XCTAssertEqual(result.event.endTime, calendar.date(byAdding: .day, value: 1, to: expectedStart))
+        XCTAssertEqual(result.event.allDay, try EventAllDay(startDate: "2027-03-14", endDate: "2027-03-15", timeZone: "America/Los_Angeles"))
+        XCTAssertNil(result.event.alertLeadTime)
+    }
+
+    func testRejectsAllDayRecurrenceBeforeSavingRatherThanCreatingAnUnsupportedSeries() async throws {
+        let store = RecordingVoiceEventStore()
+        let service = VoiceEventCreationService(eventStore: store)
+        do {
+            _ = try await service.create(VoiceEventCreationRequest(title: "Family day", startTime: .now, isAllDay: true,
+                recurrence: EventRecurrence(frequency: .daily, endDate: .now.addingTimeInterval(86400))))
+            XCTFail("Expected unsupported all-day recurrence")
+        } catch {
+            XCTAssertEqual(error as? VoiceEventCreationError, .allDayRecurrenceUnsupported)
+        }
+        let saved = await store.savedRequest()
+        XCTAssertNil(saved)
     }
 }
 

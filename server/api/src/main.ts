@@ -2,6 +2,7 @@ import "dotenv/config";
 import { APNSPushNotificationProvider } from "./apns-push-notification-provider.js";
 import { AppleWeatherKitDayBriefProvider } from "./apple-weatherkit-day-brief-provider.js";
 import { buildApp } from "./app.js";
+import { calendarPreviewConfiguration } from "./caldav.js";
 import { calendarURLProtection, fetchPublicCalendarFeed } from "./calendar-source-adapters.js";
 import { CalendarSourceModule } from "./calendar-source-module.js";
 import { DayBriefModule } from "./day-brief.js";
@@ -55,6 +56,7 @@ import { ExpenseModule } from "./expense-module.js";
 import { OllamaReceiptDraftExtractor } from "./ollama-receipt-draft-extractor.js";
 import { UnavailableRoutingProvider } from "./travel-preview.js";
 
+const caldav = calendarPreviewConfiguration();
 const databaseConfiguration = await databasePoolConfiguration();
 
 const cache: Cache = process.env.REDIS_URL
@@ -220,6 +222,8 @@ const app = buildApp({
     metrics,
   ),
   pushNotificationProvider,
+  // Experimental interoperability profile: leave unset in production until device acceptance.
+  ...(caldav ? { caldav } : {}),
   readinessCheck: () => repository.checkReadiness(),
   metrics,
   notificationCenter,

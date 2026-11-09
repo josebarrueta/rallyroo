@@ -43,6 +43,13 @@ export interface EventRecurrence {
   endDate: string;
 }
 
+/** Gregorian date-only bounds; endDate is exclusive. Instants use this stable anchor zone. */
+export interface EventAllDay {
+  startDate: string;
+  endDate: string;
+  timeZone: string;
+}
+
 export interface FamilyEvent {
   id: string;
   familyID: string;
@@ -51,6 +58,7 @@ export interface FamilyEvent {
   participantIDs: string[];
   startTime: string;
   endTime: string;
+  allDay?: EventAllDay | null | undefined;
   arrivalTime?: string | null;
   location: string | null;
   notes?: string | null;

@@ -72,13 +72,30 @@ Event bodies use the Swift `FamilyEvent` fields, including `id`, `title`,
 `participantIDs`, `startTime`, `endTime`, `location`, `driver`, `source`, and
 `status`. Native events also support optional `alertLeadTimeMinutes` (`0`, `5`,
 `15`, `30`, `45`, `60`, `1440`, or null) and `recurrence`. An omitted alert on a write defaults
-to `0` (at start). `kidID` is temporarily included for
+to `0` (at start) for timed Events. New All-day Events default to no scheduled alert;
+on an existing All-day Event an omitted alert preserves its current setting. Send explicit
+null to disable an alert. `kidID` is temporarily included for
 compatibility and may be null. A recurrence contains `frequency` (`daily`,
 `weekly`, or `monthly`), a positive `interval`, and an ISO 8601 `endDate`.
 Weekly recurrences may include `weekdays`, a unique array using ISO weekday
 numbers (`1` Monday through `7` Sunday). Omitting `weekdays` retains legacy
 once-per-week behavior. New or updated recurrences must end no more than 732
 days after their start, keeping expansion, conflict checks, and alerts bounded.
+
+Native Events also support `allDay: { startDate, endDate, timeZone }`: Gregorian
+`YYYY-MM-DD` dates, an **exclusive** end date, and a named IANA anchor zone (aliases
+are canonicalized). `startTime` and `endTime` must match the first real instant of
+each bound in that zone; a DST day is not necessarily 24 hours. The date-only
+bounds remain the same when viewed in another device time zone. These are
+scheduling metadata; titles, locations, and other protected Family text remain encrypted.
+
+Send `allDay: null` to explicitly convert to timed. Older clients omitting `allDay`
+may edit an existing All-day Event only while leaving its instants unchanged;
+otherwise the server returns `409 all_day_metadata_required`. Invalid or mismatched
+bounds return `400 invalid_all_day_event`. All-day recurrence and recurrence-series
+membership are not supported yet. All-day date changes must update both bounds and
+matching instants together; a database guard also prevents older API images from
+changing the instants without updating or explicitly clearing the metadata.
 
 Scoped edits accept `scope` as `thisOccurrence`, `thisWeekdayAndFuture`, or
 `allFuture`. `occurrenceStart` identifies the original occurrence being edited.

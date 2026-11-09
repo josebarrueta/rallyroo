@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { calendarProtocolRoute, registerCalendarRoutes, type CalendarConfiguration } from "./caldav.js";
 import { fastifyRateLimit } from "@fastify/rate-limit";
 import Fastify, {
   type FastifyReply,
@@ -82,6 +83,11 @@ const eventSchema = z.object({
   participantIDs: z.array(z.string()).default([]),
   startTime: z.string().datetime(),
   endTime: z.string().datetime(),
+  allDay: z.object({
+    startDate: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/),
+    endDate: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/),
+    timeZone: timeZoneSchema,
+  }).strict().nullable().optional(),
   arrivalTime: z.string().datetime().nullable().default(null),
   location: z.string().nullable().default(null),
   driver: z.string().nullable().default(null),
@@ -386,6 +392,7 @@ interface RouteRateLimit {
 interface Dependencies {
   identityProvider: IdentityProvider;
   repository: RallyrooRepository;
+  caldav?: CalendarConfiguration;
   locationSearchProvider?: LocationSearchProvider;
   pushNotificationProvider?: PushNotificationProvider;
   invitationEmailSender?: InvitationEmailSender;
@@ -410,6 +417,7 @@ interface Dependencies {
 export function buildApp({
   identityProvider,
   repository,
+  caldav,
   locationSearchProvider = new EmptyLocationSearchProvider(),
   pushNotificationProvider = new NoopPushNotificationProvider(),
   invitationEmailSender = new NoopInvitationEmailSender(),
@@ -454,8 +462,20 @@ export function buildApp({
     notificationDispatcher: scheduleUpdateNotificationDispatcher,
     ...(notificationCenter ? { notificationCenter } : {}),
   });
+  // DAV resource names are client-selected and can themselves contain Family details.
+  // Serialize only safe request fields; never put calendar hrefs or credentials in logs.
+  const safeLogger = logger === false ? false : {
+    ...(logger === true ? {} : logger),
+    serializers: {
+      ...(typeof logger === "object" ? logger.serializers : {}),
+      req: (request: { method: string; url: string }) => ({
+        method: request.method,
+        url: /^(?:https?:\/\/[^/]+)?\/dav(?:\/|[?#]|$)/i.test(request.url) ? "/dav/[redacted]" : request.url,
+      }),
+    },
+  };
   // Shared bound for all JSON routes; sensitive routes can set a smaller limit.
-  const app = Fastify({ logger, bodyLimit: 1 * 1024 * 1024, genReqId: () => randomUUID() });
+  const app = Fastify({ logger: safeLogger, bodyLimit: 1 * 1024 * 1024, genReqId: () => randomUUID() });
   fastifyRateLimit(
     app,
     { global: true, max: 120, timeWindow: 60_000 },
@@ -502,6 +522,7 @@ export function buildApp({
 
   app.addHook("onRequest", async (request, reply) => {
     const routeURL = request.routeOptions.url ?? "";
+    if (caldav && calendarProtocolRoute(routeURL)) return;
     if (
       routeURL === "/health" ||
       routeURL === "/ready" ||
@@ -1788,11 +1809,12 @@ export function buildApp({
         account,
         idempotencyKey,
         notifyParticipants,
+        defaultTimedAlertAtStart: true,
         event: {
           ...eventData,
           id: eventID,
           familyID: account.familyID,
-          alertLeadTimeMinutes: alertLeadTimeMinutes === undefined ? 0 : alertLeadTimeMinutes,
+          ...(alertLeadTimeMinutes !== undefined ? { alertLeadTimeMinutes } : {}),
           ...(recurrenceSeriesID !== undefined ? { recurrenceSeriesID } : {}),
           ...(recurrence !== undefined ? { recurrence } : {}),
         },
@@ -1938,6 +1960,7 @@ export function buildApp({
     return reply.code(204).send();
   });
 
+  if (caldav) registerCalendarRoutes(app, repository, caldav, eventMutations);
   return app;
 }
 

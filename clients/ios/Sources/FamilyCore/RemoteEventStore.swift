@@ -171,6 +171,7 @@ public actor RemoteEventStore: EventStore {
         notifyParticipants: Bool,
         idempotencyKey: UUID
     ) async throws -> EventMutationResult {
+        try event.validateAllDay()
         var components = URLComponents(
             url: eventsURL.appending(path: event.id.uuidString),
             resolvingAgainstBaseURL: false

@@ -83,6 +83,15 @@ spec:
               value: 0.0.0.0
             - name: PORT
               value: "3000"
+            {{- if .Values.calendarPreview.enabled }}
+            - name: CALDAV_PREVIEW_PUBLIC_ORIGIN
+              value: {{ required "calendarPreview.publicOrigin is required" .Values.calendarPreview.publicOrigin | quote }}
+            - name: CALDAV_PREVIEW_IDENTITY_SUBJECTS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "calendarPreview.identitySubjectsSecret is required" .Values.calendarPreview.identitySubjectsSecret | quote }}
+                  key: identity-subjects
+            {{- end }}
             {{- if .Values.postgres.credentialsSecret }}
             {{- include "rallyroo.postgresConnectionEnv" . | nindent 12 }}
             {{- else }}

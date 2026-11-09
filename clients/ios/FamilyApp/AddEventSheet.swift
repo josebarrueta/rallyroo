@@ -20,6 +20,8 @@ struct AddEventSheet: View {
     @State private var selectedParticipantIDs: Set<KidID>
     @State private var startTime: Date
     @State private var endTime: Date
+    @State private var isAllDay: Bool
+    @State private var editorTimeZone: TimeZone
     @State private var endMode: EventEndMode
     @State private var durationMinutes: Int
     @State private var arrivalTargetEnabled: Bool
@@ -80,8 +82,16 @@ struct AddEventSheet: View {
         _selectedParticipantIDs = State(initialValue: Set(
             event?.participantIDs ?? event?.kidID.map { [$0] } ?? prefill?.participantIDs ?? []
         ))
-        let initialStartTime = event?.startTime ?? .now
-        let initialEndTime = event?.endTime ?? initialStartTime.addingTimeInterval(60 * 60)
+        let zone = TimeZone.current
+        var dateCalendar = Calendar(identifier: .gregorian)
+        dateCalendar.timeZone = zone
+        let dateOnlyRange = event?.allDay?.dateInterval(in: zone)
+        let initialStartTime = dateOnlyRange?.start ?? event?.startTime ?? .now
+        // The editor's Through date is inclusive; persisted endDate remains exclusive.
+        let initialEndTime = dateOnlyRange.map { dateCalendar.date(byAdding: .day, value: -1, to: $0.end)! }
+            ?? event?.endTime ?? initialStartTime.addingTimeInterval(60 * 60)
+        _isAllDay = State(initialValue: event?.allDay != nil)
+        _editorTimeZone = State(initialValue: zone)
         _startTime = State(initialValue: initialStartTime)
         _endTime = State(initialValue: initialEndTime)
         _arrivalTargetEnabled = State(initialValue: event.map { $0.arrivalTime != nil } ?? false)
@@ -121,44 +131,60 @@ struct AddEventSheet: View {
                 }
 
                 Section("Time") {
-                    DatePicker(
-                        "Starts",
-                        selection: $startTime,
-                        displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
-                    )
-                    Picker("Event length", selection: $endMode) {
-                        ForEach(EventEndMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                    Toggle("All day", isOn: $isAllDay)
+                        .disabled(recurringSource != nil || repeatOption != .never || existingEvent?.recurrenceSeriesID != nil)
+                        .accessibilityIdentifier("event-all-day")
+                    if isAllDay {
+                        DatePicker("Starts", selection: $startTime, displayedComponents: .date)
+                            .accessibilityIdentifier("event-all-day-start")
+                        DatePicker("Through", selection: $endTime, in: startTime..., displayedComponents: .date)
+                            .accessibilityIdentifier("event-all-day-through")
+                        Text("These calendar dates stay the same when your phone changes time zones. All-day repeat schedules are not supported yet.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if allDayDates == nil {
+                            Text("These dates cannot be represented in the event’s time zone.")
+                                .font(.caption).foregroundStyle(.red)
                         }
-                    }
-                    .pickerStyle(.segmented)
-
-                    if endMode == .duration {
-                        Stepper(value: $durationMinutes, in: 15...(7 * 24 * 60), step: 15) {
-                            LabeledContent("Duration", value: formattedDuration)
-                        }
-                        LabeledContent(
-                            "Ends",
-                            value: endTime.formatted(date: .abbreviated, time: .shortened)
-                        )
                     } else {
                         DatePicker(
-                            "Ends",
-                            selection: $endTime,
-                            in: startTime.addingTimeInterval(60)...,
+                            "Starts",
+                            selection: $startTime,
                             displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
                         )
-                    }
-                    Toggle("Arrive by", isOn: $arrivalTargetEnabled)
-                        .accessibilityIdentifier("event-arrive-by")
-                    if arrivalTargetEnabled {
-                        DatePicker(
-                            "Arrival time",
-                            selection: $arrivalTarget,
-                            in: ...startTime,
-                            displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
-                        )
-                        .accessibilityIdentifier("event-arrival-time")
+                        Picker("Event length", selection: $endMode) {
+                            ForEach(EventEndMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        if endMode == .duration {
+                            Stepper(value: $durationMinutes, in: 15...(7 * 24 * 60), step: 15) {
+                                LabeledContent("Duration", value: formattedDuration)
+                            }
+                            LabeledContent(
+                                "Ends",
+                                value: endTime.formatted(date: .abbreviated, time: .shortened)
+                            )
+                        } else {
+                            DatePicker(
+                                "Ends",
+                                selection: $endTime,
+                                in: startTime.addingTimeInterval(60)...,
+                                displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                            )
+                        }
+                        Toggle("Arrive by", isOn: $arrivalTargetEnabled)
+                            .accessibilityIdentifier("event-arrive-by")
+                        if arrivalTargetEnabled {
+                            DatePicker(
+                                "Arrival time",
+                                selection: $arrivalTarget,
+                                in: ...startTime,
+                                displayedComponents: recurringSource == nil ? [.date, .hourAndMinute] : [.hourAndMinute]
+                            )
+                            .accessibilityIdentifier("event-arrival-time")
+                        }
                     }
                     if !selectedParticipantIDs.isEmpty {
                         Picker("Alert", selection: $alertChoice) {
@@ -172,7 +198,11 @@ struct AddEventSheet: View {
                             Text(option.title).tag(option)
                         }
                     }
-                    .disabled(recurringSource != nil)
+                    .disabled(recurringSource != nil || isAllDay)
+                    if isAllDay && alertChoice != .none && !selectedParticipantIDs.isEmpty {
+                        Text("All-day alerts are relative to the start of the day in \(existingEvent?.allDay?.timeZone ?? editorTimeZone.identifier).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if repeatOption == .weekly || repeatOption == .biweekly {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("On")
@@ -294,7 +324,29 @@ struct AddEventSheet: View {
                     arrivalTarget = startTime
                 }
             }
+            .onChange(of: isAllDay) { enabled in
+                if enabled {
+                    let endDay = editorCalendar.startOfDay(for: endTime)
+                    // The timed end is exclusive; midnight must not add an extra date.
+                    let lastDay = endTime == endDay
+                        ? editorCalendar.date(byAdding: .day, value: -1, to: endDay) ?? endDay : endDay
+                    startTime = editorCalendar.startOfDay(for: startTime)
+                    endTime = max(startTime, lastDay)
+                    arrivalTargetEnabled = false
+                    repeatOption = .never
+                    alertChoice = .none
+                } else {
+                    endMode = .duration
+                    durationMinutes = 60
+                    endTime = startTime.addingTimeInterval(3600)
+                }
+            }
             .onChange(of: startTime) { newStartTime in
+                if isAllDay {
+                    if endTime < newStartTime { endTime = newStartTime }
+                    previousStartTime = newStartTime
+                    return
+                }
                 if arrivalTargetEnabled {
                     let offset = arrivalTarget.timeIntervalSince(previousStartTime)
                     previousStartTime = newStartTime
@@ -312,16 +364,16 @@ struct AddEventSheet: View {
                 }
             }
             .onChange(of: durationMinutes) { minutes in
-                guard endMode == .duration else { return }
+                guard !isAllDay, endMode == .duration else { return }
                 endTime = startTime.addingTimeInterval(TimeInterval(minutes * 60))
             }
             .onChange(of: endMode) { mode in
-                if mode == .duration {
+                if !isAllDay && mode == .duration {
                     endTime = startTime.addingTimeInterval(TimeInterval(durationMinutes * 60))
                 }
             }
             .onChange(of: endTime) { newEndTime in
-                guard endMode == .endDate, newEndTime > startTime else { return }
+                guard !isAllDay, endMode == .endDate, newEndTime > startTime else { return }
                 durationMinutes = max(1, Int(newEndTime.timeIntervalSince(startTime) / 60))
             }
             .task(id: LocationSearchRequest(query: location, isFocused: isLocationFieldFocused)) {
@@ -384,7 +436,7 @@ struct AddEventSheet: View {
                             isShowingNotifyPrompt = true
                         }
                     }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving)
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSaving || (isAllDay && allDayDates == nil))
                 }
             }
             .confirmationDialog(
@@ -445,6 +497,8 @@ struct AddEventSheet: View {
                 Text("This cannot be undone.")
             }
         }
+        .environment(\.calendar, isAllDay ? editorCalendar : .autoupdatingCurrent)
+        .environment(\.timeZone, isAllDay ? editorTimeZone : .autoupdatingCurrent)
     }
 
     private func chooseEditScope(_ scope: EventEditScope) {
@@ -469,6 +523,11 @@ struct AddEventSheet: View {
 
     private func save(notifyParticipants: Bool) {
         guard !isSaving else { return }
+        guard !isAllDay || allDayDates != nil else {
+            alertMessage = "Choose a valid all-day date range."
+            isShowingAlert = true
+            return
+        }
         isSaving = true
         Task {
             defer { isSaving = false }
@@ -555,16 +614,37 @@ struct AddEventSheet: View {
         }
     }
 
+    private var editorCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = editorTimeZone
+        return calendar
+    }
+
+    private var allDayDates: EventAllDay? {
+        guard isAllDay, let exclusiveEnd = editorCalendar.date(byAdding: .day, value: 1, to: editorCalendar.startOfDay(for: endTime)) else { return nil }
+        return try? EventAllDay(startDate: EventAllDay.dateString(for: startTime, in: editorTimeZone),
+            endDate: EventAllDay.dateString(for: exclusiveEnd, in: editorTimeZone),
+            timeZone: existingEvent?.allDay?.timeZone ?? editorTimeZone.identifier)
+    }
+
     private var event: FamilyEvent {
-        FamilyEvent(
+        let dateOnly = allDayDates
+        let range = dateOnly?.dateInterval()
+        let allDayArrival: Date?
+        if isAllDay, let previous = existingEvent, previous.allDay != nil, let arrival = previous.arrivalTime {
+            allDayArrival = arrival.addingTimeInterval((range?.start ?? startTime).timeIntervalSince(previous.startTime))
+        } else { allDayArrival = nil }
+        return FamilyEvent(
             id: existingEvent?.id ?? mutationID,
             title: title.trimmingCharacters(in: .whitespacesAndNewlines),
             kidID: selectedParticipantIDs.first,
             participantIDs: Array(selectedParticipantIDs),
-            startTime: startTime,
-            endTime: endTime,
-            arrivalTime: arrivalTargetEnabled ? min(arrivalTarget, startTime) : nil,
+            startTime: range?.start ?? startTime,
+            endTime: range?.end ?? endTime,
+            allDay: dateOnly,
+            arrivalTime: isAllDay ? allDayArrival : arrivalTargetEnabled ? min(arrivalTarget, startTime) : nil,
             location: optionalText(location),
+            notes: existingEvent?.notes,
             driver: driverChoice == .other ? optionalText(otherDriver) : nil,
             driverMemberID: driverChoice.memberID,
             source: existingEvent?.source ?? .manual,
@@ -612,6 +692,7 @@ struct AddEventSheet: View {
     }
 
     private var selectedRecurrence: EventRecurrence? {
+        guard !isAllDay else { return nil }
         guard let recurrence = recurringSource?.recurrence ?? repeatOption.recurrence(
             ending: recurrenceEndDate,
             weekdays: selectedWeekdays.sorted()

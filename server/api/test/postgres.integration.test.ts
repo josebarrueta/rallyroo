@@ -109,6 +109,103 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
     await adminPool.end();
   });
 
+  it("persists encrypted calendar resources, serializes conditional creates, and revokes deleted-owner credentials", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const account = await first.provisionParentAccount("caldav-integration-parent", "Calendar Parent");
+    const provider: IdentityProvider = { ...identityProvider,
+      verifySession: async (token) => { if (token !== "calendar-test-token") throw new Error("invalid"); return { subject: account.identitySubject, displayName: "Parent" }; },
+    };
+    const caldav = { publicOrigin: "https://calendar.example", allowedIdentitySubjects: [account.identitySubject] };
+    const writer = buildApp({ repository: first, identityProvider: provider, caldav });
+    const reader = buildApp({ repository: second, identityProvider: provider, caldav });
+    const inspection = new Pool({ connectionString: databaseURL });
+    try {
+      const issued = await writer.inject({ method: "POST", url: "/v1/calendar-connections", headers: { authorization: "Bearer calendar-test-token" } });
+      expect(issued.statusCode).toBe(201);
+      const connection = issued.json<{ id: string; password: string }>();
+      const headers = { authorization: `Basic ${Buffer.from(`${connection.id}:${connection.password}`).toString("base64")}`, "content-type": "text/calendar" };
+      const url = `/dav/calendars/${connection.id}/family/opaque-client-resource.ics`;
+      const payload = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Test//EN", "BEGIN:VEVENT", "UID:private-uid@example.test",
+        "DTSTAMP:20270101T000000Z", "DTSTART:20270102T120000Z", "DTEND:20270102T130000Z", "SUMMARY:Private calendar detail",
+        "X-PRIVATE-NOTE:Never store plaintext", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+      const attempts = await Promise.all([writer, reader].map((app) => app.inject({ method: "PUT", url, payload, headers: { ...headers, "if-none-match": "*" } })));
+      expect(attempts.map((r) => r.statusCode).sort()).toEqual([201, 412]);
+      const fetched = await reader.inject({ url, headers });
+      expect(fetched.statusCode).toBe(200);
+      expect(fetched.body).toBe(payload);
+      const raw = await inspection.query("SELECT * FROM calendar_resources WHERE family_id = $1", [account.familyID]);
+      expect(raw.rows).toHaveLength(1);
+      expect(raw.rows[0].details_ciphertext).toMatch(/^rr1\./);
+      expect(JSON.stringify(raw.rows)).not.toContain("Private calendar detail");
+      expect(JSON.stringify(raw.rows)).not.toContain("private-uid");
+      expect(JSON.stringify(raw.rows)).not.toContain("opaque-client-resource");
+      const stored = await inspection.query("SELECT * FROM calendar_connections WHERE id = $1", [connection.id]);
+      expect(JSON.stringify(stored.rows)).not.toContain(connection.password);
+      const stale = String(fetched.headers.etag);
+      const event = (await first.eventsForFamily(account.familyID))[0]!;
+      await first.saveEvent({ ...event, title: "Changed in Rallyroo", participantIDs: [] });
+      const changed = await reader.inject({ url, headers });
+      expect(changed.headers.etag).not.toBe(stale);
+      expect(changed.body).toContain("Changed in Rallyroo");
+      expect(changed.body).toContain("X-PRIVATE-NOTE:Never store plaintext");
+      expect((await writer.inject({ method: "PUT", url, payload, headers: { ...headers, "if-match": stale } })).statusCode).toBe(412);
+      const parallelReads = await Promise.all(Array.from({ length: 15 }, () => reader.inject({ url, headers })));
+      expect(parallelReads.every((response) => response.statusCode === 200 && response.body.includes("Changed in Rallyroo"))).toBe(true);
+      await first.deleteAccount(account.identitySubject);
+      expect((await reader.inject({ url, headers })).statusCode).toBe(401);
+      expect((await inspection.query("SELECT 1 FROM calendar_connections WHERE id = $1", [connection.id])).rows).toHaveLength(0);
+    } finally { await writer.close(); await reader.close(); await inspection.end(); }
+  });
+
+  it("persists exclusive all-day dates and calendar time zones across repository instances and native edits", async () => {
+    const first = repositoryForTest();
+    const second = repositoryForTest();
+    const account = await first.provisionParentAccount("all-day-calendar-parent", "Calendar Parent");
+    const provider: IdentityProvider = { ...identityProvider,
+      verifySession: async (token) => { if (token !== "all-day-test-token") throw new Error("invalid"); return { subject: account.identitySubject, displayName: "Parent" }; },
+    };
+    const caldav = { publicOrigin: "https://calendar.example", allowedIdentitySubjects: [account.identitySubject] };
+    const writer = buildApp({ repository: first, identityProvider: provider, caldav });
+    const reader = buildApp({ repository: second, identityProvider: provider, caldav });
+    const bearer = { authorization: "Bearer all-day-test-token" };
+    try {
+      const issued = await writer.inject({ method: "POST", url: "/v1/calendar-connections", headers: bearer, payload: { timeZone: "America/Los_Angeles" } });
+      expect(issued.statusCode).toBe(201);
+      const connection = issued.json<{ id: string; password: string }>();
+      const headers = { authorization: `Basic ${Buffer.from(`${connection.id}:${connection.password}`).toString("base64")}`, "content-type": "text/calendar" };
+      const url = `/dav/calendars/${connection.id}/family/date-only.ics`;
+      const payload = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Test//EN", "BEGIN:VEVENT", "UID:date-only@example.test",
+        "DTSTAMP:20270101T000000Z", "DTSTART;VALUE=DATE:20270314", "DTEND;VALUE=DATE:20270315", "SUMMARY:Family day",
+        "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+      expect((await writer.inject({ method: "PUT", url, headers: { ...headers, "if-none-match": "*" }, payload })).statusCode).toBe(201);
+      const [event] = (await reader.inject({ url: "/v1/events", headers: bearer })).json<Array<{ id: string } & Record<string, unknown>>>();
+      expect(event).toMatchObject({ startTime: "2027-03-14T08:00:00.000Z", endTime: "2027-03-15T07:00:00.000Z",
+        allDay: { startDate: "2027-03-14", endDate: "2027-03-15", timeZone: "America/Los_Angeles" } });
+      expect((await reader.inject({ url, headers })).body).toBe(payload);
+      expect((await writer.inject({ method: "PUT", url: `/v1/events/${event!.id}`, headers: { ...bearer, "idempotency-key": randomUUID() },
+        payload: { ...event, title: "Long family break", endTime: "2027-03-16T07:00:00.000Z",
+          allDay: { startDate: "2027-03-14", endDate: "2027-03-16", timeZone: "America/Los_Angeles" } } })).statusCode).toBe(200);
+      const changed = await reader.inject({ url, headers });
+      expect(changed.statusCode).toBe(200);
+      expect(changed.body).toContain("DTSTART;VALUE=DATE:20270314");
+      expect(changed.body).toContain("DTEND;VALUE=DATE:20270316");
+      expect(changed.body).toContain("SUMMARY:Long family break");
+      const oldWriter = new Pool({ connectionString: databaseURL });
+      try {
+        // Simulate the SQL generated by an older API image that does not know all_day.
+        await expect(oldWriter.query("UPDATE events SET start_time = start_time + interval '1 hour' WHERE family_id = $1 AND id = $2",
+          [account.familyID, event!.id])).rejects.toMatchObject({ code: "23514", constraint: "events_all_day_anchor_guard" });
+        expect((await oldWriter.query("UPDATE events SET title = title WHERE family_id = $1 AND id = $2", [account.familyID, event!.id])).rowCount).toBe(1);
+      } finally { await oldWriter.end(); }
+      const [current] = (await reader.inject({ url: "/v1/events", headers: bearer })).json<Array<Record<string, unknown>>>();
+      expect(current!.startTime).toBe("2027-03-14T08:00:00.000Z");
+      expect((await writer.inject({ method: "PUT", url: `/v1/events/${event!.id}`,
+        headers: { ...bearer, "idempotency-key": randomUUID() }, payload: { ...current, allDay: null } })).statusCode).toBe(200);
+      expect((await reader.inject({ url, headers })).body).not.toContain("VALUE=DATE");
+    } finally { await writer.close(); await reader.close(); }
+  });
+
   it("encrypts parent-only Expenses, scopes records by Family, and survives retries/corrections", async () => {
     const first = repositoryForTest();
     const second = repositoryForTest();

@@ -15,7 +15,7 @@ public struct ScheduleEventDisplay: Equatable, Sendable {
         primaryColorTag = participantColorTags.first
     }
 
-    public func hasEnded(at date: Date) -> Bool {
-        event.endTime <= date
+    public func hasEnded(at date: Date, calendar: Calendar = .autoupdatingCurrent) -> Bool {
+        event.displayInterval(calendar: calendar).end <= date
     }
 }

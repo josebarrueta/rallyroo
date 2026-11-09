@@ -23,20 +23,24 @@ mkdir -p "$scratch/context/test/support"
 cp "$ROOT/server/api/package.json" "$ROOT/server/api/package-lock.json" "$scratch/context/"
 cp -R "$ROOT/server/api/src" "$scratch/context/"
 cp "$ROOT/server/api/test/support/contract-server.ts" "$scratch/context/test/support/"
-helm template rallyroo-http-ci "$ROOT/deploy/helm/rallyroo" \
+render_edge() {
+local upstream_count=$1; shift
+helm template rallyroo-http-ci "$ROOT/deploy/helm/rallyroo" "$@" \
   --show-only templates/nginx.yaml >"$scratch/edge.yaml"
-ruby -ryaml - "$scratch/edge.yaml" "$scratch/default.conf" "$scratch/nginx-image" <<'RUBY'
+ruby -ryaml - "$scratch/edge.yaml" "$scratch/default.conf" "$scratch/nginx-image" "$upstream_count" <<'RUBY'
 documents = YAML.load_stream(File.read(ARGV[0]))
 config = documents.find { |d| d['kind'] == 'ConfigMap' }.fetch('data').fetch('default.conf')
 upstream = 'http://rallyroo-http-ci-api:3000'
-abort 'Unexpected edge upstream' unless config.scan(upstream).length == 1
+abort 'Unexpected edge upstream' unless config.scan(upstream).length == ARGV[3].to_i
 # Only Kubernetes service discovery changes. Routing, headers and error handling
 # remain the actual chart configuration.
-File.write(ARGV[1], config.sub(upstream, 'http://127.0.0.1:3100'))
+File.write(ARGV[1], config.gsub(upstream, 'http://127.0.0.1:3100'))
 container = documents.find { |d| d['kind'] == 'Deployment' }.fetch('spec')
   .fetch('template').fetch('spec').fetch('containers').find { |c| c['name'] == 'nginx' }
 File.write(ARGV[2], container.fetch('image'))
 RUBY
+}
+render_edge 1
 # Match ConfigMap's non-secret 0644 mode. The chart uses non-root NGINX;
 # Docker Desktop can mask the Linux bind-mount permission difference.
 chmod 0644 "$scratch/default.conf"
@@ -47,7 +51,7 @@ docker run --rm --network none \
   "$nginx_image" /bin/sh -c 'test -r /etc/nginx/conf.d/default.conf'
 # The API remains loopback-only inside its namespace. Publish only NGINX on a
 # random loopback port; the second container shares that isolated namespace.
-docker run --detach --name "$api" --publish 127.0.0.1::8080 "$image" >/dev/null
+docker run --detach --name "$api" --env CONTRACT_CALDAV_PREVIEW=1 --publish 127.0.0.1::8080 "$image" >/dev/null
 docker run --detach --name "$nginx" --network "container:$api" \
   --mount "type=bind,source=$scratch/default.conf,target=/etc/nginx/conf.d/default.conf,readonly" \
   "$nginx_image" >/dev/null
@@ -65,4 +69,16 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 "$ROOT/deploy/local/test-http-contract.sh" "$base_url"
+[[ $(curl --silent --max-time 5 --output /dev/null --write-out '%{http_code}' -H 'X-Forwarded-Proto: https' "$base_url/dav/") == 404 ]]
+render_edge 2 --set calendarPreview.enabled=true \
+  --set calendarPreview.publicOrigin=https://calendar.example \
+  --set calendarPreview.identitySubjectsSecret=synthetic-preview
+chmod 0644 "$scratch/default.conf"
+docker exec "$nginx" nginx -t
+docker exec "$nginx" nginx -s reload
+for _ in {1..15}; do
+  [[ $(curl --silent --max-time 2 --output /dev/null --write-out '%{http_code}' -H 'X-Forwarded-Proto: https' "$base_url/dav/") == 401 ]] && break
+  sleep 1
+done
+"$ROOT/deploy/local/test-caldav-edge-contract.sh" "$base_url"
 echo 'Synthetic NGINX/API smoke passed; this is not a live Kubernetes deployment acceptance.'

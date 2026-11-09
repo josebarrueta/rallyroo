@@ -73,6 +73,21 @@ Enable **Places API (New)** in Google Cloud and restrict the key to that API. If
 key is omitted, manual location entry still works and autocomplete returns no
 suggestions.
 
+## Experimental calendar account preview
+
+`CALDAV_PREVIEW_PUBLIC_ORIGIN` plus the explicit JSON identity cohort in
+`CALDAV_PREVIEW_IDENTITY_SUBJECTS` opt an API into the restricted writable
+calendar-account profile. Both default off; no wildcard or implicit all-parent
+access is supported. Existing-Family testing requires the approved
+[in-app activation gates](../../docs/caldav-in-app-testing.md). Migration 037 adds revocable
+parent credential verifiers and encrypted calendar resource bindings; 038 adds
+all-day date bounds/anchor zones and connection zones; 039 guards all-day instants
+against incompatible older-image writes. This preview supports timed and all-day,
+non-recurring native Events; it is **not a complete/conformant CalDAV server**, and
+physical-iPhone/default-Siri interoperability is not verified.
+See [setup, HTTP routes, limitations and remaining release gates](../../docs/caldav-preview.md)
+and [native all-day HTTP fields](../http-api.md#events).
+
 ## AI-assisted schedule drafts
 
 Set `OLLAMA_BASE_URL` to enable parent-only schedule-draft extraction and optionally
