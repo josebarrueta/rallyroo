@@ -14,14 +14,33 @@ module RallyrooAltoolResumeWorkaround
     return accepted if accepted
 
     # Fail closed if the pinned executor's result/state contract changes.
-    return false unless @all_lines.is_a?(Array) && @errors.is_a?(Array)
-    return false unless @all_lines.any? { |line| line.strip == 'UPLOAD SUCCEEDED with no errors' }
-    return false if @errors.empty?
-    return false unless @errors.all? { |error| RESUME_ERROR.match?(error.strip) }
+    return rallyroo_reject('unexpected_executor_state') unless @all_lines.is_a?(Array) && @errors.is_a?(Array)
+    success = @all_lines.any? do |record|
+      rallyroo_plain_text(record).each_line.any? { |line| line.strip == 'UPLOAD SUCCEEDED with no errors' }
+    end
+    return rallyroo_reject('success_marker_absent') unless success
+    return rallyroo_reject('no_diagnostic') if @errors.empty?
+    return rallyroo_reject('additional_or_changed_error') unless @errors.all? do |error|
+      RESUME_ERROR.match?(rallyroo_plain_text(error).strip)
+    end
 
     @errors.clear
     FastlaneCore::UI.important('Ignoring known altool resume-state diagnostic after successful upload; Apple processing checks remain required.')
     true
+  end
+
+  private
+
+  def rallyroo_plain_text(text)
+    # altool/PTY output can be colored and an output record can contain several
+    # physical lines. Normalize terminal SGR formatting, not message content.
+    text.gsub(/\e\[[0-9;]*m/, '')
+  end
+
+  def rallyroo_reject(reason)
+    # Fixed reason codes only: never emit raw uploader output or credentials.
+    FastlaneCore::UI.important("altool resume workaround declined: #{reason}")
+    false
   end
 end
 

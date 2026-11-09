@@ -87,7 +87,11 @@ The pinned parser otherwise treats that benign diagnostic as an upload failure,
 causing the queue to retry an already-uploaded commit with another build number.
 
 The workaround accepts only an explicit upload-success line with exclusively the
-exact known resume-state diagnostic. Non-zero exits (which the pinned executor
+exact known resume-state diagnostic. It removes terminal color formatting and
+checks physical lines within output records before matching; the original strict
+record comparison missed colored/multiline output. Rejected attempts emit only a
+fixed reason code (`success_marker_absent`, `additional_or_changed_error`,
+`no_diagnostic`, or `unexpected_executor_state`), never raw upload values. Non-zero exits (which the pinned executor
 records as additional errors), authentication/validation failures, other missing
 files, and absent success markers remain failures. It does not bypass the existing
 wait for Apple build processing or mark the queue successful from logs alone.
