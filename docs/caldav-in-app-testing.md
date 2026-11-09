@@ -1,6 +1,6 @@
 # Account-restricted in-app calendar testing
 
-Status: **existing-Family testing approved by the tester; implementation verified locally, not activated or delivered in a new TestFlight build yet**. The previous disposable endpoint is stopped. This is not general production availability or proof of Apple Calendar/Siri compatibility.
+Status: **existing-Family testing approved; TestFlight build 201 processed successfully, backend 0.11.29 deployed, CalDAV not activated**. A duration-parser safety fix must be deployed before activation. The previous disposable endpoint is stopped. This is not general production availability or proof of Apple Calendar/Siri compatibility.
 
 ## Intended experience
 
@@ -31,9 +31,10 @@ Record the device observations in [physical acceptance](caldav-device-acceptance
 
 ## Current verification and blocker
 
-- 447 API unit tests passed (one optional provider test skipped).
+- 449 API unit tests passed (one optional provider test skipped), including duration/endpoint-year bounds and ordinary DISPLAY-alarm preservation.
 - 38 PostgreSQL/Redis integration tests passed against disposable PostgreSQL 17 and Redis 8; migration deployment contract passed.
 - All 275 Swift core/live-contract tests passed with none skipped.
 - Helm contracts and the rendered NGINX/API Docker test passed, including opt-in DAV discovery, HTTPS boundary, PROPFIND, REPORT, PUT, GET and DELETE.
-- All three new UI regressions passed locally on iOS 26.5 after CoreSimulator recovered. CI exposed a lazy-Form-row test bug: the consent/revocation test waited for an offscreen password control before scrolling. The test now scrolls first and still asserts existence, tappability, hiding, and revocation; full required CI must pass on that fix.
-- Operator-approved SSH access now works. Production remains healthy on API 0.11.28 with 36 migrations; the latest scheduled backup service reported success. The exact tester identity still needs confirmation before configuring the cohort. No authentication weakening, production preview activation, or new TestFlight delivery has been performed.
+- All three new UI regressions passed locally on iOS 26.5 after CoreSimulator recovered. CI exposed a lazy-Form-row test bug: the consent/revocation test waited for an offscreen password control before scrolling. The test now scrolls first and still asserts existence, tappability, hiding, and revocation; all required PR CI passed and PR #222 merged. Main iOS CI also passed.
+- The exact verified parent was matched through the identity provider, and a singleton cohort Secret was prepared privately. Public health reports API 0.11.29. The normal TestFlight queue processed build 201 from merge `27316ca538665dd26a5e1c650a011d32db27496b` (successful delivery ledger; tester installation still needs confirmation).
+- A child-process probe found that oversized iCalendar durations could block endpoint normalization. The HTTP regression was red before the fix; durations are now bounded before that arithmetic, including DISPLAY alarm values. CalDAV remains disabled until the backend patch is deployed. The operator SSH approval expired overnight and must be renewed for activation; no authentication weakening or preview activation has occurred.
