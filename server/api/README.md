@@ -82,7 +82,8 @@ access is supported. Existing-Family testing requires the approved
 [in-app activation gates](../../docs/caldav-in-app-testing.md). Migration 037 adds revocable
 parent credential verifiers and encrypted calendar resource bindings; 038 adds
 all-day date bounds/anchor zones and connection zones; 039 guards all-day instants
-against incompatible older-image writes. This preview supports timed and all-day,
+against incompatible older-image writes; 040 removes guessable name/UID hashes
+and retains uniqueness under the Family mutation lock. This preview supports timed and all-day,
 non-recurring native Events; it is **not a complete/conformant CalDAV server**, and
 physical-iPhone/default-Siri interoperability is not verified.
 See [setup, HTTP routes, limitations and remaining release gates](../../docs/caldav-preview.md)

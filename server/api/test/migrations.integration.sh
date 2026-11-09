@@ -54,7 +54,7 @@ run_structured_migrations pre >/dev/null
 
 ledger=$(psql "$DATABASE_URL" -Atc \
   "SELECT version || '|' || name || '|' || app_version || '|' || length(checksum) FROM schema_migrations ORDER BY version")
-[[ $(wc -l <<<"$ledger" | tr -d ' ') == "39" ]]
+[[ $(wc -l <<<"$ledger" | tr -d ' ') == "40" ]]
 grep -q '^1|001_initial.sql|test-release|64$' <<<"$ledger"
 grep -q '^9|009_child_invitation_consent.sql|test-release|64$' <<<"$ledger"
 grep -q '^10|010_calendar_source_visibility.sql|test-release|64$' <<<"$ledger"
@@ -87,6 +87,7 @@ grep -q '^36|036_reminder_occurrence_notifications.sql|test-release|64$' <<<"$le
 grep -q '^37|037_calendar_connections.sql|test-release|64$' <<<"$ledger"
 grep -q '^38|038_all_day_events.sql|test-release|64$' <<<"$ledger"
 grep -q '^39|039_all_day_anchor_guard.sql|test-release|64$' <<<"$ledger"
+grep -q '^40|040_calendar_resource_private_identity.sql|test-release|64$' <<<"$ledger"
 
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO events (
@@ -112,7 +113,7 @@ then
 fi
 
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "39" ]]
+[[ $(psql "$DATABASE_URL" -Atc 'SELECT count(*) FROM schema_migrations') == "40" ]]
 
 # Upgrade the filename-only ledger created by releases before this runner.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -121,7 +122,7 @@ ALTER TABLE schema_migrations DROP COLUMN checksum;
 ALTER TABLE schema_migrations DROP COLUMN app_version;
 SQL
 run_migrations pre >/dev/null
-[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "39" ]]
+[[ $(psql "$DATABASE_URL" -Atc "SELECT count(*) FROM schema_migrations WHERE version IS NOT NULL AND checksum IS NOT NULL AND app_version = 'legacy-unrecorded'") == "40" ]]
 
 cp -R "$ROOT/migrations" "$tmp/checksum-migrations"
 printf '\n-- changed after deployment\n' >>"$tmp/checksum-migrations/pre/001_initial.sql"

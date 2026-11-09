@@ -137,6 +137,10 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       const raw = await inspection.query("SELECT * FROM calendar_resources WHERE family_id = $1", [account.familyID]);
       expect(raw.rows).toHaveLength(1);
       expect(raw.rows[0].details_ciphertext).toMatch(/^rr1\./);
+      // Client names/UIDs can contain guessable Family text: even unkeyed
+      // equality hashes would leak it to an offline dictionary attack.
+      expect(raw.rows[0]).not.toHaveProperty("name_hash");
+      expect(raw.rows[0]).not.toHaveProperty("uid_hash");
       expect(JSON.stringify(raw.rows)).not.toContain("Private calendar detail");
       expect(JSON.stringify(raw.rows)).not.toContain("private-uid");
       expect(JSON.stringify(raw.rows)).not.toContain("opaque-client-resource");
@@ -152,6 +156,14 @@ describe.skipIf(!adminURL)("PostgreSQL HTTP integration", () => {
       expect((await writer.inject({ method: "PUT", url, payload, headers: { ...headers, "if-match": stale } })).statusCode).toBe(412);
       const parallelReads = await Promise.all(Array.from({ length: 15 }, () => reader.inject({ url, headers })));
       expect(parallelReads.every((response) => response.statusCode === 200 && response.body.includes("Changed in Rallyroo"))).toBe(true);
+      // Uniqueness is enforced inside the shared Family mutation lock, even
+      // when separate processes race different names with the same UID.
+      const collisionPayload = payload.replace("private-uid@example.test", "collision-probe@example.test");
+      const collisions = await Promise.all([writer, reader].map((app, index) => app.inject({ method: "PUT",
+        url: `/dav/calendars/${connection.id}/family/collision-${index}.ics`, payload: collisionPayload,
+        headers: { ...headers, "if-none-match": "*" } })));
+      expect(collisions.map((response) => response.statusCode).sort()).toEqual([201, 403]);
+      expect((await first.eventsForFamily(account.familyID)).filter((item) => item.title === "Private calendar detail")).toHaveLength(1);
       await first.deleteAccount(account.identitySubject);
       expect((await reader.inject({ url, headers })).statusCode).toBe(401);
       expect((await inspection.query("SELECT 1 FROM calendar_connections WHERE id = $1", [connection.id])).rows).toHaveLength(0);

@@ -11,11 +11,13 @@ The app checks authenticated preview eligibility before showing the entry. Disab
 ## Backend activation gates
 
 1. Merge reviewed code only after required API, migration, security and iOS checks pass. Let the normal release/Flux and serialized TestFlight queues deliver it; do not run a second uploader or assume a successful upload means the build is available.
-2. Verify the current production destination and live image/chart, not the retired project. Confirm migrations through `039_all_day_anchor_guard.sql`, healthy workloads, and a recent recoverable backup before activating the preview.
+2. Verify the current production destination and live image/chart, not the retired project. Confirm migrations through `040_calendar_resource_private_identity.sql`, healthy workloads, and a recent recoverable backup before activating the preview.
 3. Identify the tester's **exact current parent identity subject**. Do not infer identity from a display name or enable every parent. Keep the JSON array in a separate Kubernetes Secret with key `identity-subjects`; never put actual identity values in Git, command arguments, screenshots, or CI logs.
 4. Explicitly update the live HelmRelease's `calendarPreview` values: `enabled: true`, `publicOrigin: https://api.rallyroo.dev`, and `identitySubjectsSecret: <the dedicated Secret name>`. Defaults remain disabled. The chart supplies both environment fields to the API and enables a separate DAV/discovery NGINX location.
 5. The public listener must remain reachable only through the trusted Cloudflare tunnel. The DAV location rejects non-HTTPS forwarding before authentication, preserves the edge's verified protocol, and suppresses href-containing proxy logs. Verify the real public edge rejects HTTP and overwrites forged forwarding headers; local header tests alone cannot establish that trust boundary.
 6. Verify unauthenticated DAV challenges, authenticated eligibility for the selected account, denial for a non-selected parent, and app setup visibility before asking the tester to change Default Calendar. Do not request the tester's login session token/password in chat.
+
+Client-selected resource names and UIDs are encrypted without guessable equality hashes; uniqueness is checked against the decrypted snapshot under the shared Family mutation lock, including cross-instance concurrent creates. Only opaque Event identity is indexed.
 
 Malformed, missing, or wildcard identity configuration fails closed. An explicit empty array admits nobody. A cohort change requires an API rollout because the list is snapshotted at startup; urgent individual revocation through the app takes effect in shared storage immediately. Disabling the chart flag removes the public DAV location and API preview configuration without deleting native Events.
 

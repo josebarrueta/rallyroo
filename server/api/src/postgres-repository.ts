@@ -1721,11 +1721,10 @@ export class PostgresRallyrooRepository implements RallyrooRepository, CalendarS
           familyID, `calendar_resources/${resource.eventID}/details`, JSON.stringify(resource),
         );
         await client.query(
-          `INSERT INTO calendar_resources (family_id, event_id, name_hash, uid_hash, details_ciphertext)
-           VALUES ($1,$2,$3,$4,$5)
+          `INSERT INTO calendar_resources (family_id, event_id, details_ciphertext)
+           VALUES ($1,$2,$3)
            ON CONFLICT (family_id, event_id) DO UPDATE SET details_ciphertext = EXCLUDED.details_ciphertext`,
-          [familyID, resource.eventID, createHash("sha256").update(resource.name).digest("hex"),
-            createHash("sha256").update(resource.uid).digest("hex"), details],
+          [familyID, resource.eventID, details],
         );
       }
       if (plan.occurrenceOverride) {
