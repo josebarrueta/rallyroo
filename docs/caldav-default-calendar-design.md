@@ -1,6 +1,6 @@
 # Rallyroo as the iPhone default calendar through CalDAV
 
-Status: **experimental non-recurring timed/all-day preview implemented locally; account-restricted existing-Family in-app test requested, no production activation or new TestFlight delivery yet**. The complete design below remains the target, not a claim that all release gates have passed.
+Status: **experimental non-recurring timed/all-day preview implemented locally; account-restricted existing-Family in-app test requested; build 201 processed, activation still gated on backend safety hardening**. The complete design below remains the target, not a claim that all release gates have passed.
 
 ## Implemented preview
 

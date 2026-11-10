@@ -55,9 +55,17 @@ export function parseCalendarEvent(data: string, timeZone = "UTC"): CalendarEven
     for (const alarm of alarms) {
       const repeat = Number(alarm.getFirstPropertyValue("repeat") ?? 0);
       if (alarm.getAllProperties("action").length !== 1 || String(alarm.getFirstPropertyValue("action")).toUpperCase() !== "DISPLAY"
-        || alarm.getAllProperties("trigger").length !== 1 || !Number.isInteger(repeat) || repeat < 0 || repeat > 10) {
+        || alarm.getAllProperties("trigger").length !== 1 || alarm.getAllProperties("duration").length > 1
+        || !Number.isInteger(repeat) || repeat < 0 || repeat > 10) {
         throw new CalendarError(403, "supported-calendar-data");
       }
+      const trigger = alarm.getFirstProperty("trigger")!;
+      if (trigger.type === "duration") validateDuration(alarm, "trigger", false);
+      else {
+        validateDateTime(alarm, "trigger");
+        if (!String(trigger.toJSON()[3]).endsWith("Z")) throw new Error();
+      }
+      if (alarm.hasProperty("duration")) validateDuration(alarm, "duration");
     }
     for (const name of ["uid", "dtstart", "dtstamp", "summary"]) {
       if (component.getAllProperties(name).length !== 1) throw new Error();
@@ -77,9 +85,14 @@ export function parseCalendarEvent(data: string, timeZone = "UTC"): CalendarEven
           || !dateOnlyIsValid(String(property.toJSON()[3]))) throw new Error();
       } else validateDateTime(component, name);
     }
+    // ICAL normalizes duration-derived endpoints using calendar arithmetic.
+    // Bound numeric duration values BEFORE reading endDate: enormous values
+    // otherwise run an effectively unbounded normalization loop.
+    if (component.hasProperty("duration")) validateDuration(component, "duration");
     const event = new ICAL.Event(component);
     const start = event.startDate;
     const end = event.endDate;
+    if (end.year < 1 || end.year > 9999) throw new Error();
     let allDay: EventAllDay | null = null;
     let startTime: string;
     let endTime: string;
@@ -105,6 +118,17 @@ export function parseCalendarEvent(data: string, timeZone = "UTC"): CalendarEven
     };
   } catch (error) {
     if (error instanceof CalendarError) throw error;
+    throw new CalendarError(403, "valid-calendar-data");
+  }
+}
+
+function validateDuration(component: ICAL.Component, name: string, positive = true): void {
+  const property = component.getFirstProperty(name);
+  if (property?.type !== "duration") throw new CalendarError(403, "supported-calendar-data");
+  const seconds = (property.getFirstValue() as ICAL.Duration).toSeconds();
+  // A deliberately bounded interoperability profile (at most 3660 nominal days).
+  // Alarm triggers may be signed/zero; Event and repeated-alarm durations must be positive.
+  if (!Number.isSafeInteger(seconds) || Math.abs(seconds) > 3660 * 86400 || (positive && seconds <= 0)) {
     throw new CalendarError(403, "valid-calendar-data");
   }
 }

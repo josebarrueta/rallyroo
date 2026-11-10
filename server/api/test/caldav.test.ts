@@ -117,6 +117,52 @@ describe("CalDAV writes", () => {
     } finally { await app.close(); }
   });
 
+  it("rejects oversized durations before calendar endpoint normalization can block the server", async () => {
+    const { app } = fixture();
+    try {
+      const c = await connection(app);
+      const url = `/dav/calendars/${c.id}/family/duration-bound.ics`;
+      const headers = { ...basic(c.username, c.password), "content-type": "text/calendar", "if-none-match": "*" };
+      for (const duration of ["P999999999999999999999999999999999999999D", "P99999999999999W", "PT99999999999999999999999999999H", "-P999999999999999999999999999D", "P3661D"]) {
+        const payload = calendarData("Bounded duration").replace("DTEND:20270104T160000Z", `DURATION:${duration}`);
+        expect((await app.inject({ method: "PUT", url, headers, payload })).statusCode).toBe(403);
+      }
+      const overflow = calendarData().replace("DTSTART:20270104T150000Z", "DTSTART:99991231T150000Z")
+        .replace("DTEND:20270104T160000Z", "DURATION:P1D");
+      expect((await app.inject({ method: "PUT", url, headers, payload: overflow })).statusCode).toBe(403);
+      expect((await app.inject({ url: "/v1/events", headers: bearer() })).json()).toEqual([]);
+      const valid = calendarData("Bounded duration").replace("DTEND:20270104T160000Z", "DURATION:P3660D");
+      expect((await app.inject({ method: "PUT", url, headers, payload: valid })).statusCode).toBe(201);
+    } finally { await app.close(); }
+  });
+
+  it("bounds display-alarm durations while retaining ordinary relative and absolute alarms", async () => {
+    const { app } = fixture();
+    try {
+      const c = await connection(app);
+      const base = `/dav/calendars/${c.id}/family/`;
+      const headers = { ...basic(c.username, c.password), "content-type": "text/calendar", "if-none-match": "*" };
+      const withAlarm = (properties: string[], uid = "alarm@example.test") => calendarData("Alarm preview", uid)
+        .replace("END:VEVENT", ["BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Preview alert", ...properties, "END:VALARM", "END:VEVENT"].join("\r\n"));
+      for (const properties of [
+        ["TRIGGER:-P999999999999999999999999999D"],
+        ["TRIGGER:-PT15M", "REPEAT:1", "DURATION:P3661D"],
+        ["TRIGGER:-PT15M", "REPEAT:1", "DURATION:-PT1M"],
+        ["TRIGGER;VALUE=DATE:20270104"],
+        ["TRIGGER;VALUE=DATE-TIME:20270104T140000"],
+      ]) expect((await app.inject({ method: "PUT", url: base + "invalid-alarm.ics", headers, payload: withAlarm(properties) })).statusCode).toBe(403);
+      for (const [index, properties] of [
+        ["TRIGGER:-PT15M"], ["TRIGGER:PT0S"], ["TRIGGER;VALUE=DATE-TIME:20270104T140000Z"],
+        ["TRIGGER:-PT15M", "REPEAT:2", "DURATION:PT5M"],
+      ].entries()) {
+        const payload = withAlarm(properties, `alarm-${index}@example.test`);
+        const url = `${base}alarm-${index}.ics`;
+        expect((await app.inject({ method: "PUT", url, headers, payload })).statusCode).toBe(201);
+        expect((await app.inject({ url, headers: basic(c.username, c.password) })).body).toBe(payload);
+      }
+    } finally { await app.close(); }
+  });
+
   it("round-trips date-only events across DST and preserves their anchor on another parent's calendar connection", async () => {
     const { app } = fixture();
     try {
