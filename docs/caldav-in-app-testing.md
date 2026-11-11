@@ -23,6 +23,8 @@ Malformed, missing, or wildcard identity configuration fails closed. An explicit
 
 ## Delivery and device acceptance
 
+The [guided setup usability revision](calendar-account-setup-ux.md) adds one-tap copy controls and a bounded memory-only handoff that survives switching to Settings. It is implemented locally but not yet delivered; build 201 still uses the earlier form described below.
+
 The existing internal TestFlight pipeline builds the production-configured app from main after CI. A new build is required; build 191 does not include these screens. Account restriction is a backend/UI capability gate, **not a claim that the entire binary is distributed to only one internal tester**. Keep the existing internal distribution policy unless a separately approved distribution change is required.
 
 Once the processed build is actually available, the tester signs in normally and opens the in-app setup. Paste the one-time password into the CalDAV form first; return to Rallyroo for the non-secret server/username after the password view clears on background. Keep SSL enabled. Record the previous Default Calendar, test with dummy titles, inspect the actual destination, and restore the previous default on failure. Do not count an App Shortcut success as generic Siri routing.

@@ -1190,21 +1190,37 @@ final class FamilyAppUITests: XCTestCase {
         for _ in 0..<8 where !setup.isHittable { app.swipeUp() }
         XCTAssertTrue(setup.isHittable)
         setup.tap()
+        let introSnapshot = XCTAttachment(screenshot: app.screenshot())
+        introSnapshot.name = "Calendar setup — introduction (synthetic)"
+        introSnapshot.lifetime = .keepAlways
+        add(introSnapshot)
         let create = app.buttons["create-calendar-connection"]
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         for _ in 0..<8 where !create.isHittable { app.swipeUp() }
         create.tap()
         XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
         app.alerts["Allow calendar access?"].buttons["Create password"].tap()
-        let hide = app.buttons["Hide password"]
-        // Form rows below the viewport are lazily materialized. Scroll before
-        // waiting for existence, then still require the control to be tappable.
-        for _ in 0..<8 where !hide.isHittable { app.swipeUp() }
-        XCTAssertTrue(hide.waitForExistence(timeout: 5))
-        XCTAssertTrue(hide.isHittable)
-        hide.tap()
-        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
-        XCTAssertFalse(app.staticTexts["synthetic-calendar-password"].exists)
+        let password = app.staticTexts["calendar-value-password"]
+        XCTAssertTrue(password.waitForExistence(timeout: 5))
+        XCTAssertFalse(password.label.contains("synthetic-calendar-password"))
+        XCTAssertEqual(app.staticTexts["calendar-value-server"].label, "calendar.example")
+        for field in ["server", "username", "password"] {
+            let copy = app.buttons["calendar-copy-\(field)"]
+            for _ in 0..<10 where !copy.isHittable { app.swipeUp() }
+            XCTAssertTrue(copy.isHittable)
+            copy.tap()
+            XCTAssertTrue(app.staticTexts["calendar-copy-confirmation"].waitForExistence(timeout: 3))
+        }
+        let accountSnapshot = XCTAttachment(screenshot: app.screenshot())
+        accountSnapshot.name = "Calendar setup — copy fields (masked synthetic password)"
+        accountSnapshot.lifetime = .keepAlways
+        add(accountSnapshot)
+        let clear = app.buttons["calendar-clear-password"]
+        for _ in 0..<10 where !clear.isHittable { app.swipeUp() }
+        clear.tap()
+        XCTAssertTrue(clear.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["calendar-copy-password"].isEnabled)
+        XCTAssertFalse(app.buttons["calendar-reveal-password"].exists)
         let revoke = app.buttons["Revoke access"]
         for _ in 0..<8 where !revoke.isHittable { app.swipeUp() }
         revoke.tap()
@@ -1212,6 +1228,72 @@ final class FamilyAppUITests: XCTestCase {
         app.alerts["Revoke calendar access?"].buttons["Revoke"].tap()
         XCTAssertTrue(create.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Revoke access"].waitForNonExistence(timeout: 5))
+    }
+
+    func testCalendarSetupSurvivesAppSwitchingButMasksAndClearsThePasswordOnNavigation() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALDAV"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let setup = app.buttons["Use Rallyroo in Apple Calendar"]
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        for _ in 0..<10 where !setup.isHittable { app.swipeUp() }
+        setup.tap()
+        app.buttons["create-calendar-connection"].tap()
+        XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
+        app.alerts["Allow calendar access?"].buttons["Create password"].tap()
+        let reveal = app.buttons["calendar-reveal-password"]
+        for _ in 0..<10 where !reveal.isHittable { app.swipeUp() }
+        XCTAssertTrue(reveal.isHittable)
+        reveal.tap()
+        XCTAssertEqual(app.staticTexts["calendar-value-password"].label, "synthetic-calendar-password")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.navigationBars["Apple Calendar"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["calendar-value-password"].label.contains("synthetic-calendar-password"))
+        XCTAssertTrue(app.buttons["calendar-copy-password"].isEnabled)
+        reveal.tap()
+        XCTAssertEqual(app.staticTexts["calendar-value-password"].label, "synthetic-calendar-password")
+        app.navigationBars["Apple Calendar"].buttons["Settings"].tap()
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        for _ in 0..<10 where !setup.isHittable { app.swipeUp() }
+        setup.tap()
+        XCTAssertTrue(app.staticTexts["calendar-value-username"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["calendar-copy-password"].isEnabled)
+        XCTAssertFalse(app.buttons["calendar-reveal-password"].exists)
+    }
+
+    func testCalendarGuidedSetupCopyControlsAtLargestAccessibilityText() {
+        let app = localApp()
+        app.launchEnvironment["RALLYROO_UI_TEST_CALDAV"] = "1"
+        app.launchEnvironment["RALLYROO_UI_TEST_CALDAV_DARK"] = "1"
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Rallyroo"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Settings"].tap()
+        let setup = app.buttons["Use Rallyroo in Apple Calendar"]
+        for _ in 0..<20 where !setup.isHittable { app.swipeUp() }
+        XCTAssertTrue(setup.waitForExistence(timeout: 5))
+        setup.tap()
+        let create = app.buttons["create-calendar-connection"]
+        for _ in 0..<20 where !create.isHittable { app.swipeUp() }
+        XCTAssertTrue(create.isHittable)
+        create.tap()
+        XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
+        app.alerts["Allow calendar access?"].buttons["Create password"].tap()
+        for field in ["server", "username", "password"] {
+            let copy = app.buttons["calendar-copy-\(field)"]
+            for _ in 0..<20 where !copy.isHittable { app.swipeUp() }
+            XCTAssertTrue(copy.isHittable)
+            XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+            copy.tap()
+        }
+        XCTAssertFalse(app.staticTexts["calendar-value-password"].label.contains("synthetic-calendar-password"))
+        let largeSnapshot = XCTAttachment(screenshot: app.screenshot())
+        largeSnapshot.name = "Calendar setup — largest text dark appearance (masked synthetic password)"
+        largeSnapshot.lifetime = .keepAlways
+        add(largeSnapshot)
     }
 
     func testCalendarProviderInstructionsAtLargestAccessibilityText() {
