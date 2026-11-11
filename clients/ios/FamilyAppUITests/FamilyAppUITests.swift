@@ -1244,7 +1244,13 @@ final class FamilyAppUITests: XCTestCase {
         XCTAssertTrue(app.alerts["Allow calendar access?"].waitForExistence(timeout: 3))
         app.alerts["Allow calendar access?"].buttons["Create password"].tap()
         let reveal = app.buttons["calendar-reveal-password"]
-        for _ in 0..<10 where !reveal.isHittable { app.swipeUp() }
+        XCTAssertTrue(reveal.waitForExistence(timeout: 5))
+        // Exercise finding the control even after the user has scrolled past it.
+        for _ in 0..<4 { app.swipeUp() }
+        for _ in 0..<10 where !reveal.isHittable {
+            if reveal.frame.midY < app.frame.midY { app.swipeDown() }
+            else { app.swipeUp() }
+        }
         XCTAssertTrue(reveal.isHittable)
         reveal.tap()
         XCTAssertEqual(app.staticTexts["calendar-value-password"].label, "synthetic-calendar-password")
