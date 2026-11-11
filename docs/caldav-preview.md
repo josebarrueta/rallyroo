@@ -1,6 +1,6 @@
 # Calendar account interoperability preview
 
-**Status: experimental, disabled by default, no production activation yet; build 201 processed through the normal TestFlight queue, with backend duration hardening still required before activation. The temporary endpoint is stopped; the tester chose [account-restricted in-app testing with the existing Family](caldav-in-app-testing.md). This is not the completed default-calendar feature.**
+**Status: experimental, disabled by default; activated for exactly one verified parent on the existing-Family backend 0.11.30, with TestFlight build 201 processed. The temporary endpoint is stopped; see [account-restricted in-app testing](caldav-in-app-testing.md). Physical-iPhone/default-Siri acceptance remains pending. This is not the completed default-calendar feature.**
 
 The implementation is an incremental preview toward [the CalDAV design](caldav-default-calendar-design.md). It is not a general-purpose/conformant CalDAV server and intentionally does not advertise the `calendar-access` DAV compliance token. A physical Apple client may require additional protocol behavior before accepting the account. Do not enable this broadly or change a phone's default silently. Existing-Family testing requires explicit tester consent and the restricted activation gates in the in-app testing guide.
 
