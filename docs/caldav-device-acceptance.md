@@ -1,6 +1,6 @@
 # Physical-iPhone calendar acceptance
 
-Status: **previous temporary endpoint stopped; physical-device checks not yet performed**. The tester chose [in-app testing against the existing Family](caldav-in-app-testing.md). Build 201 has processed through TestFlight; backend activation and tester installation/device observations are still pending.
+Status: **previous temporary endpoint stopped; physical-device checks not yet performed**. The tester chose [in-app testing against the existing Family](caldav-in-app-testing.md). Build 201 has processed through TestFlight and backend 0.11.30 is activated for one verified parent. Tester installation and physical-device observations are still pending.
 
 ## Previous disposable environment (historical)
 
