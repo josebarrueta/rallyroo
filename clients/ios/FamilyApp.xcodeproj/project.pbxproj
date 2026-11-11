@@ -19,6 +19,7 @@
 		A10000000000000000000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* SettingsView.swift */; };
 		A1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* Assets.xcassets */; };
 		A1000000000000000000000B /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* AppTheme.swift */; };
+		619D1556EB9A869C2A557E39 /* CalendarAccountSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC1860E5961050BCE8B5F26 /* CalendarAccountSetupView.swift */; };
 		A1000000000000000000000C /* SessionGateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* SessionGateView.swift */; };
 		A1000000000000000000000D /* PushNotificationDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* PushNotificationDelegate.swift */; };
 		A1000000000000000000000E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001D /* PrivacyInfo.xcprivacy */; };
@@ -81,6 +82,7 @@
 		A10000000000000000000018 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1000000000000000000001A /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		3CC1860E5961050BCE8B5F26 /* CalendarAccountSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAccountSetupView.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* SessionGateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionGateView.swift; sourceTree = "<group>"; };
 		A1000000000000000000001C /* PushNotificationDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationDelegate.swift; sourceTree = "<group>"; };
 		A1000000000000000000001D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				A10000000000000000000018 /* SettingsView.swift */,
 				A10000000000000000000019 /* Assets.xcassets */,
 				A1000000000000000000001A /* AppTheme.swift */,
+				3CC1860E5961050BCE8B5F26 /* CalendarAccountSetupView.swift */,
 				A1000000000000000000001B /* SessionGateView.swift */,
 				A1000000000000000000001C /* PushNotificationDelegate.swift */,
 				A1000000000000000000001D /* PrivacyInfo.xcprivacy */,
@@ -353,6 +356,7 @@
 				A10000000000000000000008 /* NotificationsView.swift in Sources */,
 				A10000000000000000000009 /* SettingsView.swift in Sources */,
 				A1000000000000000000000B /* AppTheme.swift in Sources */,
+				619D1556EB9A869C2A557E39 /* CalendarAccountSetupView.swift in Sources */,
 				A1000000000000000000000C /* SessionGateView.swift in Sources */,
 				A1000000000000000000000D /* PushNotificationDelegate.swift in Sources */,
 				A1000000000000000000000F /* RemindersView.swift in Sources */,
