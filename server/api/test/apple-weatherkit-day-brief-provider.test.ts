@@ -47,6 +47,71 @@ function weatherResponse() {
 }
 
 describe("AppleWeatherKitDayBriefProvider", () => {
+  it("reuses Home coordinates across Members and forecast days, then refreshes after 24 hours", async () => {
+    let placesCalls = 0;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      if (new URL(input.toString()).hostname === "places.googleapis.com") {
+        placesCalls += 1;
+        return Response.json({ location: { latitude: 37.3, longitude: -122 } });
+      }
+      return Response.json(weatherResponse());
+    });
+    const config = await configuration(fetch, [place({ waypoint: { placeID: "home-id" } })]);
+    const provider = new AppleWeatherKitDayBriefProvider(config);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-05T00:00:00Z"));
+    try {
+      await provider.forecast("family", "parent", "2026-10-05", "UTC");
+      // A new provider shares the cache, as API processes do with Redis.
+      await new AppleWeatherKitDayBriefProvider(config)
+        .forecast("family", "other-parent", "2026-10-05", "UTC");
+      await provider.forecast("family", "parent", "2026-10-06", "UTC");
+      expect(placesCalls).toBe(1);
+      clock.mockReturnValue(Date.parse("2026-10-06T00:00:00Z"));
+      await provider.forecast("family", "parent", "2026-10-06", "UTC");
+      expect(placesCalls).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    [{ placeID: "home-id" }, { placeID: "new-home-id" }],
+    [{ address: "123 Main Street" }, { address: "456 Oak Street" }],
+  ])("invalidates cached coordinates when Home changes from %j to %j", async (original, changed) => {
+    let placesCalls = 0;
+    const fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(input.toString());
+      if (url.hostname === "places.googleapis.com") {
+        placesCalls += 1;
+        const location = { latitude: 37.3, longitude: -122 };
+        return Response.json(url.pathname.endsWith(":searchText")
+          ? { places: [{ location }] } : { location });
+      }
+      return Response.json(weatherResponse());
+    });
+    const home = place({ waypoint: original });
+    const provider = new AppleWeatherKitDayBriefProvider(await configuration(fetch, [home]));
+    await provider.forecast("family", "parent", "2026-10-05", "UTC");
+    await provider.forecast("family", "parent", "2026-10-05", "UTC");
+    expect(placesCalls).toBe(1);
+    home.waypoint = changed;
+    await provider.forecast("family", "parent", "2026-10-05", "UTC");
+    expect(placesCalls).toBe(2);
+  });
+
+  it("still resolves Home and returns weather when the optional cache is unavailable", async () => {
+    const fetch = vi.fn(async (input: string | URL | Request) =>
+      Response.json(new URL(input.toString()).hostname === "places.googleapis.com"
+        ? { location: { latitude: 37.3, longitude: -122 } } : weatherResponse()));
+    const config = await configuration(fetch, [place({ waypoint: { placeID: "home-id" } })]);
+    vi.spyOn(config.cache, "get").mockRejectedValue(new Error("cache unavailable"));
+    vi.spyOn(config.cache, "set").mockRejectedValue(new Error("cache unavailable"));
+    const provider = new AppleWeatherKitDayBriefProvider(config);
+    expect(await provider.forecast("family", "parent", "2026-10-05", "UTC"))
+      .toMatchObject({ conditionCode: "MostlyClear" });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("returns a bounded forecast for an accessible saved Home", async () => {
     const fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input.toString());

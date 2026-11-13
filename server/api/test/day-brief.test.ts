@@ -452,6 +452,63 @@ describe("DayBriefModule.generate", () => {
 });
 
 describe("DayBriefModule.dispatchDue", () => {
+  it("checks only schedule facts before delivery and fetches weather once when an early brief is due", async () => {
+    let weatherCalls = 0;
+    let reminderReads = 0;
+    let memberReads = 0;
+    let saved: DayBriefRecord | null = null;
+    const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
+    const store = repository({
+      familyEvents: [event({
+        id: "early", title: "Early school drop-off", driverMemberID: "parent",
+        startTime: "2026-10-05T06:00:00.000Z", endTime: "2026-10-05T07:00:00.000Z",
+      })],
+      importedEvents: [],
+      preferences: [{
+        familyID: "family", memberID: "parent", enabled: true, timeZone: "UTC",
+        weekdayTime: "07:00", weekendHolidayTime: "08:30",
+        earlyEventLeadMinutes: 60, holidayRegion: "US",
+      }],
+      async dayBrief() { return saved; },
+      async saveDayBriefIfAbsent(record) { saved = record; return true; },
+    });
+    const module = new DayBriefModule({
+      ...store,
+      async remindersForFamily(familyID) {
+        reminderReads += 1;
+        return store.remindersForFamily(familyID);
+      },
+      async membersForFamily(familyID) {
+        memberReads += 1;
+        return store.membersForFamily(familyID);
+      },
+    }, notifications, undefined, undefined, {
+      async forecast() {
+        weatherCalls += 1;
+        return {
+          source: "apple_weather", locationLabel: "Home", conditionCode: "Clear",
+          lowTemperatureCelsius: 10, highTemperatureCelsius: 20, precipitationChance: 0,
+          attribution: { serviceName: "Weather", legalPageURL: "https://weather.example/legal" },
+        };
+      },
+    });
+
+    for (const instant of ["00:00:00", "04:59:00", "04:59:30"]) {
+      expect(await module.dispatchDue(new Date(`2026-10-05T${instant}Z`)))
+        .toEqual({ evaluated: 0, recorded: 0, failed: 0 });
+    }
+    expect({ weatherCalls, reminderReads, memberReads })
+      .toEqual({ weatherCalls: 0, reminderReads: 0, memberReads: 0 });
+
+    expect(await module.dispatchDue(new Date("2026-10-05T05:00:00Z")))
+      .toEqual({ evaluated: 1, recorded: 1, failed: 0 });
+    expect(saved).toMatchObject({ facts: { weather: { conditionCode: "Clear" } } });
+    await module.dispatchDue(new Date("2026-10-05T05:00:30Z"));
+    expect({ weatherCalls, reminderReads, memberReads })
+      .toEqual({ weatherCalls: 1, reminderReads: 1, memberReads: 1 });
+    expect(await notifications.list(account)).toHaveLength(1);
+  });
+
   it("records a compact notification preview without repeating Event titles", async () => {
     const notifications = new NotificationCenterModule(new InMemoryNotificationCenterRepository());
     const weather: DayBriefWeatherProvider = {

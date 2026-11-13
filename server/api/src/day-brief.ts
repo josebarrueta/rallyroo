@@ -148,37 +148,20 @@ export class DayBriefModule {
   ) {}
 
   async generate(account: Account, localDate: string, timeZone: string): Promise<DayBrief> {
-    return this.buildBrief(account, localDate, timeZone, true);
+    return this.buildBrief(account, localDate, timeZone);
   }
 
   private async buildBrief(
     account: Account,
     localDate: string,
     timeZone: string,
-    allowNarration: boolean,
+    scheduledEvents?: DayBriefEventFact[],
   ): Promise<DayBrief> {
-    const [familyEvents, importedEvents, familyReminders, occurrenceStates, members] = await Promise.all([
-      this.repository.eventsForFamily(account.familyID),
-      this.repository.importedEventsForMember(account.familyID, account.memberID),
+    const [events, familyReminders, members] = await Promise.all([
+      scheduledEvents ?? this.eventsForDay(account, localDate, timeZone),
       this.repository.remindersForFamily(account.familyID),
-      this.repository.occurrenceStatesForFamily(account.familyID),
       this.repository.membersForFamily(account.familyID),
     ]);
-
-    const events = [
-      ...familyEvents.flatMap((event): DayBriefEventFact[] => {
-        const roles: DayBriefEventRole[] = [];
-        if (event.driverMemberID === account.memberID) roles.push("driver");
-        if (event.participantIDs.includes(account.memberID)) roles.push("participant");
-        if (roles.length === 0) return [];
-        return eventFactsForDay(event, roles, localDate, timeZone)
-          .map((fact) => stableOccurrenceFact(event, fact, occurrenceStates))
-          .filter((fact) => occurrenceIsScheduled(event, fact.scheduledAt, occurrenceStates));
-      }),
-      ...importedEvents
-        .filter((event) => localDateFor(event.startTime, timeZone) === localDate)
-        .map((event) => eventFact(event, ["personal_calendar"], new Date(event.startTime))),
-    ].sort((left, right) => left.startTime.localeCompare(right.startTime));
 
     const reminders = familyReminders
       .filter((reminder) => reminder.status === "open"
@@ -214,7 +197,33 @@ export class DayBriefModule {
       ...(weather ? { weather } : {}),
     };
     const brief = { localDate, timeZone, facts, title, summary, body };
-    return allowNarration ? this.narrate(brief, firstName) : brief;
+    return this.narrate(brief, firstName);
+  }
+
+  private async eventsForDay(
+    account: Account,
+    localDate: string,
+    timeZone: string,
+  ): Promise<DayBriefEventFact[]> {
+    const [familyEvents, importedEvents, occurrenceStates] = await Promise.all([
+      this.repository.eventsForFamily(account.familyID),
+      this.repository.importedEventsForMember(account.familyID, account.memberID),
+      this.repository.occurrenceStatesForFamily(account.familyID),
+    ]);
+    return [
+      ...familyEvents.flatMap((event): DayBriefEventFact[] => {
+        const roles: DayBriefEventRole[] = [];
+        if (event.driverMemberID === account.memberID) roles.push("driver");
+        if (event.participantIDs.includes(account.memberID)) roles.push("participant");
+        if (roles.length === 0) return [];
+        return eventFactsForDay(event, roles, localDate, timeZone)
+          .map((fact) => stableOccurrenceFact(event, fact, occurrenceStates))
+          .filter((fact) => occurrenceIsScheduled(event, fact.scheduledAt, occurrenceStates));
+      }),
+      ...importedEvents
+        .filter((event) => localDateFor(event.startTime, timeZone) === localDate)
+        .map((event) => eventFact(event, ["personal_calendar"], new Date(event.startTime))),
+    ].sort((left, right) => left.startTime.localeCompare(right.startTime));
   }
 
   async dispatchDue(now = new Date(), limit = 100): Promise<DayBriefDispatchResult> {
@@ -255,10 +264,11 @@ export class DayBriefModule {
         const existing = await this.repository.dayBrief(
           preference.familyID, preference.memberID, localDate,
         );
-        const preliminaryBrief = existing ?? await this.buildBrief(
-          account, localDate, preference.timeZone, false,
+        // Scheduling needs only commitments, not weather, Reminders or narration.
+        const scheduledEvents = existing?.facts.events ?? await this.eventsForDay(
+          account, localDate, preference.timeZone,
         );
-        const firstEvent = preliminaryBrief.facts.events[0];
+        const firstEvent = scheduledEvents[0];
         const firstEventMinute = firstEvent
           ? minuteForInstant(firstEvent.startTime, preference.timeZone)
           : Number.POSITIVE_INFINITY;
@@ -273,7 +283,7 @@ export class DayBriefModule {
           // verified earlier leave time when routing becomes unavailable.
           try {
             const currentLeave = await this.travelTiming.earliestVerifiedLeaveTime(
-              preference.familyID, preference.memberID, preliminaryBrief.facts.events, now,
+              preference.familyID, preference.memberID, scheduledEvents, now,
             );
             if (currentLeave && Number.isFinite(currentLeave.getTime())
               && (!verifiedLeave || currentLeave < verifiedLeave)) verifiedLeave = currentLeave;
@@ -299,11 +309,9 @@ export class DayBriefModule {
         if (currentMinute < triggerMinute
           || currentMinute > Math.min(triggerMinute + 30, firstActionableMinute - 1)) continue;
         result.evaluated += 1;
-        let brief: DayBrief = existing ?? (this.narrator
-          ? await this.narrate(preliminaryBrief, await this.firstName(
-            preference.familyID, preference.memberID,
-          ))
-          : preliminaryBrief);
+        let brief: DayBrief = existing ?? await this.buildBrief(
+          account, localDate, preference.timeZone, scheduledEvents,
+        );
         if (!existing) {
           const inserted = await this.repository.saveDayBriefIfAbsent({
             ...brief,
@@ -334,11 +342,6 @@ export class DayBriefModule {
       }
     }
     return result;
-  }
-
-  private async firstName(familyID: string, memberID: string): Promise<string> {
-    const members = await this.repository.membersForFamily(familyID);
-    return firstNameFrom(members.find((member) => member.id === memberID)?.name);
   }
 
   private async narrate(brief: DayBrief, firstName: string): Promise<DayBrief> {
