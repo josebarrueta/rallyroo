@@ -66,7 +66,12 @@ credentials, tokens, or SDKs to the iOS app, and never commit `.env`.
 
 Verified Stytch identities are cached for 60 seconds and evicted on sign-out.
 Normalized Google Places searches are cached for 30 minutes using hashed keys.
+Day Brief Home coordinate lookups are cached for 24 hours using hashed place-ID
+or address keys; changing Home uses a different key. Saved coordinates bypass
+Places entirely. Scheduling checks read Event facts without fetching weather;
+weather is fetched only when generating a brief, with forecasts cached for six hours.
 Redis is used when `REDIS_URL` is set; otherwise a process-local cache is used.
+Cache failures fall back to the provider without preventing brief generation.
 
 US address autocomplete uses Google Places when `GOOGLE_PLACES_API_KEY` is set.
 Enable **Places API (New)** in Google Cloud and restrict the key to that API. If the

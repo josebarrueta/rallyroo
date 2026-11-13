@@ -133,11 +133,36 @@ export class AppleWeatherKitDayBriefProvider implements DayBriefWeatherProvider 
   private async coordinate(waypoint: TravelWaypoint): Promise<z.infer<typeof coordinateSchema> | null> {
     if (waypoint.coordinates) return coordinateSchema.parse(waypoint.coordinates);
     if (!this.configuration.googlePlacesAPIKey) return null;
+    const identity = waypoint.placeID
+      ? `place:${waypoint.placeID}`
+      : waypoint.address ? `address:${waypoint.address.trim()}` : null;
+    if (!identity) return null;
+    // Keep provider coordinates temporary; a changed Home uses a different key.
+    const cacheKey = `day-brief-home-coordinate:v1:${createHash("sha256")
+      .update(identity).digest("hex")}`;
+    try {
+      const cached = coordinateSchema.safeParse(await this.configuration.cache.get(cacheKey));
+      if (cached.success) return cached.data;
+    } catch { /* Coordinate resolution remains available without the optional cache. */ }
+
+    const coordinate = await this.resolveCoordinate(waypoint, this.configuration.googlePlacesAPIKey);
+    if (coordinate) {
+      try {
+        await this.configuration.cache.set(cacheKey, coordinate, 24 * 60 * 60);
+      } catch { /* Successful resolution does not depend on cache population. */ }
+    }
+    return coordinate;
+  }
+
+  private async resolveCoordinate(
+    waypoint: TravelWaypoint,
+    apiKey: string,
+  ): Promise<z.infer<typeof coordinateSchema> | null> {
     if (waypoint.placeID) {
       const url = new URL(`/v1/places/${encodeURIComponent(waypoint.placeID)}`, "https://places.googleapis.com");
       const response = await this.fetch(url, {
         headers: {
-          "X-Goog-Api-Key": this.configuration.googlePlacesAPIKey,
+          "X-Goog-Api-Key": apiKey,
           "X-Goog-FieldMask": "location",
         },
         signal: AbortSignal.timeout(10_000),
@@ -152,7 +177,7 @@ export class AppleWeatherKitDayBriefProvider implements DayBriefWeatherProvider 
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Goog-Api-Key": this.configuration.googlePlacesAPIKey,
+          "X-Goog-Api-Key": apiKey,
           "X-Goog-FieldMask": "places.location",
         },
         body: JSON.stringify({ textQuery: waypoint.address, maxResultCount: 1 }),
